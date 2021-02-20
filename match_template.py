@@ -9,7 +9,13 @@ import numpy as np # pip install --user numpy
 
 def template_match(input_path: str = None, template_path: str = None) -> {}:
   '''
+  Finds a region in the input image/s where the template image matches best.
 
+  Args:
+    input_path: full path to an image or directory of images to search for a match.
+    template_path: full path to the template image used for matching.
+  Returns:
+    a dictionary with results of the matching process.
   '''
   # check that all the input parameters have been provided and are valid
   if template_path is None:
@@ -27,8 +33,8 @@ def template_match(input_path: str = None, template_path: str = None) -> {}:
     files_in_dir = glob.glob(os.path.join(input_path, '*'))
     for filename in files_in_dir:
         input_files.append(filename)
-    input_files.sort() # there's no reason for this sorting other than safety,
-                       # i.e. in case anybody presumed alpha numeric order
+    input_files.sort() # there's no reason for this sorting other than safety i.e.
+                       # in case anybody presumed alpha numeric order which glob doesn't guarantee.
 
   # load the template as a gray scale image
   template = cv.cvtColor(cv.imread(template_path), cv.COLOR_BGR2GRAY)
@@ -66,8 +72,58 @@ def template_match(input_path: str = None, template_path: str = None) -> {}:
   return results
 
 
+def run_template_match(input_path: str, template_path: str, results_json_path: str, visualize_match: bool):
+  '''
+  Run template_match() and then perform various user specified operations like writing results to json,
+  writing out an image with the results of the template matching visible.
+
+  Args:
+    input_path: path to an image (or dir of images) to search for the location of a template match.
+    template_path: path to a template image used to search for a matching location withing the input image/s.
+    results_json_path: path to write a json file with the results of the template matching.
+    visualize_match: switch to control writing a version of the best match file with the best match ROI drawn on it.
+  '''
+
+  results = template_match(input_path, template_path)
+
+  # print the results or dump them to a json as requested
+  if results_json_path is None:
+    # print the results to std out
+    for key, value in results.items():
+      print(f'{key}: {value}')
+  else:
+      with open(results_json_path, 'w') as outfile:
+          json.dump(results, outfile, indent=4)
+
+  if results['STATUS'] != 'SUCCESS':
+    sys.exit(1)
+
+  if visualize_match:
+    # load the best match file as a gray scale image
+    file_path = results['BEST_MATCH_FILE']
+    matched_file = cv.cvtColor(cv.imread(file_path), cv.COLOR_BGR2GRAY)
+    # draw a rectangle around the area we matched with the template
+    template_origin_x = results['TEMPLATE_MATCH_ORIGIN_X']
+    template_width = results['TEMPLATE_WIDTH']
+    template_bottom_right_x = template_origin_x + template_width
+    template_origin_y = results['TEMPLATE_MATCH_ORIGIN_Y']
+    template_height = results['TEMPLATE_HEIGHT']
+    template_bottom_right_y = template_origin_y + template_height    
+    cv.rectangle(
+      matched_file,
+      (template_origin_x, template_origin_y),
+      (template_bottom_right_x, template_bottom_right_y),
+      color=125,
+      thickness=1
+    )
+    # write a version of the best matched file 
+    # with the region of the matched drawn in
+    file_name = os.path.basename(file_path)      
+    matched_file_name = './template_matched_file-' + file_name + '.jpg'
+    cv.imwrite(matched_file_name, matched_file)
+
+
 if __name__ == '__main__':
-    # parse the input args
     parser = argparse.ArgumentParser(
         description='convert a video to a sequence of images',
     )
@@ -89,47 +145,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '-visualize_match',
         action='store_true',
-        help='visualize the best match results.',
+        help='switch to control writing a version of the best match file with the best match ROI drawn on it.',
     )
     args = parser.parse_args()
-
-    # convert the video to a sequence of jpegs
-    results = template_match(args.input_path, args.template_path)
-
-    # print the results or dump them to a json as requested
-    if args.results_json_path is None:
-      # print the results to std out
-      for key, value in results.items():
-        print(f'{key}: {value}')
-    else:
-        with open(args.results_json_path, 'w') as outfile:
-            json.dump(results, outfile, indent=4)
-
-    if results['STATUS'] != 'SUCCESS':
-      sys.exit(1)
-
-    if args.visualize_match:
-      # load the best match file as a gray scale image
-      file_path = results['BEST_MATCH_FILE']
-      matched_file = cv.cvtColor(cv.imread(file_path), cv.COLOR_BGR2GRAY)
-
-      # draw a rectangle around the area we matched with the template
-      template_origin_x = results['TEMPLATE_MATCH_ORIGIN_X']
-      template_width = results['TEMPLATE_WIDTH']
-      template_bottom_right_x = template_origin_x + template_width
-      template_origin_y = results['TEMPLATE_MATCH_ORIGIN_Y']
-      template_height = results['TEMPLATE_HEIGHT']
-      template_bottom_right_y = template_origin_y + template_height    
-      cv.rectangle(
-        matched_file,
-        (template_origin_x, template_origin_y),
-        (template_bottom_right_x, template_bottom_right_y),
-        color=125,
-        thickness=1
-      )
-      
-      # write a version of the best matched file 
-      # with the area of the template matched visualized
-      file_name = os.path.basename(file_path)      
-      matched_file_name = './template_matched_file-' + file_name + '.jpg'
-      cv.imwrite(matched_file_name, matched_file)
+    run_template_match(args.input_path, args.template_path, args.results_json_path, args.visualize_match)

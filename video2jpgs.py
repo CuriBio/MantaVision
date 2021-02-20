@@ -8,8 +8,10 @@ from skimage import exposure as skimage_exposure
 
 def contrast_enhanced(image_to_adjust):
   '''
-  Performs an automatic intensity adjustment of the input image to enhance contrast.
-    image_to_adjust: the image to adjust the intensity of. 
+  Performs an automatic adjustment of the input intensity range to enhance contrast.
+  
+  Args:
+    image_to_adjust: the image to adjust the contrast of. 
   '''
   optimal_threshold = skimage_filters.threshold_yen(image_to_adjust)
   rgb_range = (0, 255)
@@ -19,8 +21,12 @@ def contrast_enhanced(image_to_adjust):
 def video_to_jpgs(input_video_path: str = None, output_dir_path: str = None, enhance_contrast: bool = False) -> int:
   '''
   Converts an input video to a sequence of jpg images.
+
+  Args:
     input_video_path:  path of the input video to be converted.
     output_dir_path:   path to a directory where the output images are to be saved.
+  Returns:
+    A simple status code, 0 for success, anything else for an error.
   '''
   # check that all the input parameters have been provided and are valid
   error_code = 1
