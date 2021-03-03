@@ -125,7 +125,7 @@ def run_template_match(input_path: str, template_path: str, results_json_path: s
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
-        description='convert a video to a sequence of images',
+        description='find the best match position of a template in a single or directory of images.',
     )
     parser.add_argument(
         'input_path',
