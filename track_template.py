@@ -81,8 +81,12 @@ def track_template(input_video_path: str, template_image_path: str, output_video
     output_video_stream = None
 
   # track the template in the video stream
-  tracker_results = [] # will be a list of dicts
+  tracking_results = [] # will be a list of dicts
   number_of_frames = int(input_video_stream.get(cv.CAP_PROP_FRAME_COUNT))
+  min_template_origin_x = frame_width
+  max_template_origin_x = 0
+  min_template_origin_y = frame_height
+  max_template_origin_y = 0
   for frame_number in range(number_of_frames):
     frame_returned, frame = input_video_stream.read()
     if not frame_returned:
@@ -97,17 +101,27 @@ def track_template(input_video_path: str, template_image_path: str, output_video
     _, match_measure, _, match_coordinates = cv.minMaxLoc(match_results)    
     template_origin_x = match_coordinates[0]
     template_origin_y = match_coordinates[1]
-    tracker_results.append(
+    tracking_results.append(
       {
         'FRAME_NUMBER': frame_number,
         'ELAPSED_TIME': frame_number/frames_per_second,
         'MATCH_MEASURE': match_measure,
         'TEMPLATE_MATCH_ORIGIN_X': template_origin_x,
         'TEMPLATE_MATCH_ORIGIN_Y': template_origin_y,
+        'Y_DISPLACEMENT_FROM_LOWEST_POINT': 0,
+        'X_DISPLACEMENT_FROM_LEFTMOST_POINT': 0,
         'TEMPLATE_WIDTH': template_width,
-        'TEMPLATE_HEIGHT': template_height   
+        'TEMPLATE_HEIGHT': template_height
       }
     )
+    if template_origin_x < min_template_origin_x:
+      min_template_origin_x = template_origin_x
+    if template_origin_x > max_template_origin_x:
+      max_template_origin_x = template_origin_x
+    if template_origin_y < min_template_origin_y: 
+      min_template_origin_y = template_origin_y
+    if template_origin_y > max_template_origin_y:
+      max_template_origin_y = template_origin_y
 
     if output_video_stream is not None:
       # draw a rectangle around the area we matched with the template
@@ -126,10 +140,13 @@ def track_template(input_video_path: str, template_image_path: str, output_video
   if output_video_stream is not None:
     output_video_stream.release()
 
-  # TODO: go through all frames of the results, find the "highest" y point
-  #       and add in a new entry for each dict that is the displacement in y
-  #       which is computed as highest_y_point - match_origin_y
-  return tracker_results
+  adjusted_tracking_results = []
+  for frame_info in tracking_results:
+    frame_info['Y_DISPLACEMENT_FROM_LOWEST_POINT'] = max_template_origin_y - frame_info['TEMPLATE_MATCH_ORIGIN_Y']
+    frame_info['X_DISPLACEMENT_FROM_LEFTMOST_POINT'] = frame_info['TEMPLATE_MATCH_ORIGIN_X'] - min_template_origin_x          
+    adjusted_tracking_results.append(frame_info)
+
+  return adjusted_tracking_results
 
 
 if __name__ == '__main__':
@@ -170,7 +187,7 @@ if __name__ == '__main__':
       print("ERROR. No output path provided to write video results to. Nothing tracked.")
       sys.exit(1)
 
-    tracker_results = track_template(args.input_video_path, args.template_image_path, output_video_path)
+    tracking_results = track_template(args.input_video_path, args.template_image_path, output_video_path)
 
     with open(output_json_path, 'w') as outfile:
-        json.dump(tracker_results, outfile, indent=4)
+        json.dump(tracking_results, outfile, indent=4)
