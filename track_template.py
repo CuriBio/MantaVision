@@ -75,7 +75,8 @@ def track_template(input_video_path: str, template_image_path: str, output_video
       output_video_codec,
       frames_per_second,
       frame_size,
-      False  # isColor = True by default
+      True
+      # False  # isColor = True by default
     )
   else:
     output_video_stream = None
@@ -101,17 +102,18 @@ def track_template(input_video_path: str, template_image_path: str, output_video
     _, match_measure, _, match_coordinates = cv.minMaxLoc(match_results)    
     template_origin_x = match_coordinates[0]
     template_origin_y = match_coordinates[1]
+
     tracking_results.append(
       {
         'FRAME_NUMBER': frame_number,
         'ELAPSED_TIME': frame_number/frames_per_second,
         'MATCH_MEASURE': match_measure,
-        'TEMPLATE_MATCH_ORIGIN_X': template_origin_x,
-        'TEMPLATE_MATCH_ORIGIN_Y': template_origin_y,
         'Y_DISPLACEMENT_FROM_LOWEST_POINT': 0,
         'X_DISPLACEMENT_FROM_LEFTMOST_POINT': 0,
-        'TEMPLATE_WIDTH': template_width,
-        'TEMPLATE_HEIGHT': template_height
+        'TEMPLATE_MATCH_ORIGIN_X': template_origin_x,
+        'TEMPLATE_MATCH_ORIGIN_Y': template_origin_y,
+        # 'TEMPLATE_WIDTH': template_width,
+        # 'TEMPLATE_HEIGHT': template_height
       }
     )
     if template_origin_x < min_template_origin_x:
@@ -124,16 +126,48 @@ def track_template(input_video_path: str, template_image_path: str, output_video
       max_template_origin_y = template_origin_y
 
     if output_video_stream is not None:
-      # draw a rectangle around the area we matched with the template
-      template_bottom_right_x = template_origin_x + template_width    
-      template_bottom_right_y = template_origin_y + template_height
+      grid_colour_bgr = (255, 128, 0)      
+      grid_square_diamter = 10
+      frame = cv.cvtColor(frame, cv.COLOR_GRAY2BGR)
+      # mark the template ROI on each frame
+      # first draw a rectangle around the template border
+      grid_width = (int(template_width/grid_square_diamter) + 1)*grid_square_diamter
+      grid_height = (int(template_height/grid_square_diamter) + 1)*grid_square_diamter
+      template_bottom_right_x = template_origin_x + grid_width
+      template_bottom_right_y = template_origin_y + grid_height
       cv.rectangle(
         frame,
         (template_origin_x, template_origin_y),
         (template_bottom_right_x, template_bottom_right_y),
-        color=125,
+        color=grid_colour_bgr,
         thickness=1
       )
+
+      # then add horizontal grid lines within the rectangle
+      line_start_x = template_origin_x + 1
+      line_end_x = template_bottom_right_x - 1
+      for line_pos_y in range(template_origin_y + grid_square_diamter, template_bottom_right_y, grid_square_diamter):
+        cv.line(
+          frame,
+          (line_start_x, line_pos_y),
+          (line_end_x, line_pos_y),
+          color=grid_colour_bgr,
+          thickness=1
+        )
+      
+      # then add vertical grid lines within the rectangle 
+      line_start_y = template_origin_y + 1
+      line_end_y = template_bottom_right_y - 1
+      for line_pos_x in range(template_origin_x + grid_square_diamter, template_bottom_right_x, grid_square_diamter):
+        cv.line(
+          frame,
+          (line_pos_x, line_start_y),
+          (line_pos_x, line_end_y),
+          color=grid_colour_bgr,
+          thickness=1,
+          lineType=cv.LINE_AA
+        )
+
       output_video_stream.write(frame)
 
   input_video_stream.release()
@@ -143,7 +177,7 @@ def track_template(input_video_path: str, template_image_path: str, output_video
   adjusted_tracking_results = []
   for frame_info in tracking_results:
     frame_info['Y_DISPLACEMENT_FROM_LOWEST_POINT'] = max_template_origin_y - frame_info['TEMPLATE_MATCH_ORIGIN_Y']
-    frame_info['X_DISPLACEMENT_FROM_LEFTMOST_POINT'] = frame_info['TEMPLATE_MATCH_ORIGIN_X'] - min_template_origin_x          
+    frame_info['X_DISPLACEMENT_FROM_LEFTMOST_POINT'] = frame_info['TEMPLATE_MATCH_ORIGIN_X'] - min_template_origin_x       
     adjusted_tracking_results.append(frame_info)
 
   return adjusted_tracking_results
