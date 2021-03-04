@@ -131,8 +131,8 @@ def track_template(input_video_path: str, template_image_path: str, output_video
       frame = cv.cvtColor(frame, cv.COLOR_GRAY2BGR)
       # mark the template ROI on each frame
       # first draw a rectangle around the template border
-      grid_width = (int(template_width/grid_square_diamter) + 1)*grid_square_diamter
-      grid_height = (int(template_height/grid_square_diamter) + 1)*grid_square_diamter
+      grid_width = int(template_width/grid_square_diamter)*grid_square_diamter
+      grid_height = int(template_height/grid_square_diamter)*grid_square_diamter
       template_bottom_right_x = template_origin_x + grid_width
       template_bottom_right_y = template_origin_y + grid_height
       cv.rectangle(
