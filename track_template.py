@@ -3,10 +3,61 @@ import os
 import sys
 import json
 import numpy as np
+import math
 import pathlib
 import cv2 as cv # pip install --user opencv-python
 from skimage import filters as skimage_filters # pip install --user scikit-image
-from skimage import exposure as skimage_exposure 
+from skimage import exposure as skimage_exposure
+
+
+# TODO: implement some sort of search for different rotations in the template (within some minimal angle range)
+#       RANSAC or maybe just the usual optimization methods might work well enough and fast enough.
+#       but possibly we just need to use a minimal set of fixed rotations of the template
+#       (i think we'd need to expand the template size to allow for the rotation and set it initially to some noise with an average of the template noise)
+
+def best_template_match_ccoef(video_to_search, template_to_find, max_frames_to_check) -> np.ndarray:
+  initial_frame_pos = video_to_search.get(cv.CAP_PROP_POS_FRAMES)
+  if initial_frame_pos != 0:
+    video_to_search.set(cv.CAP_PROP_POS_FRAMES, 0)
+
+  best_match_measure = 0.0
+  best_match_coordinates = None
+  best_match_frame = None
+  number_of_frames = int(video_to_search.get(cv.CAP_PROP_FRAME_COUNT))
+  if max_frames_to_check is None:
+    number_of_frames_to_check = number_of_frames
+  else:
+    number_of_frames_to_check = min(number_of_frames, max_frames_to_check)    
+  for _ in range(number_of_frames_to_check):
+    frame_returned, frame = video_to_search.read()
+    if not frame_returned:
+      print("Error. Unexpected problem during video frame capture. Exiting.")
+
+    # track the template
+    frame = contrast_enhanced(cv.cvtColor(frame, cv.COLOR_BGR2GRAY)).astype(np.uint8)
+    match_results = cv.matchTemplate(frame, template_to_find, cv.TM_CCOEFF_NORMED)
+    _, match_measure, _, match_coordinates = cv.minMaxLoc(match_results)
+    if match_measure > best_match_measure:
+      best_match_measure = match_measure
+      best_match_coordinates = match_coordinates
+      best_match_frame = frame
+
+  # reset the video to where it was initially
+  video_to_search.set(cv.CAP_PROP_POS_FRAMES, initial_frame_pos)
+
+  # cut out a new best match template from the best match frame
+  template_height = template_to_find.shape[0]
+  template_width = template_to_find.shape[1]
+  new_template_start_x = best_match_coordinates[0]
+  new_template_end_x = new_template_start_x + template_width
+  new_template_start_y = best_match_coordinates[1]
+  new_template_end_y = new_template_start_y + template_height
+  new_template = best_match_frame[new_template_start_y:new_template_end_y, new_template_start_x:new_template_end_x]
+  return new_template
+
+
+def best_template_match(video_to_search, template_to_find, max_frames_to_check) -> np.ndarray:
+  return best_template_match_ccoef(video_to_search, template_to_find, max_frames_to_check)
 
 
 def contrast_enhanced(image_to_adjust):
@@ -21,60 +72,26 @@ def contrast_enhanced(image_to_adjust):
   return skimage_exposure.rescale_intensity(image_to_adjust, in_range=(0, optimal_threshold), out_range=uint8_range)
 
 
-def best_template_match(video_to_search, template_to_find) -> np.ndarray:
-  new_template = None
-  initial_frame_pos = video_to_search.get(cv.CAP_PROP_POS_FRAMES)
-  if initial_frame_pos != 0:
-    video_to_search.set(cv.CAP_PROP_POS_FRAMES, 0)
-
-  best_match_measure = 0.0
-  best_match_coordinates = ''
-  best_match_frame = None
-  number_of_frames = int(video_to_search.get(cv.CAP_PROP_FRAME_COUNT))
-  for _ in range(number_of_frames):
-    frame_returned, frame = video_to_search.read()
-    if not frame_returned:
-      print("Error. Unexpected problem during video frame capture. Exiting.")
-
-    # track the template
-    frame = contrast_enhanced(cv.cvtColor(frame, cv.COLOR_BGR2GRAY)).astype(np.uint8)
-    match_results = cv.matchTemplate(frame, template_to_find, cv.TM_CCOEFF_NORMED)
-    _, match_measure, _, match_coordinates = cv.minMaxLoc(match_results)    
-    if match_measure > best_match_measure:
-      best_match_measure = match_measure
-      best_match_coordinates = match_coordinates
-      best_match_frame = frame
-
-  # reset the video to where it was initially
-  video_to_search.set(cv.CAP_PROP_POS_FRAMES, initial_frame_pos)
-
-  # cut out the best match template from the best match frame
-  template_width = template_to_find.shape[::-1][0]
-  template_height = template_to_find.shape[::-1][1]  
-  new_template_start_x = best_match_coordinates[0]
-  new_template_end_x = new_template_start_x + template_width
-  new_template_start_y = best_match_coordinates[1]
-  new_template_end_y = new_template_start_y + template_height
-  new_template = best_match_frame[new_template_start_y:new_template_end_y, new_template_start_x:new_template_end_x]
-  
-  return new_template
-
-
 def track_template(
   input_video_path: str,
   template_image_path: str,
   output_video_path: str = None,
-  template_as_guide: bool = False
+  template_as_guide: bool = False,
+  approx_seconds_per_period: float = None
 ) -> {}:
   '''
   Tracks a template image through each frame of a video.
 
   Args:
-    input_video_path:     path of the input video to track the template.
-    template_image_path:  path to an image that will be used as a template to match.
+    input_video_path:           path of the input video to track the template.
+    template_image_path:        path to an image that will be used as a template to match.
+    output_video_path:          path to write a video with the tracking results visualized. 
+    template_as_guide:          use the template to find a roi in the video to use as a template.
+    approx_seconds_per_period:  approximate number of seconds for template to complete a full period of movement.',
   Returns:
-    tuple with .
+    List of per frame tracking results.
   '''
+
   if input_video_path is None:
     error_msg = "ERROR. No path provided to an input video. Nothing has been tracked."
     print(error_msg)
@@ -90,16 +107,25 @@ def track_template(
       print(error_msg)
       return {'STATUS': 'FAILURE', 'STATUS_DETAIL': error_msg}
 
-  # open the template as a gray scale image
-  template = cv.cvtColor(cv.imread(template_image_path), cv.COLOR_BGR2GRAY)
-  if template_as_guide:
-    template = best_template_match(input_video_stream, template)
-  template_width = template.shape[::-1][0]
-  template_height = template.shape[::-1][1]
-
-  frames_per_second = input_video_stream.get(cv.CAP_PROP_FPS)
-
   # open a video writer stream if required
+  frames_per_second = input_video_stream.get(cv.CAP_PROP_FPS)
+  # open the template as a gray scale image
+  template = cv.imread(template_image_path)
+  if template is None:
+    error_msg = "ERROR. The path provided for template does not point to an image file. Nothing has been tracked."
+    print(error_msg)
+    return {'STATUS': 'FAILURE', 'STATUS_DETAIL': error_msg}        
+  template = cv.cvtColor(template, cv.COLOR_BGR2GRAY)
+  if template_as_guide:
+    if approx_seconds_per_period is None:
+      max_frames_to_check = None
+    else:
+      max_frames_to_check = int(math.ceil(frames_per_second*float(approx_seconds_per_period)))
+    template = best_template_match(input_video_stream, template, max_frames_to_check)
+  template_height = template.shape[0]
+  template_width = template.shape[1]
+  
+
   if output_video_path is not None:
     format_extension = pathlib.Path(output_video_path).suffix
     if format_extension == '.avi':
@@ -145,43 +171,39 @@ def track_template(
 
     # track the template
     match_results = cv.matchTemplate(frame, template, cv.TM_CCOEFF_NORMED)
-    _, match_measure, _, match_coordinates = cv.minMaxLoc(match_results)    
+    _, match_measure, _, match_coordinates = cv.minMaxLoc(match_results)  # opencv returns in x, y order
     template_origin_x = match_coordinates[0]
-    template_origin_y = match_coordinates[1]
+    template_origin_y = match_coordinates[1]    
 
     tracking_results.append(
       {
         'FRAME_NUMBER': frame_number,
         'ELAPSED_TIME': frame_number/frames_per_second,
         'MATCH_MEASURE': match_measure,
-        'Y_DISPLACEMENT_FROM_LOWEST_POINT': 0,
-        'X_DISPLACEMENT_FROM_LEFTMOST_POINT': 0,
+        'Y_DISPLACEMENT': 0,
+        'X_DISPLACEMENT': 0,
+        'XY_DISPLACEMENT': 0,
         'TEMPLATE_MATCH_ORIGIN_X': template_origin_x,
         'TEMPLATE_MATCH_ORIGIN_Y': template_origin_y,
-        # 'TEMPLATE_WIDTH': template_width,
-        # 'TEMPLATE_HEIGHT': template_height
       }
     )
-    if template_origin_x < min_template_origin_x:
-      min_template_origin_x = template_origin_x
-    if template_origin_x > max_template_origin_x:
-      max_template_origin_x = template_origin_x
     if template_origin_y < min_template_origin_y: 
       min_template_origin_y = template_origin_y
+      min_template_origin_x = template_origin_x
     if template_origin_y > max_template_origin_y:
       max_template_origin_y = template_origin_y
+      max_template_origin_x = template_origin_x
 
     if output_video_stream is not None:
-      # TODO: put in bounds checks for drawing the grid
       grid_colour_bgr = (255, 128, 0)      
-      grid_square_diamter = 10
+      grid_square_diameter = 10
       frame = cv.cvtColor(frame, cv.COLOR_GRAY2BGR)
       # mark the template ROI on each frame
       # first draw a rectangle around the template border
-      grid_width = int(template_width/grid_square_diamter)*grid_square_diamter
-      grid_height = int(template_height/grid_square_diamter)*grid_square_diamter
-      template_bottom_right_x = template_origin_x + grid_width
-      template_bottom_right_y = template_origin_y + grid_height
+      grid_width = int(template_width/grid_square_diameter)*grid_square_diameter
+      grid_height = int(template_height/grid_square_diameter)*grid_square_diameter
+      template_bottom_right_x = min(frame_width, template_origin_x + grid_width)
+      template_bottom_right_y = min(frame_height, template_origin_y + grid_height)
       cv.rectangle(
         frame,
         (template_origin_x, template_origin_y),
@@ -193,7 +215,7 @@ def track_template(
       # then add horizontal grid lines within the rectangle
       line_start_x = template_origin_x + 1
       line_end_x = template_bottom_right_x - 1
-      for line_pos_y in range(template_origin_y + grid_square_diamter, template_bottom_right_y, grid_square_diamter):
+      for line_pos_y in range(template_origin_y + grid_square_diameter, template_bottom_right_y, grid_square_diameter):
         cv.line(
           frame,
           (line_start_x, line_pos_y),
@@ -205,7 +227,7 @@ def track_template(
       # then add vertical grid lines within the rectangle 
       line_start_y = template_origin_y + 1
       line_end_y = template_bottom_right_y - 1
-      for line_pos_x in range(template_origin_x + grid_square_diamter, template_bottom_right_x, grid_square_diamter):
+      for line_pos_x in range(template_origin_x + grid_square_diameter, template_bottom_right_x, grid_square_diameter):
         cv.line(
           frame,
           (line_pos_x, line_start_y),
@@ -221,21 +243,29 @@ def track_template(
   if output_video_stream is not None:
     output_video_stream.release()
 
+  # adjust the displacement values relative to a fixed orientation
+  # the top most position is always zero for movement in the y dimension, 
+  # zero for movement in the x dimension depends on whether the tracking movement
+  # is top left to bottom right, or bottom left to top right
+  # and of course compute the actual displacement in x-y i.e euclidean distance
+  if min_template_origin_x > max_template_origin_x:
+    positive_x_movement_slope = True
+  else:
+    positive_x_movement_slope = False
   adjusted_tracking_results = []
   for frame_info in tracking_results:
-    frame_info['Y_DISPLACEMENT_FROM_LOWEST_POINT'] = max_template_origin_y - frame_info['TEMPLATE_MATCH_ORIGIN_Y']
-    frame_info['X_DISPLACEMENT_FROM_LEFTMOST_POINT'] = frame_info['TEMPLATE_MATCH_ORIGIN_X'] - min_template_origin_x       
+    y_displacement = frame_info['TEMPLATE_MATCH_ORIGIN_Y'] - min_template_origin_y
+    frame_info['Y_DISPLACEMENT'] = y_displacement 
+    if positive_x_movement_slope:
+      x_displacement = max_template_origin_x - frame_info['TEMPLATE_MATCH_ORIGIN_X']
+    else:
+      x_displacement = frame_info['TEMPLATE_MATCH_ORIGIN_X'] - min_template_origin_x
+    frame_info['X_DISPLACEMENT'] = x_displacement 
+    frame_info['XY_DISPLACEMENT'] = math.sqrt(x_displacement*x_displacement + y_displacement*y_displacement)
     adjusted_tracking_results.append(frame_info)
-      
+
   return adjusted_tracking_results
 
-# TODO: need to find a better brightness and contrast adjustment method.
-
-# TODO: We need to be able to match a rotated and scaled magnet with our template.
-#       We could use SIFT/SURF/ORB etc to find the template in the first video frame
-#       and then warp the template image and use that with the current method
-#       Of course we could just use SIFT/SURF/ORB etc for the whole thing if it's computationall feasible
-#       and robust and doesn't require loads of twiddle factors.
 
 if __name__ == '__main__':
 
@@ -266,7 +296,12 @@ if __name__ == '__main__':
     parser.add_argument(
         '-template_as_guide',
         action='store_true',
-        help='Use the template as a guide to find the a template within the video.',
+        help='Use the template to find a roi within the video to use as a template.',
+    )
+    parser.add_argument(
+        '--seconds_per_period',
+        default=None,
+        help='approximate minimum number of seconds for template to complete a full period of movement.',
     )    
     args = parser.parse_args()
 
@@ -284,7 +319,8 @@ if __name__ == '__main__':
       args.input_video_path,
       args.template_image_path,
       output_video_path,
-      args.template_as_guide
+      args.template_as_guide,
+      args.seconds_per_period
     )
 
     with open(output_json_path, 'w') as outfile:
