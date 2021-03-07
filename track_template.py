@@ -1,19 +1,16 @@
 import argparse
 import os
+import shutil
 import sys
 import json
 import numpy as np
 import math
 import pathlib
+import openpyxl # pip install --user openpyxl
 import cv2 as cv # pip install --user opencv-python
 from skimage import filters as skimage_filters # pip install --user scikit-image
 from skimage import exposure as skimage_exposure
 
-
-# TODO: implement some sort of search for different rotations in the template (within some minimal angle range)
-#       RANSAC or maybe just the usual optimization methods might work well enough and fast enough.
-#       but possibly we just need to use a minimal set of fixed rotations of the template
-#       (i think we'd need to expand the template size to allow for the rotation and set it initially to some noise with an average of the template noise)
 
 def best_template_match_ccoef(video_to_search, template_to_find, max_frames_to_check) -> np.ndarray:
   initial_frame_pos = video_to_search.get(cv.CAP_PROP_POS_FRAMES)
@@ -77,7 +74,8 @@ def track_template(
   template_image_path: str,
   output_video_path: str = None,
   template_as_guide: bool = False,
-  approx_seconds_per_period: float = None
+  approx_seconds_per_period: float = None,
+  microns_per_pixel: float = None
 ) -> {}:
   '''
   Tracks a template image through each frame of a video.
@@ -100,12 +98,9 @@ def track_template(
   # open a video reader stream
   input_video_stream = cv.VideoCapture(input_video_path)
   if not input_video_stream.isOpened():
-    # try to open it once in case there was an initialization error
-    input_video_stream.open()
-    if not input_video_stream.isOpened():
-      error_msg = "Error. Can't open videos stream for capture. Nothing has been tracked."
-      print(error_msg)
-      return {'STATUS': 'FAILURE', 'STATUS_DETAIL': error_msg}
+    error_msg = "Error. Can't open videos stream for capture. Nothing has been tracked."
+    print(error_msg)
+    return {'STATUS': 'FAILURE', 'STATUS_DETAIL': error_msg}
 
   # open a video writer stream if required
   frames_per_second = input_video_stream.get(cv.CAP_PROP_FPS)
@@ -253,18 +248,47 @@ def track_template(
   else:
     positive_x_movement_slope = False
   adjusted_tracking_results = []
+  if microns_per_pixel is None:
+    microns_per_pixel = 1.0
   for frame_info in tracking_results:
-    y_displacement = frame_info['TEMPLATE_MATCH_ORIGIN_Y'] - min_template_origin_y
+    y_displacement = (frame_info['TEMPLATE_MATCH_ORIGIN_Y'] - min_template_origin_y)*float(microns_per_pixel)
     frame_info['Y_DISPLACEMENT'] = y_displacement 
     if positive_x_movement_slope:
-      x_displacement = max_template_origin_x - frame_info['TEMPLATE_MATCH_ORIGIN_X']
+      x_displacement = (max_template_origin_x - frame_info['TEMPLATE_MATCH_ORIGIN_X'])*float(microns_per_pixel)
     else:
-      x_displacement = frame_info['TEMPLATE_MATCH_ORIGIN_X'] - min_template_origin_x
+      x_displacement = (frame_info['TEMPLATE_MATCH_ORIGIN_X'] - min_template_origin_x)*float(microns_per_pixel)
     frame_info['X_DISPLACEMENT'] = x_displacement 
     frame_info['XY_DISPLACEMENT'] = math.sqrt(x_displacement*x_displacement + y_displacement*y_displacement)
     adjusted_tracking_results.append(frame_info)
 
-  return adjusted_tracking_results
+  return adjusted_tracking_results, frames_per_second
+
+
+def results_to_csv(tracking_results: [{}], path_to_template_file: str, path_to_output_file, frames_per_second: float):
+  if path_to_output_file == path_to_template_file:
+    print("ERROR. Excel template path is the same as the output path. Template would be overwritten. Results not exported to Excel.")
+  shutil.copyfile(path_to_template_file, path_to_output_file)
+
+  workbook = openpyxl.load_workbook(filename=path_to_output_file)
+  sheet = workbook.active
+
+  # set the frames per second field
+  sheet['E5'] = float(frames_per_second)
+
+  # set the time and post displacement fields
+  template_start_row = 2
+  time_column = 'A'
+  displacement_column = 'B'
+  num_rows_to_write = len(tracking_results)
+  for results_row in range(num_rows_to_write):
+      tracking_result = tracking_results[results_row]
+      elapsed_time = float(tracking_result['ELAPSED_TIME'])
+      post_displacement = float(tracking_result['XY_DISPLACEMENT'])
+      sheet_row = results_row + template_start_row
+      sheet[time_column + str(sheet_row)] = elapsed_time
+      sheet[displacement_column + str(sheet_row)] = post_displacement
+
+  workbook.save(filename=path_to_output_file)
 
 
 if __name__ == '__main__':
@@ -282,14 +306,9 @@ if __name__ == '__main__':
         'template_image_path',
         default=None,
         help='Path to an image that will be used as a template to match.',
-    )    
-    parser.add_argument(
-        'output_json_path',
-        default=None,
-        help='Path to write the output results json.',
     )
     parser.add_argument(
-        'output_video_path',
+        '--output_video_path',
         default=None,
         help='Path to write a video with the tracking results visualized.',
     )
@@ -302,26 +321,49 @@ if __name__ == '__main__':
         '--seconds_per_period',
         default=None,
         help='approximate minimum number of seconds for template to complete a full period of movement.',
-    )    
+    )
+    parser.add_argument(
+        '--microns_per_pixel',
+        default=None,
+        help='conversion factor for pixel distances to microns',
+    )
+    parser.add_argument(
+        '--output_json_path',
+        default=None,
+        help='Path to write the output results json.',
+    )
+    parser.add_argument(
+        '--path_to_excel_template',
+        default=None,
+        help='path to exel spread sheet used as a template to write the results into',
+    )
+    parser.add_argument(
+        '--path_to_excel_results',
+        default=None,
+        help='path to write the results as an excel spread sheet',
+    )        
     args = parser.parse_args()
 
-    output_json_path = args.output_json_path
-    if output_json_path is None:
-      print("ERROR. No output path provided to write results to. Nothing tracked.")
+    if args.output_video_path is None and args.output_json_path is None and args.path_to_excel_template is None and args.path_to_excel_results is None:
+      print("ERROR. No output options have been provided. Nothing to do.")
       sys.exit(1)
 
-    output_video_path = args.output_video_path
-    if output_video_path is None:
-      print("ERROR. No output path provided to write video results to. Nothing tracked.")
-      sys.exit(1)
-
-    tracking_results = track_template(
+    tracking_results, frames_per_second = track_template(
       args.input_video_path,
       args.template_image_path,
-      output_video_path,
+      args.output_video_path,
       args.template_as_guide,
-      args.seconds_per_period
+      args.seconds_per_period,
+      args.microns_per_pixel
     )
 
-    with open(output_json_path, 'w') as outfile:
-        json.dump(tracking_results, outfile, indent=4)
+    # dump the results as json if requested
+    if args.output_json_path is not None:
+      with open(args.output_json_path, 'w') as outfile:
+          json.dump(tracking_results, outfile, indent=4)
+
+    # dump the results as xlsx if requested
+    if args.path_to_excel_template is not None and args.path_to_excel_results is not None:
+      results_to_csv(tracking_results, args.path_to_excel_template, args.path_to_excel_results, frames_per_second)
+    elif not (args.path_to_excel_template is None and args.path_to_excel_results is None):
+      print("ERROR. You must supply both the template excel input path and results excel output path.")

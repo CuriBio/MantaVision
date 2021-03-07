@@ -5,16 +5,14 @@ Scripts for performing optical tracking of well magnets in Mantarray.
 ### Install Required Packages ###
 > pip install --user -r ./requirements.txt
 
-### To convert a video to a sequence of jpg's for use in tracking software such as DICe ###
-> python /path/to/video2jpgs.py /path/to/input_video /path/to/output/sequence/dir/ [-enhance_contrast]
+### How to run template tracking ###
+> python /path_to/track_template.py /path_to/video.mp4 /path_to/template.jpg --output_json_path /path_to_write/tracking_results.json --output_video_path /path_to_write/tracking_results.mp4 -template_as_guide --seconds_per_period 5 --path_to_excel_template /path_to/optical_tracking_results_template.xlsx --path_to_excel_results /path_to_write/tracking_results.xlsx
 
-or to see usage and options info:
-> python video2jpgs.py 
+### Run template tracking with the test data in this repo ###
+From the top level dir, do the following:
 
-### To perform template matching on a single image or a directory of images for use in tracking software such as DICe ###
-> python /path/to/match_template.py /path/to/input /path/to/template_image
+Create a directory called test_output i.e. 
+> mkdir ./test_output
 
-Note: Input can be either a single image or a directory of images. The image with the best match will be specified.
-
-or to see usage and options info:
-> python match_template.py
+Then run the tracker
+> python ./track_template.py ./test_data/videos/2021.01.27_EHT_Plate_A006.mp4 ./test_data/image_templates/magnet_tip_template_rotated-15degrees.jpg --output_json_path ./test_output/tracking_results.json --output_video_path ./test_output/tracking_results.mp4 -template_as_guide --seconds_per_period 5 --path_to_excel_template ./test_data/excel_templates/optical_tracking_results_template.xlsx --path_to_excel_results ./test_output/tracking_results.xlsx
