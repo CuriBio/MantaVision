@@ -1,0 +1,5 @@
+{
+    "input_video_path":         "/storage/data/home/positimothy/dev/repo/curibio/optical-tracking/test_data/videos/2021.01.27_EHT_Plate_A006.mp4",
+    "template_image_path":      "/storage/data/home/positimothy/dev/repo/curibio/optical-tracking/test_data/image_templates/template.jpg",
+    "path_to_excel_template":   "/storage/data/home/positimothy/dev/repo/curibio/optical-tracking/test_data/excel_templates/optical_tracking_results_template.xlsx"
+} 

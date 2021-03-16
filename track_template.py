@@ -302,28 +302,19 @@ def args_from_cmdline(cmd_line_args) -> {}:
   config['output_json_path'] = cmd_line_args.output_json_path
   config['path_to_excel_template'] = cmd_line_args.path_to_excel_template
   config['path_to_excel_results'] = cmd_line_args.path_to_excel_results
-  config_check(config)
-  return config
+  return config_checked(config)
 
 
 def args_from_json(json_config_path) -> {}:
   json_file = open(json_config_path) 
   config = json.load(json_file)
-  config_check(config)
-  return config
+  return config_checked(config)
 
 
-def config_check(config: {}):
+def config_checked(config: {}) -> {}:
+  '''
 
-  # if we need to use any default outputs..
-  # get a random name to add to a local dir name
-  # i.e. we'll make a dir called tracking_reslts_xxxxx 
-  # where the xxxxx part is the random string
-  # and dump any default output there
-  # we'll create the dir here and barf if it fails
-  # so if xl template is not None but xl template is None
-  # if output vido path is None etc
-
+  '''
   error_msgs = []
   if 'input_video_path' in config:
     if config['input_video_path'] is None:
@@ -351,12 +342,14 @@ def config_check(config: {}):
     # presume config came from cmdline and default behaviour is to output to local dir
     config['output_video_path'] = './tracking_results.mp4'
 
-  if 'path_to_excel_results' not in config:
-    # presume config came from json and so if it didn't list it don't output it
-    config['path_to_excel_results'] = None
-  elif config['path_to_excel_results'] is None:
-    # presume config came from cmdline and default behaviour is to output to local dir    
-    config['path_to_excel_results'] = './tracking_results.xlsx'
+  if 'path_to_excel_template' not in config:
+    config['path_to_excel_template'] = None
+
+  if config['path_to_excel_template'] is not None:
+    if 'path_to_excel_results' not in config :
+      config['path_to_excel_results'] = './tracking_results.xlsx'
+    elif config['path_to_excel_results'] is None:
+      config['path_to_excel_results'] = './tracking_results.xlsx'
 
   if 'template_as_guide' not in config:  
     config['template_as_guide'] = None
@@ -370,14 +363,11 @@ def config_check(config: {}):
   if 'output_json_path' not in config:
     config['output_json_path'] = None
   
-  if 'path_to_excel_template' not in config:
-    config['path_to_excel_template'] = None
-
   return config
 
 
+# TODO: allow a directory of videos to be processed
 if __name__ == '__main__':
-
     # parse the input args
     parser = argparse.ArgumentParser(
         description='Tracks a template image through each frame of a video.',
