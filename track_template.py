@@ -101,10 +101,13 @@ def track_template(
     error_msg = "Error. Can't open videos stream for capture. Nothing has been tracked."
     print(error_msg)
     return {'STATUS': 'FAILURE', 'STATUS_DETAIL': error_msg}
-
-  # open a video writer stream if required
+  frame_width  = int(input_video_stream.get(cv.CAP_PROP_FRAME_WIDTH))
+  frame_height = int(input_video_stream.get(cv.CAP_PROP_FRAME_HEIGHT))
+  frame_size = (frame_width, frame_height)
   frames_per_second = input_video_stream.get(cv.CAP_PROP_FPS)
-  # open the template as a gray scale image
+
+
+  # open the template image
   template = cv.imread(template_image_path)
   if template is None:
     error_msg = "ERROR. The path provided for template does not point to an image file. Nothing has been tracked."
@@ -120,7 +123,7 @@ def track_template(
   template_height = template.shape[0]
   template_width = template.shape[1]
   
-
+  # open a video writer stream if required
   if output_video_path is not None:
     format_extension = pathlib.Path(output_video_path).suffix
     if format_extension == '.avi':
@@ -134,9 +137,6 @@ def track_template(
       return {'STATUS': 'FAILURE', 'STATUS_DETAIL': error_msg}
 
     output_video_codec = cv.VideoWriter_fourcc(*'mp4v') #cv.VideoWriter_fourcc(*'DIVX') #     
-    frame_width  = int(input_video_stream.get(cv.CAP_PROP_FRAME_WIDTH))
-    frame_height = int(input_video_stream.get(cv.CAP_PROP_FRAME_HEIGHT))
-    frame_size = (frame_width, frame_height)
     output_video_stream = cv.VideoWriter(
       output_video_path,
       output_video_codec,
@@ -168,7 +168,7 @@ def track_template(
     match_results = cv.matchTemplate(frame, template, cv.TM_CCOEFF_NORMED)
     _, match_measure, _, match_coordinates = cv.minMaxLoc(match_results)  # opencv returns in x, y order
     template_origin_x = match_coordinates[0]
-    template_origin_y = match_coordinates[1]    
+    template_origin_y = match_coordinates[1]
 
     tracking_results.append(
       {
@@ -291,6 +291,91 @@ def results_to_csv(tracking_results: [{}], path_to_template_file: str, path_to_o
   workbook.save(filename=path_to_output_file)
 
 
+def args_from_cmdline(cmd_line_args) -> {}:
+  config = {}
+  config['input_video_path'] = cmd_line_args.input_video_path
+  config['template_image_path'] = cmd_line_args.template_image_path
+  config['output_video_path'] = cmd_line_args.output_video_path
+  config['template_as_guide'] = cmd_line_args.template_as_guide
+  config['seconds_per_period'] = cmd_line_args.seconds_per_period
+  config['microns_per_pixel'] = cmd_line_args.microns_per_pixel
+  config['output_json_path'] = cmd_line_args.output_json_path
+  config['path_to_excel_template'] = cmd_line_args.path_to_excel_template
+  config['path_to_excel_results'] = cmd_line_args.path_to_excel_results
+  config_check(config)
+  return config
+
+
+def args_from_json(json_config_path) -> {}:
+  json_file = open(json_config_path) 
+  config = json.load(json_file)
+  config_check(config)
+  return config
+
+
+def config_check(config: {}):
+
+  # if we need to use any default outputs..
+  # get a random name to add to a local dir name
+  # i.e. we'll make a dir called tracking_reslts_xxxxx 
+  # where the xxxxx part is the random string
+  # and dump any default output there
+  # we'll create the dir here and barf if it fails
+  # so if xl template is not None but xl template is None
+  # if output vido path is None etc
+
+  error_msgs = []
+  if 'input_video_path' in config:
+    if config['input_video_path'] is None:
+      error_msgs.append('No input video was provided.')
+  else:
+      error_msgs.append('No input video was provided.')
+  if 'template_image_path' in config:
+    if config['template_image_path'] is None:
+      error_msgs.append('No input template image was provided.')
+  else:
+      error_msgs.append('No input template image was provided.')
+
+  if len(error_msgs) > 0:
+    error_msg = 'ERROR.'
+    for error_string in error_msgs:
+      error_msg = error_msg + ' ' + error_string
+    error_msg += ' Nothing to do. Exiting.'
+    print(error_msg)
+    sys.exit(1)
+
+  if 'output_video_path' not in config:
+    # presume config came from json and so if it didn't list it don't output it
+    config['output_video_path'] = None
+  elif config['output_video_path'] is None:
+    # presume config came from cmdline and default behaviour is to output to local dir
+    config['output_video_path'] = './tracking_results.mp4'
+
+  if 'path_to_excel_results' not in config:
+    # presume config came from json and so if it didn't list it don't output it
+    config['path_to_excel_results'] = None
+  elif config['path_to_excel_results'] is None:
+    # presume config came from cmdline and default behaviour is to output to local dir    
+    config['path_to_excel_results'] = './tracking_results.xlsx'
+
+  if 'template_as_guide' not in config:  
+    config['template_as_guide'] = None
+  
+  if 'seconds_per_period' not in config:
+    config['seconds_per_period'] = None
+  
+  if 'microns_per_pixel' not in config:
+    config['microns_per_pixel'] = None
+  
+  if 'output_json_path' not in config:
+    config['output_json_path'] = None
+  
+  if 'path_to_excel_template' not in config:
+    config['path_to_excel_template'] = None
+
+  return config
+
+
 if __name__ == '__main__':
 
     # parse the input args
@@ -298,14 +383,24 @@ if __name__ == '__main__':
         description='Tracks a template image through each frame of a video.',
     )
     parser.add_argument(
-        'input_video_path',
+        '--input_video_path',
         default=None,
         help='Path of the input video to track the templated.',
     )
     parser.add_argument(
-        'template_image_path',
+        '--template_image_path',
         default=None,
         help='Path to an image that will be used as a template to match.',
+    )
+    parser.add_argument(
+        '--path_to_excel_template',
+        default=None,
+        help='path to exel spread sheet used as a template to write the results into',
+    )
+    parser.add_argument(
+      '--json_config_path',
+      default=None,
+      help='Path of a json file with run config parameters'      
     )
     parser.add_argument(
         '--output_video_path',
@@ -333,37 +428,31 @@ if __name__ == '__main__':
         help='Path to write the output results json.',
     )
     parser.add_argument(
-        '--path_to_excel_template',
-        default=None,
-        help='path to exel spread sheet used as a template to write the results into',
-    )
-    parser.add_argument(
         '--path_to_excel_results',
         default=None,
         help='path to write the results as an excel spread sheet',
-    )        
-    args = parser.parse_args()
+    )
+    raw_args = parser.parse_args()
 
-    if args.output_video_path is None and args.output_json_path is None and args.path_to_excel_template is None and args.path_to_excel_results is None:
-      print("ERROR. No output options have been provided. Nothing to do.")
-      sys.exit(1)
+    if raw_args.json_config_path is not None:
+      args = args_from_json(raw_args.json_config_path)
+    else:
+      args = args_from_cmdline(raw_args)
 
     tracking_results, frames_per_second = track_template(
-      args.input_video_path,
-      args.template_image_path,
-      args.output_video_path,
-      args.template_as_guide,
-      args.seconds_per_period,
-      args.microns_per_pixel
+      args['input_video_path'],
+      args['template_image_path'],
+      args['output_video_path'],
+      args['template_as_guide'],
+      args['seconds_per_period'],
+      args['microns_per_pixel']
     )
 
     # dump the results as json if requested
-    if args.output_json_path is not None:
-      with open(args.output_json_path, 'w') as outfile:
-          json.dump(tracking_results, outfile, indent=4)
+    if args['output_json_path'] is not None:
+      with open(args['output_json_path'], 'w') as outfile:
+        json.dump(tracking_results, outfile, indent=4)
 
     # dump the results as xlsx if requested
-    if args.path_to_excel_template is not None and args.path_to_excel_results is not None:
-      results_to_csv(tracking_results, args.path_to_excel_template, args.path_to_excel_results, frames_per_second)
-    elif not (args.path_to_excel_template is None and args.path_to_excel_results is None):
-      print("ERROR. You must supply both the template excel input path and results excel output path.")
+    if args['path_to_excel_template'] is not None:
+      results_to_csv(tracking_results, args['path_to_excel_template'], args['path_to_excel_results'], frames_per_second)
