@@ -1,15 +1,20 @@
+#! /usr/bin/env python
+
 import argparse
 import os
+import glob
 import shutil
 import sys
 import json
 import numpy as np
 import math
 import pathlib
+import zipfile
 import openpyxl # pip install --user openpyxl
 import cv2 as cv # pip install --user opencv-python
 from skimage import filters as skimage_filters # pip install --user scikit-image
 from skimage import exposure as skimage_exposure
+
 
 
 def best_template_match_ccoef(video_to_search, template_to_find, max_frames_to_check) -> np.ndarray:
@@ -106,7 +111,6 @@ def track_template(
   frame_size = (frame_width, frame_height)
   frames_per_second = input_video_stream.get(cv.CAP_PROP_FPS)
 
-
   # open the template image
   template = cv.imread(template_image_path)
   if template is None:
@@ -164,7 +168,7 @@ def track_template(
 
     frame = contrast_enhanced(cv.cvtColor(frame, cv.COLOR_BGR2GRAY)).astype(np.uint8)
 
-    # track the template
+    # find the best match for the template in the current frame
     match_results = cv.matchTemplate(frame, template, cv.TM_CCOEFF_NORMED)
     _, match_measure, _, match_coordinates = cv.minMaxLoc(match_results)  # opencv returns in x, y order
     template_origin_x = match_coordinates[0]
@@ -182,6 +186,7 @@ def track_template(
         'TEMPLATE_MATCH_ORIGIN_Y': template_origin_y,
       }
     )
+    # update the min and max positions of the template origin for ALL frames
     if template_origin_y < min_template_origin_y: 
       min_template_origin_y = template_origin_y
       min_template_origin_x = template_origin_x
@@ -189,6 +194,7 @@ def track_template(
       max_template_origin_y = template_origin_y
       max_template_origin_x = template_origin_x
 
+    # draw a grid over the region in the frame where the template matched
     if output_video_stream is not None:
       grid_colour_bgr = (255, 128, 0)      
       grid_square_diameter = 10
@@ -264,16 +270,16 @@ def track_template(
   return adjusted_tracking_results, frames_per_second
 
 
-def results_to_csv(tracking_results: [{}], path_to_template_file: str, path_to_output_file, frames_per_second: float):
-  if path_to_output_file == path_to_template_file:
-    print("ERROR. Excel template path is the same as the output path. Template would be overwritten. Results not exported to Excel.")
-  shutil.copyfile(path_to_template_file, path_to_output_file)
+def results_to_csv(tracking_results: [{}], path_to_template_file: str, path_to_output_file, frames_per_second: float):    
+  if path_to_template_file is None:
+    workbook = openpyxl.Workbook()
+  else:
+    shutil.copyfile(path_to_template_file, path_to_output_file)
+    workbook = openpyxl.load_workbook(filename=path_to_output_file)
 
-  workbook = openpyxl.load_workbook(filename=path_to_output_file)
   sheet = workbook.active
-
   # set the frames per second field
-  sheet['E5'] = float(frames_per_second)
+  sheet['E5'] = frames_per_second
 
   # set the time and post displacement fields
   template_start_row = 2
@@ -291,42 +297,60 @@ def results_to_csv(tracking_results: [{}], path_to_template_file: str, path_to_o
   workbook.save(filename=path_to_output_file)
 
 
-def args_from_cmdline(cmd_line_args) -> {}:
+def setup_from_cmdline(cmd_line_args) -> (str, [{}]):
   config = {}
   config['input_video_path'] = cmd_line_args.input_video_path
   config['template_image_path'] = cmd_line_args.template_image_path
-  config['output_video_path'] = cmd_line_args.output_video_path
+  config['output_path'] = cmd_line_args.output_video_path
   config['template_as_guide'] = cmd_line_args.template_as_guide
   config['seconds_per_period'] = cmd_line_args.seconds_per_period
   config['microns_per_pixel'] = cmd_line_args.microns_per_pixel
-  config['output_json_path'] = cmd_line_args.output_json_path
   config['path_to_excel_template'] = cmd_line_args.path_to_excel_template
-  config['path_to_excel_results'] = cmd_line_args.path_to_excel_results
-  return config_checked(config)
+  return config_verified(config)
 
 
-def args_from_json(json_config_path) -> {}:
-  json_file = open(json_config_path) 
+def setup_from_json(json_config_path) -> (str, [{}]):
+  json_file = open(json_config_path)
   config = json.load(json_file)
-  return config_checked(config)
+  return config_verified(config)
 
 
-def config_checked(config: {}) -> {}:
+def contents_of_dir(dir_path: str, search_terms: [str]) -> ([str], [('str', 'str')]):
+  if os.path.isdir(dir_path):
+    base_dir = dir_path
+    for search_term in search_terms:
+      glob_search_term = '*' + search_term + '*'
+      file_paths = glob.glob(os.path.join(dir_path, glob_search_term))
+      if len(file_paths) > 0:
+        # we've found videos so don't bother searching for more
+        break
+  else:
+    # presume it's actually a single file path
+    base_dir = os.path.dirname(dir_path)
+    file_paths = [dir_path]
+  files = []
+  for file_path in file_paths:
+      file_name, file_extension = os.path.splitext(os.path.basename(file_path))
+      files.append((file_name, file_extension))
+  return base_dir, files
+
+
+def config_verified(config: {}) -> (str, [{}]):
   '''
 
   '''
   error_msgs = []
   if 'input_video_path' in config:
     if config['input_video_path'] is None:
-      error_msgs.append('No input video was provided.')
+      error_msgs.append('No input path to video/s was provided.')
   else:
-      error_msgs.append('No input video was provided.')
+      error_msgs.append('No input path to video/s was provided.')
   if 'template_image_path' in config:
     if config['template_image_path'] is None:
       error_msgs.append('No input template image was provided.')
   else:
       error_msgs.append('No input template image was provided.')
-
+  
   if len(error_msgs) > 0:
     error_msg = 'ERROR.'
     for error_string in error_msgs:
@@ -335,114 +359,154 @@ def config_checked(config: {}) -> {}:
     print(error_msg)
     sys.exit(1)
 
-  if 'output_video_path' not in config:
-    # presume config came from json and so if it didn't list it don't output it
-    config['output_video_path'] = None
-  elif config['output_video_path'] is None:
-    # presume config came from cmdline and default behaviour is to output to local dir
-    config['output_video_path'] = './tracking_results.mp4'
+  template_image_path = config['template_image_path']
+
+  file_extensions = ['mp4', 'avi']
+  base_dir, video_files = contents_of_dir(dir_path=config['input_video_path'], search_terms=file_extensions)
+  
+  results_dir_path = os.path.join(base_dir, 'results')
+  results_json_dir_path = os.path.join(results_dir_path, 'json')
+  results_video_dir_path = os.path.join(results_dir_path, 'video')
+  results_xlsx_dir_path = os.path.join(results_dir_path, 'xlsx')
+  dirs = {
+    'base_dir': base_dir,
+    'results_dir_path': results_dir_path,
+    'results_json_dir_path': results_json_dir_path,
+    'results_video_dir_path': results_video_dir_path,
+    'results_xlsx_dir_path': results_xlsx_dir_path,
+  }
 
   if 'path_to_excel_template' not in config:
-    config['path_to_excel_template'] = None
+    path_to_excel_template = None
+  else:
+    path_to_excel_template = config['path_to_excel_template']
+    
+  if 'template_as_guide' not in config:
+    template_as_guide = None
+  else:
+    template_as_guide = config['template_as_guide']
 
-  if config['path_to_excel_template'] is not None:
-    if 'path_to_excel_results' not in config :
-      config['path_to_excel_results'] = './tracking_results.xlsx'
-    elif config['path_to_excel_results'] is None:
-      config['path_to_excel_results'] = './tracking_results.xlsx'
-
-  if 'template_as_guide' not in config:  
-    config['template_as_guide'] = None
-  
   if 'seconds_per_period' not in config:
-    config['seconds_per_period'] = None
+    seconds_per_period = None
+  else:
+    seconds_per_period = config['seconds_per_period']
   
   if 'microns_per_pixel' not in config:
-    config['microns_per_pixel'] = None
-  
-  if 'output_json_path' not in config:
-    config['output_json_path'] = None
-  
-  return config
+    microns_per_pixel = None
+  else:
+    microns_per_pixel = config['microns_per_pixel']
+
+  configs = []
+  for file_name, file_extension in video_files:
+    input_video_path = os.path.join(base_dir, file_name + file_extension)
+    output_video_path = os.path.join(results_video_dir_path, file_name + '-results.' + file_extension)
+    output_json_path = os.path.join(results_json_dir_path, file_name + '-results.json')
+    path_to_excel_results = os.path.join(results_xlsx_dir_path, file_name + '-reslts.xlsx')
+    configs.append({
+      'input_video_path': input_video_path,
+      'template_image_path': template_image_path,
+      'output_video_path': output_video_path,
+      'output_json_path': output_json_path,
+      'path_to_excel_template': path_to_excel_template,
+      'path_to_excel_results': path_to_excel_results,
+      'template_as_guide': template_as_guide,
+      'seconds_per_period': seconds_per_period,
+      'microns_per_pixel': microns_per_pixel
+    })
+
+  return (dirs, configs)
 
 
-# TODO: allow a directory of videos to be processed
 if __name__ == '__main__':
-    # parse the input args
-    parser = argparse.ArgumentParser(
-        description='Tracks a template image through each frame of a video.',
-    )
-    parser.add_argument(
-        '--input_video_path',
-        default=None,
-        help='Path of the input video to track the templated.',
-    )
-    parser.add_argument(
-        '--template_image_path',
-        default=None,
-        help='Path to an image that will be used as a template to match.',
-    )
-    parser.add_argument(
-        '--path_to_excel_template',
-        default=None,
-        help='path to exel spread sheet used as a template to write the results into',
-    )
-    parser.add_argument(
-      '--json_config_path',
+  # os.path.expanduser('~')
+  # home_dir = pathlib.Path.home()
+
+  # read in a config file & parse the input args
+  parser = argparse.ArgumentParser(
+      description='Tracks a template image through each frame of a video.',
+  )
+  parser.add_argument(
+      '--input_video_path',
       default=None,
-      help='Path of a json file with run config parameters'      
-    )
-    parser.add_argument(
-        '--output_video_path',
-        default=None,
-        help='Path to write a video with the tracking results visualized.',
-    )
-    parser.add_argument(
-        '-template_as_guide',
-        action='store_true',
-        help='Use the template to find a roi within the video to use as a template.',
-    )
-    parser.add_argument(
-        '--seconds_per_period',
-        default=None,
-        help='approximate minimum number of seconds for template to complete a full period of movement.',
-    )
-    parser.add_argument(
-        '--microns_per_pixel',
-        default=None,
-        help='conversion factor for pixel distances to microns',
-    )
-    parser.add_argument(
-        '--output_json_path',
-        default=None,
-        help='Path to write the output results json.',
-    )
-    parser.add_argument(
-        '--path_to_excel_results',
-        default=None,
-        help='path to write the results as an excel spread sheet',
-    )
-    raw_args = parser.parse_args()
+      help='Path of input video/s to track a template.',
+  )
+  parser.add_argument(
+      '--template_image_path',
+      default=None,
+      help='Path to an image that will be used as a template to match.',
+  )
+  parser.add_argument(
+      '--path_to_excel_template',
+      default=None,
+      help='path to exel spread sheet used as a template to write the results into',
+  )
+  parser.add_argument(
+    '--json_config_path',
+    default=None,
+    help='Path of a json file with run config parameters'      
+  )
+  parser.add_argument(
+      '--output_path',
+      default=None,
+      help='Path to write tracking results.',
+  )
+  parser.add_argument(
+      '-template_as_guide',
+      action='store_true',
+      help='Use the template to find a roi within the video to use as a template.',
+  )
+  parser.add_argument(
+      '--seconds_per_period',
+      default=None,
+      help='approximate minimum number of seconds for template to complete a full period of movement.',
+  )
+  parser.add_argument(
+      '--microns_per_pixel',
+      default=None,
+      help='conversion factor for pixel distances to microns',
+  )
+  raw_args = parser.parse_args()
 
-    if raw_args.json_config_path is not None:
-      args = args_from_json(raw_args.json_config_path)
-    else:
-      args = args_from_cmdline(raw_args)
+  if raw_args.json_config_path is not None:
+    dirs, args = setup_from_json(raw_args.json_config_path)
+  else:
+    dirs, args = setup_from_cmdline(raw_args)
 
+  # make all the dirs needed for writing the results
+  os.mkdir(dirs['results_dir_path'])
+  os.mkdir(dirs['results_json_dir_path'])
+  os.mkdir(dirs['results_video_dir_path'])
+  os.mkdir(dirs['results_xlsx_dir_path'])
+
+  # run the tracking routine on each input video
+  # and write out the results
+  for input_args in args:
     tracking_results, frames_per_second = track_template(
-      args['input_video_path'],
-      args['template_image_path'],
-      args['output_video_path'],
-      args['template_as_guide'],
-      args['seconds_per_period'],
-      args['microns_per_pixel']
+      input_args['input_video_path'],
+      input_args['template_image_path'],
+      input_args['output_video_path'],
+      input_args['template_as_guide'],
+      input_args['seconds_per_period'],
+      input_args['microns_per_pixel']
     )
 
-    # dump the results as json if requested
-    if args['output_json_path'] is not None:
-      with open(args['output_json_path'], 'w') as outfile:
-        json.dump(tracking_results, outfile, indent=4)
+    # write the results as xlsx
+    results_to_csv(tracking_results, input_args['path_to_excel_template'], input_args['path_to_excel_results'], frames_per_second)
 
-    # dump the results as xlsx if requested
-    if args['path_to_excel_template'] is not None:
-      results_to_csv(tracking_results, args['path_to_excel_template'], args['path_to_excel_results'], frames_per_second)
+    # write the run config and results as json
+    if input_args['output_json_path'] is not None:
+      tracking_results_complete = {
+        "INPUT_ARGS": input_args,
+        "RESULTS": tracking_results
+      }
+      with open(input_args['output_json_path'], 'w') as outfile:
+        json.dump(tracking_results_complete, outfile, indent=4)
+
+  # create a zip archive and write all the xlsx files to it
+  xlsx_archive_file_path = os.path.join(dirs['results_dir_path'], 'xlsx-results.zip')
+  xlsx_archive = zipfile.ZipFile(xlsx_archive_file_path, 'w')
+  for dir_name, _, file_names in os.walk(dirs['results_xlsx_dir_path']):
+      for file_name in file_names:
+          file_path = os.path.join(dir_name, file_name)
+          xlsx_archive.write(file_path, os.path.basename(file_path))
+  xlsx_archive.close()

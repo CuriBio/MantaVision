@@ -2,3 +2,6 @@
 /test_output/
 /tmp/
 /test_videos/
+tracker_results/
+test_data/videos/results/
+*.zip
