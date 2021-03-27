@@ -16,6 +16,17 @@ from skimage import filters as skimage_filters # pip install --user scikit-image
 from skimage import exposure as skimage_exposure
 
 
+def contrast_enhanced(image_to_adjust):
+  '''
+  Performs an automatic adjustment of the input intensity range to enhance contrast.
+  
+  Args:
+    image_to_adjust: the image to adjust the contrast of. 
+  '''
+  optimal_threshold = skimage_filters.threshold_yen(image_to_adjust)
+  uint8_range = (0, 255)
+  return skimage_exposure.rescale_intensity(image_to_adjust, in_range=(0, optimal_threshold), out_range=uint8_range)
+
 
 def best_template_match_ccoef(video_to_search, template_to_find, max_frames_to_check) -> np.ndarray:
   initial_frame_pos = video_to_search.get(cv.CAP_PROP_POS_FRAMES)
@@ -60,18 +71,6 @@ def best_template_match_ccoef(video_to_search, template_to_find, max_frames_to_c
 
 def best_template_match(video_to_search, template_to_find, max_frames_to_check) -> np.ndarray:
   return best_template_match_ccoef(video_to_search, template_to_find, max_frames_to_check)
-
-
-def contrast_enhanced(image_to_adjust):
-  '''
-  Performs an automatic adjustment of the input intensity range to enhance contrast.
-  
-  Args:
-    image_to_adjust: the image to adjust the contrast of. 
-  '''
-  optimal_threshold = skimage_filters.threshold_yen(image_to_adjust)
-  uint8_range = (0, 255)
-  return skimage_exposure.rescale_intensity(image_to_adjust, in_range=(0, optimal_threshold), out_range=uint8_range)
 
 
 def track_template(
@@ -297,24 +296,6 @@ def results_to_csv(tracking_results: [{}], path_to_template_file: str, path_to_o
   workbook.save(filename=path_to_output_file)
 
 
-def setup_from_cmdline(cmd_line_args) -> (str, [{}]):
-  config = {}
-  config['input_video_path'] = cmd_line_args.input_video_path
-  config['template_image_path'] = cmd_line_args.template_image_path
-  config['output_path'] = cmd_line_args.output_video_path
-  config['template_as_guide'] = cmd_line_args.template_as_guide
-  config['seconds_per_period'] = cmd_line_args.seconds_per_period
-  config['microns_per_pixel'] = cmd_line_args.microns_per_pixel
-  config['path_to_excel_template'] = cmd_line_args.path_to_excel_template
-  return config_verified(config)
-
-
-def setup_from_json(json_config_path) -> (str, [{}]):
-  json_file = open(json_config_path)
-  config = json.load(json_file)
-  return config_verified(config)
-
-
 def contents_of_dir(dir_path: str, search_terms: [str]) -> ([str], [('str', 'str')]):
   if os.path.isdir(dir_path):
     base_dir = dir_path
@@ -417,6 +398,24 @@ def config_verified(config: {}) -> (str, [{}]):
   return (dirs, configs)
 
 
+def setup_from_cmdline(cmd_line_args) -> (str, [{}]):
+  config = {}
+  config['input_video_path'] = cmd_line_args.input_video_path
+  config['template_image_path'] = cmd_line_args.template_image_path
+  config['output_path'] = cmd_line_args.output_video_path
+  config['template_as_guide'] = cmd_line_args.template_as_guide
+  config['seconds_per_period'] = cmd_line_args.seconds_per_period
+  config['microns_per_pixel'] = cmd_line_args.microns_per_pixel
+  config['path_to_excel_template'] = cmd_line_args.path_to_excel_template
+  return config_verified(config)
+
+
+def setup_from_json(json_config_path) -> (str, [{}]):
+  json_file = open(json_config_path)
+  config = json.load(json_file)
+  return config_verified(config)
+
+
 if __name__ == '__main__':
   # os.path.expanduser('~')
   # home_dir = pathlib.Path.home()
@@ -472,7 +471,21 @@ if __name__ == '__main__':
   else:
     dirs, args = setup_from_cmdline(raw_args)
 
-  # make all the dirs needed for writing the results
+  # make all the dirs needed for writing the results 
+  # unless they already exist in which case we need to barf
+  dirs_exist_error_message = ''
+  if os.path.isdir(dirs['results_dir_path']):
+    dirs_exist_error_message += "results dir already exists. Cannot overwrite.\n"
+  if os.path.isdir(dirs['results_json_dir_path']):
+    dirs_exist_error_message += "json results dir already exists. Cannot overwrite.\n"
+  if os.path.isdir(dirs['results_video_dir_path']):
+    dirs_exist_error_message += "video results dir already exists. Cannot overwrite.\n"
+  if os.path.isdir(dirs['results_xlsx_dir_path']):
+    dirs_exist_error_message += "xlsx results dir already exists. Cannot overwrite.\n"
+  if len(dirs_exist_error_message) > 0:
+    dirs_exist_error_message = "ERROR.\n" + dirs_exist_error_message + "Nothing Tracked."
+    print(dirs_exist_error_message)
+    sys.exit(1)
   os.mkdir(dirs['results_dir_path'])
   os.mkdir(dirs['results_json_dir_path'])
   os.mkdir(dirs['results_video_dir_path'])
