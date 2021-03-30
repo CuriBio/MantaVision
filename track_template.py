@@ -14,7 +14,7 @@ import openpyxl # pip install --user openpyxl
 import cv2 as cv # pip install --user opencv-python
 from skimage import filters as skimage_filters # pip install --user scikit-image
 from skimage import exposure as skimage_exposure
-
+from video2jpgs import video_to_jpgs
 
 def contrast_enhanced(image_to_adjust):
   '''
@@ -23,9 +23,10 @@ def contrast_enhanced(image_to_adjust):
   Args:
     image_to_adjust: the image to adjust the contrast of. 
   '''
-  optimal_threshold = skimage_filters.threshold_yen(image_to_adjust)
-  uint8_range = (0, 255)
-  return skimage_exposure.rescale_intensity(image_to_adjust, in_range=(0, optimal_threshold), out_range=uint8_range)
+  return image_to_adjust
+  # optimal_threshold = skimage_filters.threshold_yen(image_to_adjust)
+  # uint8_range = (0, 255)
+  # return skimage_exposure.rescale_intensity(image_to_adjust, in_range=(0, optimal_threshold), out_range=uint8_range)
 
 
 def best_template_match_ccoef(video_to_search, template_to_find, max_frames_to_check) -> np.ndarray:
@@ -347,14 +348,17 @@ def config_verified(config: {}) -> (str, [{}]):
   
   results_dir_path = os.path.join(base_dir, 'results')
   results_json_dir_path = os.path.join(results_dir_path, 'json')
-  results_video_dir_path = os.path.join(results_dir_path, 'video')
   results_xlsx_dir_path = os.path.join(results_dir_path, 'xlsx')
+  results_video_dir_path = os.path.join(results_dir_path, 'video')
+  results_video_frames_dir_path = os.path.join(results_video_dir_path, 'frames')  
+
   dirs = {
     'base_dir': base_dir,
     'results_dir_path': results_dir_path,
     'results_json_dir_path': results_json_dir_path,
-    'results_video_dir_path': results_video_dir_path,
     'results_xlsx_dir_path': results_xlsx_dir_path,
+    'results_video_dir_path': results_video_dir_path,
+    'results_video_frames_dir_path': results_video_frames_dir_path
   }
 
   if 'path_to_excel_template' not in config:
@@ -380,13 +384,16 @@ def config_verified(config: {}) -> (str, [{}]):
   configs = []
   for file_name, file_extension in video_files:
     input_video_path = os.path.join(base_dir, file_name + file_extension)
-    output_video_path = os.path.join(results_video_dir_path, file_name + '-results.' + file_extension)
+    output_video_frames_dir_path = os.path.join(results_video_frames_dir_path, file_name)
     output_json_path = os.path.join(results_json_dir_path, file_name + '-results.json')
     path_to_excel_results = os.path.join(results_xlsx_dir_path, file_name + '-reslts.xlsx')
+    output_video_path = os.path.join(results_video_dir_path, file_name + '-results.' + file_extension)
+
     configs.append({
       'input_video_path': input_video_path,
       'template_image_path': template_image_path,
       'output_video_path': output_video_path,
+      'output_video_frames_dir_path': output_video_frames_dir_path,
       'output_json_path': output_json_path,
       'path_to_excel_template': path_to_excel_template,
       'path_to_excel_results': path_to_excel_results,
@@ -478,18 +485,19 @@ if __name__ == '__main__':
     dirs_exist_error_message += "results dir already exists. Cannot overwrite.\n"
   if os.path.isdir(dirs['results_json_dir_path']):
     dirs_exist_error_message += "json results dir already exists. Cannot overwrite.\n"
-  if os.path.isdir(dirs['results_video_dir_path']):
-    dirs_exist_error_message += "video results dir already exists. Cannot overwrite.\n"
   if os.path.isdir(dirs['results_xlsx_dir_path']):
     dirs_exist_error_message += "xlsx results dir already exists. Cannot overwrite.\n"
+  if os.path.isdir(dirs['results_video_dir_path']):
+    dirs_exist_error_message += "video results dir already exists. Cannot overwrite.\n"
   if len(dirs_exist_error_message) > 0:
     dirs_exist_error_message = "ERROR.\n" + dirs_exist_error_message + "Nothing Tracked."
     print(dirs_exist_error_message)
     sys.exit(1)
   os.mkdir(dirs['results_dir_path'])
   os.mkdir(dirs['results_json_dir_path'])
-  os.mkdir(dirs['results_video_dir_path'])
   os.mkdir(dirs['results_xlsx_dir_path'])
+  os.mkdir(dirs['results_video_dir_path'])
+  os.mkdir(dirs['results_video_frames_dir_path'])
 
   # run the tracking routine on each input video
   # and write out the results
@@ -502,6 +510,10 @@ if __name__ == '__main__':
       input_args['seconds_per_period'],
       input_args['microns_per_pixel']
     )
+
+    # write out the results video as frames
+    os.mkdir(input_args['output_video_frames_dir_path'])
+    video_to_jpgs(input_args['output_video_path'], input_args['output_video_frames_dir_path'])
 
     # write the results as xlsx
     results_to_csv(tracking_results, input_args['path_to_excel_template'], input_args['path_to_excel_results'], frames_per_second)

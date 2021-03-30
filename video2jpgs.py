@@ -63,12 +63,12 @@ def video_to_jpgs(input_video_path: str = None, output_dir_path: str = None, enh
       return error_code
     frame_file_name = frame_base_name + "_frame_" + str(frame_number).zfill(zero_padding_length) + ".jpg"
     frame_path = os.path.join(output_dir_path, frame_file_name)
-    auto_contrast_msg = ''
+    # auto_contrast_msg = ''
     if enhance_contrast:
       frame = contrast_enhanced(frame) 
       auto_contrast_msg = '(auto contrast enhanced)'
     cv.imwrite(frame_path, frame)
-    print(f'Saved frame {frame_number} to {frame_path} {auto_contrast_msg}')
+    # print(f'Saved frame {frame_number} to {frame_path} {auto_contrast_msg}')
 
   return conversion_success
 

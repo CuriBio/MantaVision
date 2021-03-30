@@ -5,3 +5,5 @@
 tracker_results/
 test_data/videos/results/
 *.zip
+__pycache__
+
