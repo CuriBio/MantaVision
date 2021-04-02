@@ -16,6 +16,13 @@ from skimage import filters as skimage_filters # pip install --user scikit-image
 from skimage import exposure as skimage_exposure
 from video2jpgs import video_to_jpgs
 
+# TODO: If accuracy isn't acceptable, try 
+#       - sub pixel version of current method, 
+#       - different match measures like mutual information and/or grad angle,
+#       - adding in rotation of the template +/- some small angle for each position in the video frame.
+# TODO: option to add fixed grid lines in say a red colour
+
+
 def contrast_enhanced(image_to_adjust):
   '''
   Performs an automatic adjustment of the input intensity range to enhance contrast.
@@ -23,10 +30,10 @@ def contrast_enhanced(image_to_adjust):
   Args:
     image_to_adjust: the image to adjust the contrast of. 
   '''
-  return image_to_adjust
   # optimal_threshold = skimage_filters.threshold_yen(image_to_adjust)
-  # uint8_range = (0, 255)
-  # return skimage_exposure.rescale_intensity(image_to_adjust, in_range=(0, optimal_threshold), out_range=uint8_range)
+  optimal_threshold = skimage_filters.threshold_minimum(image_to_adjust)
+  uint8_range = (0, 255)
+  return skimage_exposure.rescale_intensity(image_to_adjust, in_range=(0, optimal_threshold), out_range=uint8_range)
 
 
 def best_template_match_ccoef(video_to_search, template_to_find, max_frames_to_check) -> np.ndarray:
@@ -49,7 +56,7 @@ def best_template_match_ccoef(video_to_search, template_to_find, max_frames_to_c
 
     # track the template
     frame = contrast_enhanced(cv.cvtColor(frame, cv.COLOR_BGR2GRAY)).astype(np.uint8)
-    match_results = cv.matchTemplate(frame, template_to_find, cv.TM_CCOEFF_NORMED)
+    match_results = cv.matchTemplate(frame, template_to_find, cv.TM_CCOEFF)
     _, match_measure, _, match_coordinates = cv.minMaxLoc(match_results)
     if match_measure > best_match_measure:
       best_match_measure = match_measure
@@ -81,7 +88,7 @@ def track_template(
   template_as_guide: bool = False,
   approx_seconds_per_period: float = None,
   microns_per_pixel: float = None
-) -> {}:
+) -> (str, [{}], float):
   '''
   Tracks a template image through each frame of a video.
 
@@ -92,20 +99,20 @@ def track_template(
     template_as_guide:          use the template to find a roi in the video to use as a template.
     approx_seconds_per_period:  approximate number of seconds for template to complete a full period of movement.',
   Returns:
-    List of per frame tracking results.
+    and error string (or None if no errors occurred), a list of per frame tracking results, & the frame rate.
   '''
+  error_msg = None
+  frames_per_second = float(0.0)
 
   if input_video_path is None:
     error_msg = "ERROR. No path provided to an input video. Nothing has been tracked."
-    print(error_msg)
-    return {'STATUS': 'FAILURE', 'STATUS_DETAIL': error_msg}    
+    return (error_msg, [{}], frames_per_second)
 
   # open a video reader stream
   input_video_stream = cv.VideoCapture(input_video_path)
   if not input_video_stream.isOpened():
     error_msg = "Error. Can't open videos stream for capture. Nothing has been tracked."
-    print(error_msg)
-    return {'STATUS': 'FAILURE', 'STATUS_DETAIL': error_msg}
+    return (error_msg, [{}], frames_per_second)
   frame_width  = int(input_video_stream.get(cv.CAP_PROP_FRAME_WIDTH))
   frame_height = int(input_video_stream.get(cv.CAP_PROP_FRAME_HEIGHT))
   frame_size = (frame_width, frame_height)
@@ -115,8 +122,7 @@ def track_template(
   template = cv.imread(template_image_path)
   if template is None:
     error_msg = "ERROR. The path provided for template does not point to an image file. Nothing has been tracked."
-    print(error_msg)
-    return {'STATUS': 'FAILURE', 'STATUS_DETAIL': error_msg}        
+    return (error_msg, [{}], frames_per_second)
   template = cv.cvtColor(template, cv.COLOR_BGR2GRAY)
   if template_as_guide:
     if approx_seconds_per_period is None:
@@ -137,8 +143,7 @@ def track_template(
     else:
       error_msg = "Error. File format extension " + format_extension + " is not supported. "
       error_msg += "Only .mp4 and .avi are allowed. Nothing has been tracked."
-      print(error_msg)
-      return {'STATUS': 'FAILURE', 'STATUS_DETAIL': error_msg}
+      return (error_msg, [{}], frames_per_second)
 
     output_video_codec = cv.VideoWriter_fourcc(*'mp4v') #cv.VideoWriter_fourcc(*'DIVX') #     
     output_video_stream = cv.VideoWriter(
@@ -160,16 +165,16 @@ def track_template(
   tracking_results = [] # will be a list of dicts
   number_of_frames = int(input_video_stream.get(cv.CAP_PROP_FRAME_COUNT))  
   for frame_number in range(number_of_frames):
-    frame_returned, frame = input_video_stream.read()
+    frame_returned, raw_frame = input_video_stream.read()
     if not frame_returned:
       error_msg = "Error. Unexpected problem during video frame capture. Exiting."
-      print(error_msg)
-      return {'STATUS': 'FAILURE', 'STATUS_DETAIL': error_msg}
+      return (error_msg, [{}], frames_per_second)
 
-    frame = contrast_enhanced(cv.cvtColor(frame, cv.COLOR_BGR2GRAY)).astype(np.uint8)
+    frame = contrast_enhanced(cv.cvtColor(raw_frame, cv.COLOR_BGR2GRAY)).astype(np.uint8)
 
     # find the best match for the template in the current frame
-    match_results = cv.matchTemplate(frame, template, cv.TM_CCOEFF_NORMED)
+    match_results = cv.matchTemplate(frame, template, cv.TM_CCOEFF)
+
     _, match_measure, _, match_coordinates = cv.minMaxLoc(match_results)  # opencv returns in x, y order
     template_origin_x = match_coordinates[0]
     template_origin_y = match_coordinates[1]
@@ -198,7 +203,8 @@ def track_template(
     if output_video_stream is not None:
       grid_colour_bgr = (255, 128, 0)      
       grid_square_diameter = 10
-      frame = cv.cvtColor(frame, cv.COLOR_GRAY2BGR)
+      frame = raw_frame
+
       # mark the template ROI on each frame
       # first draw a rectangle around the template border
       grid_width = int(template_width/grid_square_diameter)*grid_square_diameter
@@ -267,19 +273,31 @@ def track_template(
     frame_info['XY_DISPLACEMENT'] = math.sqrt(x_displacement*x_displacement + y_displacement*y_displacement)
     adjusted_tracking_results.append(frame_info)
 
-  return adjusted_tracking_results, frames_per_second
+  return (error_msg, adjusted_tracking_results, frames_per_second)
 
 
-def results_to_csv(tracking_results: [{}], path_to_template_file: str, path_to_output_file, frames_per_second: float):    
+def results_to_csv(
+  tracking_results: [{}],
+  path_to_template_file: str,
+  path_to_output_file,
+  frames_per_second: float,
+  well_name: str = None
+):    
   if path_to_template_file is None:
     workbook = openpyxl.Workbook()
   else:
     shutil.copyfile(path_to_template_file, path_to_output_file)
     workbook = openpyxl.load_workbook(filename=path_to_output_file)
-
   sheet = workbook.active
-  # set the frames per second field
+
+  if well_name is None:
+    well_name = 'unknown'
+  sheet['E2'] = well_name  
+  sheet['E3'] = '0000-00-00 00:00'  # time stamp
+  sheet['E4'] = 'N/A'  # plate barcode
   sheet['E5'] = frames_per_second
+  sheet['E6'] = 'y'  # do twiches point up
+  sheet['E7'] = 'N/A'  # microscope name
 
   # set the time and post displacement fields
   template_start_row = 2
@@ -325,14 +343,21 @@ def config_verified(config: {}) -> (str, [{}]):
   if 'input_video_path' in config:
     if config['input_video_path'] is None:
       error_msgs.append('No input path to video/s was provided.')
+    else:
+      if not os.path.isdir(config['input_video_path']):
+        error_msgs.append('Input path to video/s does not exist.')      
   else:
       error_msgs.append('No input path to video/s was provided.')
+  
   if 'template_image_path' in config:
     if config['template_image_path'] is None:
-      error_msgs.append('No input template image was provided.')
+      error_msgs.append('No input template image path was provided.')
+    else:
+      if not os.path.isfile(config['template_image_path']):
+        error_msgs.append('Input template image file does not exist.')
   else:
-      error_msgs.append('No input template image was provided.')
-  
+      error_msgs.append('No input template image path was provided.')
+
   if len(error_msgs) > 0:
     error_msg = 'ERROR.'
     for error_string in error_msgs:
@@ -382,12 +407,14 @@ def config_verified(config: {}) -> (str, [{}]):
     microns_per_pixel = config['microns_per_pixel']
 
   configs = []
+  well_name_len = 4
   for file_name, file_extension in video_files:
     input_video_path = os.path.join(base_dir, file_name + file_extension)
     output_video_frames_dir_path = os.path.join(results_video_frames_dir_path, file_name)
     output_json_path = os.path.join(results_json_dir_path, file_name + '-results.json')
     path_to_excel_results = os.path.join(results_xlsx_dir_path, file_name + '-reslts.xlsx')
-    output_video_path = os.path.join(results_video_dir_path, file_name + '-results.' + file_extension)
+    output_video_path = os.path.join(results_video_dir_path, file_name + '-results' + file_extension)
+    well_name = file_name[-well_name_len:]
 
     configs.append({
       'input_video_path': input_video_path,
@@ -399,7 +426,8 @@ def config_verified(config: {}) -> (str, [{}]):
       'path_to_excel_results': path_to_excel_results,
       'template_as_guide': template_as_guide,
       'seconds_per_period': seconds_per_period,
-      'microns_per_pixel': microns_per_pixel
+      'microns_per_pixel': microns_per_pixel,
+      'well_name': well_name
     })
 
   return (dirs, configs)
@@ -502,7 +530,7 @@ if __name__ == '__main__':
   # run the tracking routine on each input video
   # and write out the results
   for input_args in args:
-    tracking_results, frames_per_second = track_template(
+    error_msg, tracking_results, frames_per_second = track_template(
       input_args['input_video_path'],
       input_args['template_image_path'],
       input_args['output_video_path'],
@@ -511,12 +539,22 @@ if __name__ == '__main__':
       input_args['microns_per_pixel']
     )
 
+    if error_msg is not None:
+      print(error_msg)
+      sys.exit(1)
+
     # write out the results video as frames
     os.mkdir(input_args['output_video_frames_dir_path'])
     video_to_jpgs(input_args['output_video_path'], input_args['output_video_frames_dir_path'])
 
     # write the results as xlsx
-    results_to_csv(tracking_results, input_args['path_to_excel_template'], input_args['path_to_excel_results'], frames_per_second)
+    results_to_csv(
+      tracking_results,
+      input_args['path_to_excel_template'],
+      input_args['path_to_excel_results'],
+      frames_per_second,
+      input_args['well_name']
+    )
 
     # write the run config and results as json
     if input_args['output_json_path'] is not None:
