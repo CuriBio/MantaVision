@@ -435,7 +435,7 @@ def config_verified(config: {}) -> (str, [{}]):
 
 def track_templates(config: {}):
 
-  print("\nTrack templates running...\n")
+  print("\nTemplate Tracker running...\n")
   # verify config
   dirs, args = config_verified(config)
 
@@ -507,7 +507,7 @@ def track_templates(config: {}):
           xlsx_archive.write(file_path, os.path.basename(file_path))
   xlsx_archive.close()
 
-  print("\n...Track templates complete.\n")
+  print("\n...Template Tracker complete.\n")
 
 
 def config_from_json(json_config_path) -> (str, [{}]):
