@@ -81,7 +81,7 @@ def best_template_match(video_to_search, template_to_find, max_frames_to_check) 
   return best_template_match_ccoef(video_to_search, template_to_find, max_frames_to_check)
 
 
-def track_template(
+def run_track_template(
   input_video_path: str,
   template_image_path: str,
   output_video_path: str = None,
@@ -433,22 +433,99 @@ def config_verified(config: {}) -> (str, [{}]):
   return (dirs, configs)
 
 
-def setup_from_cmdline(cmd_line_args) -> (str, [{}]):
-  config = {}
-  config['input_video_path'] = cmd_line_args.input_video_path
-  config['template_image_path'] = cmd_line_args.template_image_path
-  config['output_path'] = cmd_line_args.output_video_path
-  config['template_as_guide'] = cmd_line_args.template_as_guide
-  config['seconds_per_period'] = cmd_line_args.seconds_per_period
-  config['microns_per_pixel'] = cmd_line_args.microns_per_pixel
-  config['path_to_excel_template'] = cmd_line_args.path_to_excel_template
-  return config_verified(config)
+def track_templates(config: {}):
+
+  print("\nTrack templates running...\n")
+  # verify config
+  dirs, args = config_verified(config)
+
+  # make all the dirs needed for writing the results 
+  # unless they already exist in which case we need to barf
+  dirs_exist_error_message = ''
+  if os.path.isdir(dirs['results_dir_path']):
+    dirs_exist_error_message += "results dir already exists. Cannot overwrite.\n"
+  if os.path.isdir(dirs['results_json_dir_path']):
+    dirs_exist_error_message += "json results dir already exists. Cannot overwrite.\n"
+  if os.path.isdir(dirs['results_xlsx_dir_path']):
+    dirs_exist_error_message += "xlsx results dir already exists. Cannot overwrite.\n"
+  if os.path.isdir(dirs['results_video_dir_path']):
+    dirs_exist_error_message += "video results dir already exists. Cannot overwrite.\n"
+  if len(dirs_exist_error_message) > 0:
+    dirs_exist_error_message = "ERROR.\n" + dirs_exist_error_message + "Nothing Tracked."
+    print(dirs_exist_error_message)
+    sys.exit(1)
+  os.mkdir(dirs['results_dir_path'])
+  os.mkdir(dirs['results_json_dir_path'])
+  os.mkdir(dirs['results_xlsx_dir_path'])
+  os.mkdir(dirs['results_video_dir_path'])
+  os.mkdir(dirs['results_video_frames_dir_path'])
+
+  # run the tracking routine on each input video
+  # and write out the results
+  for input_args in args:
+    error_msg, tracking_results, frames_per_second = run_track_template(
+      input_args['input_video_path'],
+      input_args['template_image_path'],
+      input_args['output_video_path'],
+      input_args['template_as_guide'],
+      input_args['seconds_per_period'],
+      input_args['microns_per_pixel']
+    )
+
+    if error_msg is not None:
+      print(error_msg)
+      sys.exit(1)
+
+    # write out the results video as frames
+    os.mkdir(input_args['output_video_frames_dir_path'])
+    video_to_jpgs(input_args['output_video_path'], input_args['output_video_frames_dir_path'])
+
+    # write the results as xlsx
+    results_to_csv(
+      tracking_results,
+      input_args['path_to_excel_template'],
+      input_args['path_to_excel_results'],
+      frames_per_second,
+      input_args['well_name']
+    )
+
+    # write the run config and results as json
+    if input_args['output_json_path'] is not None:
+      tracking_results_complete = {
+        "INPUT_ARGS": input_args,
+        "RESULTS": tracking_results
+      }
+      with open(input_args['output_json_path'], 'w') as outfile:
+        json.dump(tracking_results_complete, outfile, indent=4)
+
+  # create a zip archive and write all the xlsx files to it
+  xlsx_archive_file_path = os.path.join(dirs['results_dir_path'], 'xlsx-results.zip')
+  xlsx_archive = zipfile.ZipFile(xlsx_archive_file_path, 'w')
+  for dir_name, _, file_names in os.walk(dirs['results_xlsx_dir_path']):
+      for file_name in file_names:
+          file_path = os.path.join(dir_name, file_name)
+          xlsx_archive.write(file_path, os.path.basename(file_path))
+  xlsx_archive.close()
+
+  print("\n...Track templates complete.\n")
 
 
-def setup_from_json(json_config_path) -> (str, [{}]):
+def config_from_json(json_config_path) -> (str, [{}]):
   json_file = open(json_config_path)
   config = json.load(json_file)
-  return config_verified(config)
+  return config
+
+
+def config_from_cmdline(cmdline_args) -> dict:
+  config = {}
+  config['input_video_path'] = cmdline_args.input_video_path
+  config['template_image_path'] = cmdline_args.template_image_path
+  config['output_path'] = cmdline_args.output_video_path
+  config['template_as_guide'] = cmdline_args.template_as_guide
+  config['seconds_per_period'] = cmdline_args.seconds_per_period
+  config['microns_per_pixel'] = cmdline_args.microns_per_pixel
+  config['path_to_excel_template'] = cmdline_args.path_to_excel_template  
+  return config
 
 
 if __name__ == '__main__':
@@ -502,74 +579,8 @@ if __name__ == '__main__':
   raw_args = parser.parse_args()
 
   if raw_args.json_config_path is not None:
-    dirs, args = setup_from_json(raw_args.json_config_path)
+    config = config_from_json(raw_args.json_config_path)
   else:
-    dirs, args = setup_from_cmdline(raw_args)
+    config = config_from_cmdline(raw_args)
 
-  # make all the dirs needed for writing the results 
-  # unless they already exist in which case we need to barf
-  dirs_exist_error_message = ''
-  if os.path.isdir(dirs['results_dir_path']):
-    dirs_exist_error_message += "results dir already exists. Cannot overwrite.\n"
-  if os.path.isdir(dirs['results_json_dir_path']):
-    dirs_exist_error_message += "json results dir already exists. Cannot overwrite.\n"
-  if os.path.isdir(dirs['results_xlsx_dir_path']):
-    dirs_exist_error_message += "xlsx results dir already exists. Cannot overwrite.\n"
-  if os.path.isdir(dirs['results_video_dir_path']):
-    dirs_exist_error_message += "video results dir already exists. Cannot overwrite.\n"
-  if len(dirs_exist_error_message) > 0:
-    dirs_exist_error_message = "ERROR.\n" + dirs_exist_error_message + "Nothing Tracked."
-    print(dirs_exist_error_message)
-    sys.exit(1)
-  os.mkdir(dirs['results_dir_path'])
-  os.mkdir(dirs['results_json_dir_path'])
-  os.mkdir(dirs['results_xlsx_dir_path'])
-  os.mkdir(dirs['results_video_dir_path'])
-  os.mkdir(dirs['results_video_frames_dir_path'])
-
-  # run the tracking routine on each input video
-  # and write out the results
-  for input_args in args:
-    error_msg, tracking_results, frames_per_second = track_template(
-      input_args['input_video_path'],
-      input_args['template_image_path'],
-      input_args['output_video_path'],
-      input_args['template_as_guide'],
-      input_args['seconds_per_period'],
-      input_args['microns_per_pixel']
-    )
-
-    if error_msg is not None:
-      print(error_msg)
-      sys.exit(1)
-
-    # write out the results video as frames
-    os.mkdir(input_args['output_video_frames_dir_path'])
-    video_to_jpgs(input_args['output_video_path'], input_args['output_video_frames_dir_path'])
-
-    # write the results as xlsx
-    results_to_csv(
-      tracking_results,
-      input_args['path_to_excel_template'],
-      input_args['path_to_excel_results'],
-      frames_per_second,
-      input_args['well_name']
-    )
-
-    # write the run config and results as json
-    if input_args['output_json_path'] is not None:
-      tracking_results_complete = {
-        "INPUT_ARGS": input_args,
-        "RESULTS": tracking_results
-      }
-      with open(input_args['output_json_path'], 'w') as outfile:
-        json.dump(tracking_results_complete, outfile, indent=4)
-
-  # create a zip archive and write all the xlsx files to it
-  xlsx_archive_file_path = os.path.join(dirs['results_dir_path'], 'xlsx-results.zip')
-  xlsx_archive = zipfile.ZipFile(xlsx_archive_file_path, 'w')
-  for dir_name, _, file_names in os.walk(dirs['results_xlsx_dir_path']):
-      for file_name in file_names:
-          file_path = os.path.join(dir_name, file_name)
-          xlsx_archive.write(file_path, os.path.basename(file_path))
-  xlsx_archive.close()
+  track_templates(config)
