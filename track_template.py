@@ -83,10 +83,9 @@ def best_template_match(video_to_search, template_to_find, max_frames_to_check) 
 
 def run_track_template(
   input_video_path: str,
-  template_image_path: str,
+  template_guide_image_path: str,
   output_video_path: str = None,
-  template_as_guide: bool = False,
-  approx_seconds_per_period: float = None,
+  guide_match_search_seconds: float = None,
   microns_per_pixel: float = None
 ) -> (str, [{}], float):
   '''
@@ -94,10 +93,9 @@ def run_track_template(
 
   Args:
     input_video_path:           path of the input video to track the template.
-    template_image_path:        path to an image that will be used as a template to match.
+    template_guide_image_path:        path to an image that will be used as a template to match.
     output_video_path:          path to write a video with the tracking results visualized. 
-    template_as_guide:          use the template to find a roi in the video to use as a template.
-    approx_seconds_per_period:  approximate number of seconds for template to complete a full period of movement.',
+    guide_match_search_seconds:  approximate number of seconds for template to complete a full period of movement.',
   Returns:
     and error string (or None if no errors occurred), a list of per frame tracking results, & the frame rate.
   '''
@@ -119,16 +117,15 @@ def run_track_template(
   frames_per_second = input_video_stream.get(cv.CAP_PROP_FPS)
 
   # open the template image
-  template = cv.imread(template_image_path)
+  template = cv.imread(template_guide_image_path)
   if template is None:
     error_msg = "ERROR. The path provided for template does not point to an image file. Nothing has been tracked."
     return (error_msg, [{}], frames_per_second)
   template = cv.cvtColor(template, cv.COLOR_BGR2GRAY)
-  if template_as_guide:
-    if approx_seconds_per_period is None:
-      max_frames_to_check = None
-    else:
-      max_frames_to_check = int(math.ceil(frames_per_second*float(approx_seconds_per_period)))
+  if guide_match_search_seconds is None:
+    max_frames_to_check = None
+  else:
+    max_frames_to_check = int(math.ceil(frames_per_second*float(guide_match_search_seconds)))
     template = best_template_match(input_video_stream, template, max_frames_to_check)
   template_height = template.shape[0]
   template_width = template.shape[1]
@@ -349,11 +346,11 @@ def config_verified(config: {}) -> (str, [{}]):
   else:
       error_msgs.append('No input path to video/s was provided.')
   
-  if 'template_image_path' in config:
-    if config['template_image_path'] is None:
+  if 'template_guide_image_path' in config:
+    if config['template_guide_image_path'] is None:
       error_msgs.append('No input template image path was provided.')
     else:
-      if not os.path.isfile(config['template_image_path']):
+      if not os.path.isfile(config['template_guide_image_path']):
         error_msgs.append('Input template image file does not exist.')
   else:
       error_msgs.append('No input template image path was provided.')
@@ -366,7 +363,7 @@ def config_verified(config: {}) -> (str, [{}]):
     print(error_msg)
     sys.exit(1)
 
-  template_image_path = config['template_image_path']
+  template_guide_image_path = config['template_guide_image_path']
 
   file_extensions = ['mp4', 'avi']
   base_dir, video_files = contents_of_dir(dir_path=config['input_video_path'], search_terms=file_extensions)
@@ -390,16 +387,11 @@ def config_verified(config: {}) -> (str, [{}]):
     path_to_excel_template = None
   else:
     path_to_excel_template = config['path_to_excel_template']
-    
-  if 'template_as_guide' not in config:
-    template_as_guide = None
-  else:
-    template_as_guide = config['template_as_guide']
 
-  if 'seconds_per_period' not in config:
-    seconds_per_period = None
+  if 'guide_match_search_seconds' not in config:
+    guide_match_search_seconds = None
   else:
-    seconds_per_period = config['seconds_per_period']
+    guide_match_search_seconds = config['guide_match_search_seconds']
   
   if 'microns_per_pixel' not in config:
     microns_per_pixel = None
@@ -418,14 +410,13 @@ def config_verified(config: {}) -> (str, [{}]):
 
     configs.append({
       'input_video_path': input_video_path,
-      'template_image_path': template_image_path,
+      'template_guide_image_path': template_guide_image_path,
       'output_video_path': output_video_path,
       'output_video_frames_dir_path': output_video_frames_dir_path,
       'output_json_path': output_json_path,
       'path_to_excel_template': path_to_excel_template,
       'path_to_excel_results': path_to_excel_results,
-      'template_as_guide': template_as_guide,
-      'seconds_per_period': seconds_per_period,
+      'guide_match_search_seconds': guide_match_search_seconds,
       'microns_per_pixel': microns_per_pixel,
       'well_name': well_name
     })
@@ -465,10 +456,9 @@ def track_templates(config: {}):
   for input_args in args:
     error_msg, tracking_results, frames_per_second = run_track_template(
       input_args['input_video_path'],
-      input_args['template_image_path'],
+      input_args['template_guide_image_path'],
       input_args['output_video_path'],
-      input_args['template_as_guide'],
-      input_args['seconds_per_period'],
+      input_args['guide_match_search_seconds'],
       input_args['microns_per_pixel']
     )
 
@@ -519,10 +509,9 @@ def config_from_json(json_config_path) -> (str, [{}]):
 def config_from_cmdline(cmdline_args) -> dict:
   config = {}
   config['input_video_path'] = cmdline_args.input_video_path
-  config['template_image_path'] = cmdline_args.template_image_path
+  config['template_guide_image_path'] = cmdline_args.template_guide_image_path
   config['output_path'] = cmdline_args.output_video_path
-  config['template_as_guide'] = cmdline_args.template_as_guide
-  config['seconds_per_period'] = cmdline_args.seconds_per_period
+  config['guide_match_search_seconds'] = cmdline_args.guide_match_search_seconds
   config['microns_per_pixel'] = cmdline_args.microns_per_pixel
   config['path_to_excel_template'] = cmdline_args.path_to_excel_template  
   return config
@@ -542,7 +531,7 @@ if __name__ == '__main__':
       help='Path of input video/s to track a template.',
   )
   parser.add_argument(
-      '--template_image_path',
+      '--template_guide_image_path',
       default=None,
       help='Path to an image that will be used as a template to match.',
   )
@@ -562,14 +551,9 @@ if __name__ == '__main__':
       help='Path to write tracking results.',
   )
   parser.add_argument(
-      '-template_as_guide',
-      action='store_true',
-      help='Use the template to find a roi within the video to use as a template.',
-  )
-  parser.add_argument(
-      '--seconds_per_period',
+      '--guide_match_search_seconds',
       default=None,
-      help='approximate minimum number of seconds for template to complete a full period of movement.',
+      help='number of seconds to search the video for the best match with the guide template.',
   )
   parser.add_argument(
       '--microns_per_pixel',
