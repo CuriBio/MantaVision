@@ -281,20 +281,20 @@ def results_to_csv(
   well_name: str = None
 ):    
   if path_to_template_file is None:
-    workbook = openpyxl.Workbook()
-  else:
+    workbook = openpyxl.Workbook()  # open a blank workbook
+  else:  # open the template workbook
     shutil.copyfile(path_to_template_file, path_to_output_file)
     workbook = openpyxl.load_workbook(filename=path_to_output_file)
   sheet = workbook.active
 
   if well_name is None:
     well_name = 'unknown'
-  sheet['E2'] = well_name  
-  sheet['E3'] = '0000-00-00 00:00'  # time stamp
-  sheet['E4'] = 'N/A'  # plate barcode
+  sheet['E2'] = well_name
+  sheet['E3'] = '01/01/2000 00:00:00'  # time stamp
+  sheet['E4'] = 'NA'  # plate barcode
   sheet['E5'] = frames_per_second
-  sheet['E6'] = 'y'  # do twiches point up
-  sheet['E7'] = 'N/A'  # microscope name
+  sheet['E6'] = 'y'   # do twiches point up
+  sheet['E7'] = 'NA'  # microscope name
 
   # set the time and post displacement fields
   template_start_row = 2
