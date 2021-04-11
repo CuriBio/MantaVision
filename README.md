@@ -2,17 +2,29 @@
 
 Scripts for performing optical tracking of well magnets in Mantarray.
 
+## Using the notebook interface ##
+One way to run the notebook interface is to download the spyder application from
+
+https://www.spyder-ide.org/
+
+Once that has been installed, open spyder and from the built in command line window
+in the bottom right corner, type the following to install some required packages:
+
+> pip install spyder-notebook
+> pip install --user -r ./requirements.txt
+
+Now restart spyder.
+You will now see that in the main window there are two tabs, Editor and Notebook.
+Open the curi_tracker.ipynb file from within spyder (file -> open), and then
+select the Notebook tab. You can now run the notebook by pressing Shift and Enter.
+
+## Using the command line interface ##
+
 ### Install Required Packages ###
 > pip install --user -r ./requirements.txt
 
-### How to run template tracking ###
-> python /path_to/track_template.py /path_to/video.mp4 /path_to/template.jpg --output_json_path /path_to_write/tracking_results.json --output_video_path /path_to_write/tracking_results.mp4 -template_as_guide --seconds_per_period 5 --path_to_excel_template /path_to/optical_tracking_results_template.xlsx --path_to_excel_results /path_to_write/tracking_results.xlsx
+### run template tracking with all args ###
+> track_template.py -h for all required and optional args
 
-### Run template tracking with the test data in this repo ###
-From the top level dir, do the following:
-
-Create a directory called test_output i.e. 
-> mkdir ./test_output
-
-Then run the tracker
-> python ./track_template.py ./test_data/videos/2021.01.27_EHT_Plate_A006.mp4 ./test_data/image_templates/magnet_tip_template_rotated-15degrees.jpg --output_json_path ./test_output/tracking_results.json --output_video_path ./test_output/tracking_results.mp4 -template_as_guide --seconds_per_period 5 --path_to_excel_template ./test_data/excel_templates/optical_tracking_results_template.xlsx --path_to_excel_results ./test_output/tracking_results.xlsx
+### run template tracking with from a json config file ###
+> track_template.py --json_config /path/to/config.json
