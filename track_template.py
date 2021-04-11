@@ -14,6 +14,9 @@ import openpyxl # pip install --user openpyxl
 import cv2 as cv # pip install --user opencv-python
 from skimage import filters as skimage_filters # pip install --user scikit-image
 from skimage import exposure as skimage_exposure
+from tkinter import Tk as tk
+from tkinter.filedialog import askopenfilename, askdirectory
+
 from video2jpgs import video_to_jpgs
 
 # TODO: If accuracy isn't acceptable, try 
@@ -332,29 +335,64 @@ def contents_of_dir(dir_path: str, search_terms: [str]) -> ([str], [('str', 'str
   return base_dir, files
 
 
+def get_dir_path_via_gui() -> str:
+  # pop up a dialog for directory selection
+  tk().withdraw() # we don't want a full GUI, so keep the root window from appearing
+  return askdirectory() # show an "Open" dialog box and return the path to the selected dir
+
+
+def get_file_path_via_gui() -> str:
+  # pop up a dialog for file selection
+  tk().withdraw() # we don't want a full GUI, so keep the root window from appearing
+  return askopenfilename() # show an "Open" dialog box and return the path to the selected file
+
+
 def config_verified(config: {}) -> (str, [{}]):
   '''
 
   '''
   error_msgs = []
+  # check the dir path to input videos
+  open_video_dir_dialog = False
   if 'input_video_path' in config:
     if config['input_video_path'] is None:
-      error_msgs.append('No input path to video/s was provided.')
+      open_video_dir_dialog = True
     else:
-      if not os.path.isdir(config['input_video_path']):
+      if config['input_video_path'].lower() == 'ask' or config['input_video_path'].lower() == '':
+        open_video_dir_dialog = True
+      elif not os.path.isdir(config['input_video_path']):
         error_msgs.append('Input path to video/s does not exist.')      
   else:
+      open_video_dir_dialog = True
+  # pop up a dialog to select the dir for videos if required
+  if open_video_dir_dialog:
+    dir_path_via_gui = get_dir_path_via_gui()
+    if dir_path_via_gui == () or dir_path_via_gui == '':
       error_msgs.append('No input path to video/s was provided.')
+    else:
+      config['input_video_path'] = dir_path_via_gui
   
+  # check the file path to the template image
+  open_template_dir_dialog = False
   if 'template_guide_image_path' in config:
     if config['template_guide_image_path'] is None:
+      open_template_dir_dialog = True
+    else:
+      if config['template_guide_image_path'].lower() == 'ask' or config['template_guide_image_path'].lower() == '':
+        open_template_dir_dialog = True
+      elif not os.path.isfile(config['template_guide_image_path']):
+        error_msgs.append('Input template image file does not exist.')      
+  else:
+      open_template_dir_dialog = True
+  # pop up a dialog to select the template file if required
+  if open_template_dir_dialog:
+    file_path_via_gui = get_file_path_via_gui()
+    if file_path_via_gui == () or file_path_via_gui == '':
       error_msgs.append('No input template image path was provided.')
     else:
-      if not os.path.isfile(config['template_guide_image_path']):
-        error_msgs.append('Input template image file does not exist.')
-  else:
-      error_msgs.append('No input template image path was provided.')
-
+      config['template_guide_image_path'] = file_path_via_gui
+  
+  # barf if there was an error with either the input video dir path or template file path
   if len(error_msgs) > 0:
     error_msg = 'ERROR.'
     for error_string in error_msgs:
@@ -362,9 +400,8 @@ def config_verified(config: {}) -> (str, [{}]):
     error_msg += ' Nothing to do. Exiting.'
     print(error_msg)
     sys.exit(1)
-
+  
   template_guide_image_path = config['template_guide_image_path']
-
   file_extensions = ['mp4', 'avi']
   base_dir, video_files = contents_of_dir(dir_path=config['input_video_path'], search_terms=file_extensions)
   
