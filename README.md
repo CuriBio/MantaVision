@@ -7,10 +7,12 @@ One way to run the notebook interface is to download the spyder application from
 
 https://www.spyder-ide.org/
 
-Once that has been installed, open spyder and from the built in command line window
-in the bottom right corner, type the following to install some required packages:
+Once that has been installed, open spyder and from the file system sub window at the top right,
+select the file tab at the bottom and navigate to the curi_tracker directory. This sets the 
+console sub window below it to the directory you just navigated to, so can now type the 
+following commands in the console sub window to install some required packages:
 
-> pip install spyder-notebook
+> pip install spyder-notebook <br/>
 > pip install --user -r ./requirements.txt
 
 Now restart spyder.
