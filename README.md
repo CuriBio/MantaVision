@@ -10,7 +10,7 @@ https://www.spyder-ide.org/
 Once that has been installed, open spyder and from the built in command line window
 in the bottom right corner, type the following to install some required packages:
 
-> pip install spyder-notebook
+> pip install spyder-notebook </br>
 > pip install --user -r ./requirements.txt
 
 Now restart spyder.
