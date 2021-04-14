@@ -2,28 +2,35 @@
 
 Scripts for performing optical tracking of well magnets in Mantarray.
 
-## Using the notebook interface ##
-One way to run the notebook interface is to download the spyder application from
+## Using the notebook interface on windows ##
 
-https://www.spyder-ide.org/
+One way to run the notebook interface is to download the anaconda package
 
-Once that has been installed, open spyder and from the file system sub window at the top right,
-select the file tab at the bottom and navigate to the curi_tracker directory. This sets the 
-console sub window below it to the directory you just navigated to, so can now type the 
-following commands in the console sub window to install some required packages:
+https://www.anaconda.com/products/individual
 
-> pip install spyder-notebook <br/>
+Once that has been installed, from the windows menu open spyder (anaconda).
+From the main (top) menu in spyder select view -> window layouts -> spyder default.
+Then in the sub window at the top right you will see some tabs at the botoom of that sub window,
+one of those tabs is 'Files', select this tab and navigate to the curi_tracker directory.
+This sets the console sub window below it to the directory you just navigated to.
+In the Console (1/A) sub window in the bottom right, type following commands to install some required packages:
+
+
+> pip install --user spyder-notebook
+
 > pip install --user -r ./requirements.txt
 
-Now restart spyder.
-You will now see that in the main window there are two tabs, Editor and Notebook.
-Open the curi_tracker.ipynb file from within spyder (file -> open), and then
-select the Notebook tab. You can now run the notebook by pressing Shift and Enter.
+
+Close spyder.
+
+from the windows menu open Jupyter (anaconda),
+navigate to the curi_tracker directory and select the curi_tracker.ipynb file.
+You can now run this notebook by pressing Shift and Enter.
 
 ## Using the command line interface ##
 
 ### Install Required Packages ###
-> pip install --user -r ./requirements.txt
+> pip install -r ./requirements.txt
 
 ### run template tracking with all args ###
 > track_template.py -h for all required and optional args
