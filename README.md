@@ -23,9 +23,21 @@ In the Console (1/A) sub window in the bottom right, type following commands to 
 
 Close spyder.
 
+You can now run the notebook from either spyder or jupyter.
+
+To run with jupyter (recommended):
 from the windows menu open Jupyter (anaconda),
 navigate to the curi_tracker directory and select the curi_tracker.ipynb file.
 You can now run this notebook by pressing Shift and Enter.
+
+To run with spyder: 
+(Note: you still need to have closed spyder from the previous step):
+Re-open spyder, from the windows menu open spyder (anaconda).
+You will now see that in the main window there are two tabs, Editor and Notebook.
+Select the Notebook tab. In the top right hand corner of the notebook sub window 
+you will so 3 horizontal stripes, click this and select open. Navigate to the 
+curi_tracker.ipynb file and select it.
+You can now run the notebook by pressing Shift and Enter.
 
 ## Using the command line interface ##
 
