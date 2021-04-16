@@ -293,7 +293,7 @@ def results_to_csv(
   if well_name is None:
     well_name = 'unknown'
   sheet['E2'] = well_name
-  sheet['E3'] = '3000/01/01 00:00:00'  # time stamp
+  sheet['E3'] = '3000-01-01 00:00:00'  # time stamp
   sheet['E4'] = 'NA'  # plate barcode
   sheet['E5'] = frames_per_second
   sheet['E6'] = 'y'   # do twiches point up
