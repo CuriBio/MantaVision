@@ -8,6 +8,7 @@ import sys
 import json
 import numpy as np
 import math
+import numbers
 import pathlib
 import zipfile
 import openpyxl # pip install --user openpyxl
@@ -89,7 +90,8 @@ def run_track_template(
   template_guide_image_path: str,
   output_video_path: str = None,
   guide_match_search_seconds: float = None,
-  microns_per_pixel: float = None
+  microns_per_pixel: float = None,
+  output_conversion_factor: float = None
 ) -> (str, [{}], float):
   '''
   Tracks a template image through each frame of a video.
@@ -262,13 +264,18 @@ def run_track_template(
   adjusted_tracking_results = []
   if microns_per_pixel is None:
     microns_per_pixel = 1.0
+  if output_conversion_factor is None:
+    output_conversion_factor = 1.0
+  output_conversion_factor
   for frame_info in tracking_results:
     y_displacement = (frame_info['TEMPLATE_MATCH_ORIGIN_Y'] - min_template_origin_y)*float(microns_per_pixel)
-    frame_info['Y_DISPLACEMENT'] = y_displacement 
+    y_displacement*= float(output_conversion_factor)
+    frame_info['Y_DISPLACEMENT'] = y_displacement
     if positive_x_movement_slope:
       x_displacement = (max_template_origin_x - frame_info['TEMPLATE_MATCH_ORIGIN_X'])*float(microns_per_pixel)
     else:
       x_displacement = (frame_info['TEMPLATE_MATCH_ORIGIN_X'] - min_template_origin_x)*float(microns_per_pixel)
+      x_displacement*= float(output_conversion_factor)
     frame_info['X_DISPLACEMENT'] = x_displacement 
     frame_info['XY_DISPLACEMENT'] = math.sqrt(x_displacement*x_displacement + y_displacement*y_displacement)
     adjusted_tracking_results.append(frame_info)
@@ -291,9 +298,9 @@ def results_to_csv(
   sheet = workbook.active
 
   if well_name is None:
-    well_name = 'unknown'
+    well_name = 'Z01'
   sheet['E2'] = well_name
-  sheet['E3'] = '3000-01-01 00:00:00'  # time stamp
+  sheet['E3'] = '1010-01-01 00:00:00'  # time stamp
   sheet['E4'] = 'NA'  # plate barcode
   sheet['E5'] = frames_per_second
   sheet['E6'] = 'y'   # do twiches point up
@@ -435,15 +442,25 @@ def config_verified(config: {}) -> (str, [{}]):
   else:
     microns_per_pixel = config['microns_per_pixel']
 
+  if 'output_conversion_factor' not in config:
+    output_conversion_factor = 1.0
+  else:
+    output_conversion_factor = config['output_conversion_factor']
+
   configs = []
-  well_name_len = 4
   for file_name, file_extension in video_files:
     input_video_path = os.path.join(base_dir, file_name + file_extension)
     output_video_frames_dir_path = os.path.join(results_video_frames_dir_path, file_name)
     output_json_path = os.path.join(results_json_dir_path, file_name + '-results.json')
     path_to_excel_results = os.path.join(results_xlsx_dir_path, file_name + '-reslts.xlsx')
     output_video_path = os.path.join(results_video_dir_path, file_name + '-results' + file_extension)
+    well_name_len = 4
     well_name = file_name[-well_name_len:]
+    if not well_name[1:].isdigit():
+      print("ERROR. An input video file does not contain a valid well name as expected as the last word.")
+      print(f"The last word of the filename is: {well_name}")
+      print("The last word of the file name must be a letter followed by a zero padded 3 digit number i.e. A001 or D006")
+      sys.exit(1)
 
     configs.append({
       'input_video_path': input_video_path,
@@ -455,6 +472,7 @@ def config_verified(config: {}) -> (str, [{}]):
       'path_to_excel_results': path_to_excel_results,
       'guide_match_search_seconds': guide_match_search_seconds,
       'microns_per_pixel': microns_per_pixel,
+      'output_conversion_factor': output_conversion_factor,
       'well_name': well_name
     })
 
@@ -496,7 +514,8 @@ def track_templates(config: {}):
       input_args['template_guide_image_path'],
       input_args['output_video_path'],
       input_args['guide_match_search_seconds'],
-      input_args['microns_per_pixel']
+      input_args['microns_per_pixel'],
+      input_args['output_conversion_factor']
     )
 
     if error_msg is not None:
@@ -605,3 +624,16 @@ if __name__ == '__main__':
     config = config_from_cmdline(raw_args)
 
   track_templates(config)
+
+
+# TODO:
+# the template we use in the algo should be called the roi_template and the one we get from the user 
+# should be called guide_template
+# so we get the guide_template and use it to find an roi_template in the video we're searching.
+# we could get opencv to ask the user to define the roi since apparently it has a gui to do that.
+
+# TODO:
+# after each templateMatch step, we do a further brute force search +/- say 2 pixels around the result
+# in increments of say 0.2 pixels (need to shift the image and use good interpolation) and perform
+# cv.computeECC(). so for each frame there'd be 25x25 calls to computeECC() to find the best sub pixel match.
+# 
