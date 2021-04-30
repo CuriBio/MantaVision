@@ -288,7 +288,8 @@ def results_to_csv(
   path_to_template_file: str,
   path_to_output_file,
   frames_per_second: float,
-  well_name: str = None
+  well_name: str = None, 
+  date_stamp: str = '1010-01-01'
 ):    
   if path_to_template_file is None:
     workbook = openpyxl.Workbook()  # open a blank workbook
@@ -300,7 +301,7 @@ def results_to_csv(
   if well_name is None:
     well_name = 'Z01'
   sheet['E2'] = well_name
-  sheet['E3'] = '1010-01-01 00:00:00'  # time stamp
+  sheet['E3'] = date_stamp + ' 00:00:00'
   sheet['E4'] = 'NA'  # plate barcode
   sheet['E5'] = frames_per_second
   sheet['E6'] = 'y'   # do twiches point up
@@ -373,12 +374,16 @@ def config_verified(config: {}) -> (str, [{}]):
       open_video_dir_dialog = True
   # pop up a dialog to select the dir for videos if required
   if open_video_dir_dialog:
+    print("waiting for user input (video dir) via pop up dialog box...")
     dir_path_via_gui = get_dir_path_via_gui()
     if dir_path_via_gui == () or dir_path_via_gui == '':
       error_msgs.append('No input path to video/s was provided.')
     else:
       config['input_video_path'] = dir_path_via_gui
-  
+    print("user input obtained from pop up dialog box.")
+    print()
+    print("Tracker continuing...")
+
   # check the file path to the template image
   open_template_dir_dialog = False
   if 'template_guide_image_path' in config:
@@ -393,11 +398,15 @@ def config_verified(config: {}) -> (str, [{}]):
       open_template_dir_dialog = True
   # pop up a dialog to select the template file if required
   if open_template_dir_dialog:
+    print("waiting for user input (template to use) via pop up dialog box...")    
     file_path_via_gui = get_file_path_via_gui()
     if file_path_via_gui == () or file_path_via_gui == '':
       error_msgs.append('No input template image path was provided.')
     else:
       config['template_guide_image_path'] = file_path_via_gui
+    print("user input obtained from pop up dialog box.")
+    print()
+    print("Tracker continuing...")
   
   # barf if there was an error with either the input video dir path or template file path
   if len(error_msgs) > 0:
@@ -449,17 +458,49 @@ def config_verified(config: {}) -> (str, [{}]):
 
   configs = []
   for file_name, file_extension in video_files:
+    # set some values we need to pass back to the caller
     input_video_path = os.path.join(base_dir, file_name + file_extension)
     output_video_frames_dir_path = os.path.join(results_video_frames_dir_path, file_name)
     output_json_path = os.path.join(results_json_dir_path, file_name + '-results.json')
     path_to_excel_results = os.path.join(results_xlsx_dir_path, file_name + '-reslts.xlsx')
     output_video_path = os.path.join(results_video_dir_path, file_name + '-results' + file_extension)
-    well_name_len = 4
-    well_name = file_name[-well_name_len:]
-    if not well_name[1:].isdigit():
+
+    # set the well name and date stamps from the file name
+    file_name_parsed = file_name.split("_")
+    # make sure the well name is valid
+    well_name_position = -1
+    well_name = file_name_parsed[well_name_position]
+    well_name_valid = True
+    well_name_length = 4
+    if not len(well_name) == well_name_length:
+      well_name_valid = False
+    well_name_letter_part = well_name[0]
+    if not well_name_letter_part.isalpha():
+      well_name_valid = False    
+    well_name_number_part = well_name[1:]
+    if not well_name_number_part.isdigit():
+      well_name_valid = False
+    if not well_name_valid:
       print("ERROR. An input video file does not contain a valid well name as expected as the last word.")
       print(f"The last word of the filename is: {well_name}")
       print("The last word of the file name must be a letter followed by a zero padded 3 digit number i.e. A001 or D006")
+      sys.exit(1)
+    # make sure the data stamp is valid
+    date_stamp_position = 0
+    date_stamp = file_name_parsed[date_stamp_position]
+    date_stamp_parsed = date_stamp.split("-")
+    num_parts_in_date = 3
+    date_stamp_valid = True
+    if len(date_stamp_parsed) != num_parts_in_date:
+      date_stamp_valid = False
+    else:
+      for date_part in date_stamp_parsed:
+        if not date_part.isdigit():
+          date_stamp_valid = False
+    if not date_stamp_valid:
+      print("ERROR. An input video file does not contain a valid date stamp as expected for the first word.")
+      print(f"The first word of the filename is: {date_stamp}")
+      print("The first word of the file name must be of the form yyyy-mm-dd i.e. 1010-01-01")
       sys.exit(1)
 
     configs.append({
@@ -473,7 +514,8 @@ def config_verified(config: {}) -> (str, [{}]):
       'guide_match_search_seconds': guide_match_search_seconds,
       'microns_per_pixel': microns_per_pixel,
       'output_conversion_factor': output_conversion_factor,
-      'well_name': well_name
+      'well_name': well_name,
+      'date_stamp': date_stamp,      
     })
 
   return (dirs, configs)
@@ -527,12 +569,14 @@ def track_templates(config: {}):
     video_to_jpgs(input_args['output_video_path'], input_args['output_video_frames_dir_path'])
 
     # write the results as xlsx
+    # TODO: extract the date part from the first part of the file name
     results_to_csv(
       tracking_results,
       input_args['path_to_excel_template'],
       input_args['path_to_excel_results'],
       frames_per_second,
-      input_args['well_name']
+      input_args['well_name'], 
+      input_args['date_stamp']
     )
 
     # write the run config and results as json
