@@ -355,7 +355,7 @@ def get_file_path_via_gui() -> str:
   return askopenfilename() # show an "Open" dialog box and return the path to the selected file
 
 
-def config_verified(config: {}) -> (str, [{}]):
+def verified_inputs(config: {}) -> (str, [{}]):
   '''
 
   '''
@@ -374,15 +374,15 @@ def config_verified(config: {}) -> (str, [{}]):
       open_video_dir_dialog = True
   # pop up a dialog to select the dir for videos if required
   if open_video_dir_dialog:
+    print()
     print("waiting for user input (video dir) via pop up dialog box...")
     dir_path_via_gui = get_dir_path_via_gui()
     if dir_path_via_gui == () or dir_path_via_gui == '':
       error_msgs.append('No input path to video/s was provided.')
     else:
       config['input_video_path'] = dir_path_via_gui
-    print("user input obtained from pop up dialog box.")
+    print("...user input obtained from pop up dialog box.")
     print()
-    print("Tracker continuing...")
 
   # check the file path to the template image
   open_template_dir_dialog = False
@@ -398,15 +398,15 @@ def config_verified(config: {}) -> (str, [{}]):
       open_template_dir_dialog = True
   # pop up a dialog to select the template file if required
   if open_template_dir_dialog:
+    print()
     print("waiting for user input (template to use) via pop up dialog box...")    
     file_path_via_gui = get_file_path_via_gui()
     if file_path_via_gui == () or file_path_via_gui == '':
       error_msgs.append('No input template image path was provided.')
     else:
       config['template_guide_image_path'] = file_path_via_gui
-    print("user input obtained from pop up dialog box.")
+    print("...user input obtained from pop up dialog box.")
     print()
-    print("Tracker continuing...")
   
   # barf if there was an error with either the input video dir path or template file path
   if len(error_msgs) > 0:
@@ -456,18 +456,19 @@ def config_verified(config: {}) -> (str, [{}]):
   else:
     output_conversion_factor = config['output_conversion_factor']
 
+  # set all the values needed to run template matching on each input video
   configs = []
   for file_name, file_extension in video_files:
-    # set some values we need to pass back to the caller
-    input_video_path = os.path.join(base_dir, file_name + file_extension)
-    output_video_frames_dir_path = os.path.join(results_video_frames_dir_path, file_name)
-    output_json_path = os.path.join(results_json_dir_path, file_name + '-results.json')
-    path_to_excel_results = os.path.join(results_xlsx_dir_path, file_name + '-reslts.xlsx')
-    output_video_path = os.path.join(results_video_dir_path, file_name + '-results' + file_extension)
 
-    # set the well name and date stamps from the file name
+    # check the file name conforms to minimum requirements
     file_name_parsed = file_name.split("_")
-    # make sure the well name is valid
+    min_num_words_in_file_name = 3
+    if len(file_name_parsed) < min_num_words_in_file_name:
+      print(f'ERROR. the input video {file_name} does not have a valid name.')
+      print('The pattern must conform to "datestamp_x_wellname" i.e. 1010-01-01_any_other_words_A001')
+      sys.exit(1)
+
+    # make sure a valid well name can be extracted from the file name
     well_name_position = -1
     well_name = file_name_parsed[well_name_position]
     well_name_valid = True
@@ -485,7 +486,8 @@ def config_verified(config: {}) -> (str, [{}]):
       print(f"The last word of the filename is: {well_name}")
       print("The last word of the file name must be a letter followed by a zero padded 3 digit number i.e. A001 or D006")
       sys.exit(1)
-    # make sure the data stamp is valid
+
+    # make sure a valid date stamp can be extacted from the file name
     date_stamp_position = 0
     date_stamp = file_name_parsed[date_stamp_position]
     date_stamp_parsed = date_stamp.split("-")
@@ -502,6 +504,13 @@ def config_verified(config: {}) -> (str, [{}]):
       print(f"The first word of the filename is: {date_stamp}")
       print("The first word of the file name must be of the form yyyy-mm-dd i.e. 1010-01-01")
       sys.exit(1)
+
+    # set all the required path values
+    input_video_path = os.path.join(base_dir, file_name + file_extension)
+    output_video_frames_dir_path = os.path.join(results_video_frames_dir_path, file_name)
+    output_json_path = os.path.join(results_json_dir_path, file_name + '-results.json')
+    path_to_excel_results = os.path.join(results_xlsx_dir_path, file_name + '-reslts.xlsx')
+    output_video_path = os.path.join(results_video_dir_path, file_name + '-results' + file_extension)
 
     configs.append({
       'input_video_path': input_video_path,
@@ -522,11 +531,8 @@ def config_verified(config: {}) -> (str, [{}]):
 
 
 def track_templates(config: {}):
-
-  print("\nTemplate Tracker running...\n")
-  # verify config
-  dirs, args = config_verified(config)
-
+  dirs, args = verified_inputs(config)
+   
   # make all the dirs needed for writing the results 
   # unless they already exist in which case we need to barf
   dirs_exist_error_message = ''
@@ -550,6 +556,7 @@ def track_templates(config: {}):
 
   # run the tracking routine on each input video
   # and write out the results
+  print("\nTemplate Tracker running...\n") 
   for input_args in args:
     error_msg, tracking_results, frames_per_second = run_track_template(
       input_args['input_video_path'],
