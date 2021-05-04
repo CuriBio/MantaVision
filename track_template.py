@@ -10,6 +10,7 @@ import numpy as np
 import math
 import numbers
 import pathlib
+import time
 import zipfile
 import openpyxl # pip install --user openpyxl
 import cv2 as cv # pip install --user opencv-python
@@ -531,6 +532,7 @@ def verified_inputs(config: {}) -> (str, [{}]):
 
 
 def track_templates(config: {}):
+  track_templates_start_time = time.time()
   dirs, args = verified_inputs(config)
    
   # make all the dirs needed for writing the results 
@@ -556,8 +558,10 @@ def track_templates(config: {}):
 
   # run the tracking routine on each input video
   # and write out the results
-  print("\nTemplate Tracker running...\n") 
+  print("\nTemplate Tracker running...") 
+  total_tracking_time = 0
   for input_args in args:
+    video_tracking_start_time = time.time()
     error_msg, tracking_results, frames_per_second = run_track_template(
       input_args['input_video_path'],
       input_args['template_guide_image_path'],
@@ -566,7 +570,8 @@ def track_templates(config: {}):
       input_args['microns_per_pixel'],
       input_args['output_conversion_factor']
     )
-
+    total_tracking_time += (time.time() - video_tracking_start_time)
+    
     if error_msg is not None:
       print(error_msg)
       sys.exit(1)
@@ -604,7 +609,10 @@ def track_templates(config: {}):
           xlsx_archive.write(file_path, os.path.basename(file_path))
   xlsx_archive.close()
 
-  print("\n...Template Tracker complete.\n")
+  num_videos_processed = len(args)
+  track_templates_runtime = time.time() - track_templates_start_time
+  print(f'...Template Tracker completed in {round(track_templates_runtime, 2)}s.')
+  print(f'Actual tracking time for {num_videos_processed} videos: {round(total_tracking_time, 2)}s.')
 
 
 def config_from_json(json_config_path) -> (str, [{}]):
