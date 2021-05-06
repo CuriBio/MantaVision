@@ -620,7 +620,7 @@ def track_templates(config: {}):
   track_templates_runtime = time.time() - track_templates_start_time
   per_video_tracking_time: float = float(total_tracking_time) / float(num_videos_processed)
   print(f'...Template Tracker completed in {round(track_templates_runtime, 2)}s.')
-  print(f'Actual tracking time for {num_videos_processed} videos: {round(total_tracking_time, 2)}s ({per_video_tracking_time} per video).')
+  print(f'Actual tracking time for {num_videos_processed} videos: {round(total_tracking_time, 2)}s ({round(per_video_tracking_time, 2)} per video).')
 
 
 def config_from_json(json_config_path) -> (str, [{}]):
