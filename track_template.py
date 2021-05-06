@@ -21,6 +21,7 @@ from tkinter.filedialog import askopenfilename, askdirectory
 
 from video2jpgs import video_to_jpgs
 
+# TODO: make name parsing just look at first x chars is date stamp & last y chars is well name
 # TODO: If accuracy isn't acceptable, try 
 #       - sub pixel version of current method, 
 #       - different match measures like mutual information and/or grad angle,
@@ -345,15 +346,23 @@ def contents_of_dir(dir_path: str, search_terms: [str]) -> ([str], [('str', 'str
 
 
 def get_dir_path_via_gui() -> str:
-  # pop up a dialog for directory selection
-  tk().withdraw() # we don't want a full GUI, so keep the root window from appearing
-  return askdirectory() # show an "Open" dialog box and return the path to the selected dir
+  # show an "Open" dialog box and return the path to the selected dir
+  window=tk()
+  window.withdraw()
+  window.lift()
+  window.overrideredirect(True)
+  window.call('wm', 'attributes', '.', '-topmost', True)
+  return askdirectory()
 
 
 def get_file_path_via_gui() -> str:
-  # pop up a dialog for file selection
-  tk().withdraw() # we don't want a full GUI, so keep the root window from appearing
-  return askopenfilename() # show an "Open" dialog box and return the path to the selected file
+  # show an "Open" dialog box and return the path to the selected file
+  window=tk()
+  window.withdraw()
+  window.lift()  
+  window.overrideredirect(True)
+  window.call('wm', 'attributes', '.', '-topmost', True)
+  return askopenfilename() 
 
 
 def verified_inputs(config: {}) -> (str, [{}]):
@@ -462,20 +471,19 @@ def verified_inputs(config: {}) -> (str, [{}]):
   for file_name, file_extension in video_files:
 
     # check the file name conforms to minimum requirements
-    file_name_parsed = file_name.split("_")
-    min_num_words_in_file_name = 3
-    if len(file_name_parsed) < min_num_words_in_file_name:
+    num_chars_in_datestamp = len('yyyy-mm-dd')
+    num_chars_in_wellname = len('A001')
+    min_num_chars_in_file_name = num_chars_in_datestamp + num_chars_in_wellname
+    if len(file_name) < min_num_chars_in_file_name:
       print(f'ERROR. the input video {file_name} does not have a valid name.')
-      print('The pattern must conform to "datestamp_x_wellname" i.e. 1010-01-01_any_other_words_A001')
+      print('The pattern must have a datestamp as the first 10 characters and a wellname as the last 4 characters')
+      print('i.e. 1010-01-01 any other characters A001')
       sys.exit(1)
 
     # make sure a valid well name can be extracted from the file name
-    well_name_position = -1
-    well_name = file_name_parsed[well_name_position]
+    file_name_length = len(file_name)
+    well_name = file_name[file_name_length - num_chars_in_wellname:]
     well_name_valid = True
-    well_name_length = 4
-    if not len(well_name) == well_name_length:
-      well_name_valid = False
     well_name_letter_part = well_name[0]
     if not well_name_letter_part.isalpha():
       well_name_valid = False    
@@ -489,8 +497,7 @@ def verified_inputs(config: {}) -> (str, [{}]):
       sys.exit(1)
 
     # make sure a valid date stamp can be extacted from the file name
-    date_stamp_position = 0
-    date_stamp = file_name_parsed[date_stamp_position]
+    date_stamp = file_name[:num_chars_in_datestamp]
     date_stamp_parsed = date_stamp.split("-")
     num_parts_in_date = 3
     date_stamp_valid = True
@@ -611,8 +618,9 @@ def track_templates(config: {}):
 
   num_videos_processed = len(args)
   track_templates_runtime = time.time() - track_templates_start_time
+  per_video_tracking_time: float = float(total_tracking_time) / float(num_videos_processed)
   print(f'...Template Tracker completed in {round(track_templates_runtime, 2)}s.')
-  print(f'Actual tracking time for {num_videos_processed} videos: {round(total_tracking_time, 2)}s.')
+  print(f'Actual tracking time for {num_videos_processed} videos: {round(total_tracking_time, 2)}s ({per_video_tracking_time} per video).')
 
 
 def config_from_json(json_config_path) -> (str, [{}]):
