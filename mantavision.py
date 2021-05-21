@@ -7,6 +7,7 @@ import shutil
 import sys
 import json
 import numpy as np
+from scipy.ndimage import shift
 import math
 import numbers
 import pathlib
@@ -21,13 +22,48 @@ from tkinter.filedialog import askopenfilename, askdirectory
 
 from video2jpgs import video_to_jpgs
 
-# TODO: make name parsing just look at first x chars is date stamp & last y chars is well name
-# TODO: If accuracy isn't acceptable, try 
-#       - sub pixel version of current method, 
-#       - different match measures like mutual information and/or grad angle,
-#       - adding in rotation of the template +/- some small angle for each position in the video frame.
-# TODO: option to add fixed grid lines in say a red colour
+# TODO: add second step to alignment of each frame that does sub pixel alignment. 
+# after each templateMatch step, we do a further brute force search +/- say 2 pixels around the result
+# in increments of say 0.2 pixels (need to shift the image and use good interpolation) and perform
+# cv.computeECC(). so for each frame there'd be 25x25 calls to computeECC() to find the best sub pixel match.
 
+# TODO: try adding in rotation of the template +/- some small range of angles for each position in the video frame.
+
+# TODO:
+# the template we use in the algo should be called the roi_template and the one we get from the user 
+# should be called guide_template
+# so we get the guide_template and use it to find an roi_template in the video we're searching.
+# we could get opencv to ask the user to define the roi since apparently it has a gui to do that.
+
+def matchCoordinates(
+  input_image_to_search: np.ndarray,
+  template_to_match: np.ndarray,
+  search_increment: float
+  ) -> (float, float):
+    '''
+      Computes the coordinates of the best match between the input image and template.
+      If |search_increment| < 1, sub pixel matching is performed with interpolation.
+    '''
+    input_dim_y, input_dim_x = input_image_to_search.shape
+    template_dim_y, template_dim_x = template_to_match.shape
+    search_length_y = input_dim_y - template_dim_y
+    search_length_x = input_dim_x - template_dim_x
+    max_ecc = 0.0
+    max_coordinates = (0.0, 0.0)
+    shifted_input = np.ndarray([template_dim_y + 1, template_dim_x + 1])
+    for y_origin in range(0.0, search_length_y, search_increment):
+      for x_origin in range(0.0, search_length_x, search_increment):
+        sub_image_to_shift = input_image_to_search[int(y_origin):template_dim_y + 1, int(x_origin):template_dim_x + 1]
+        shift(input=sub_image_to_shift, shift=[-y_origin, -x_origin], output=shifted_input)
+        input_to_match = shifted_input[:template_dim_y, :template_dim_x]
+        ecc = cv.computeECC(templateImage=template_to_match, inputImage=input_to_match)
+        if ecc > max_ecc:
+          max_ecc = ecc
+          max_coordinates = (y_origin, x_origin)
+    return max_coordinates
+  # TODO: note that we need to ensure the caller offsets the return coordinates
+  #       from the origin of the sub region they passed in
+  
 
 def contrast_enhanced(image_to_adjust):
   '''
@@ -87,7 +123,7 @@ def best_template_match(video_to_search, template_to_find, max_frames_to_check) 
   return best_template_match_ccoef(video_to_search, template_to_find, max_frames_to_check)
 
 
-def run_track_template(
+def track_template(
   input_video_path: str,
   template_guide_image_path: str,
   output_video_path: str = None,
@@ -538,7 +574,7 @@ def verified_inputs(config: {}) -> (str, [{}]):
   return (dirs, configs)
 
 
-def track_templates(config: {}):
+def run_track_template(config: {}):
   track_templates_start_time = time.time()
   dirs, args = verified_inputs(config)
    
@@ -569,7 +605,7 @@ def track_templates(config: {}):
   total_tracking_time = 0
   for input_args in args:
     video_tracking_start_time = time.time()
-    error_msg, tracking_results, frames_per_second = run_track_template(
+    error_msg, tracking_results, frames_per_second = track_template(
       input_args['input_video_path'],
       input_args['template_guide_image_path'],
       input_args['output_video_path'],
@@ -690,17 +726,4 @@ if __name__ == '__main__':
   else:
     config = config_from_cmdline(raw_args)
 
-  track_templates(config)
-
-
-# TODO:
-# the template we use in the algo should be called the roi_template and the one we get from the user 
-# should be called guide_template
-# so we get the guide_template and use it to find an roi_template in the video we're searching.
-# we could get opencv to ask the user to define the roi since apparently it has a gui to do that.
-
-# TODO:
-# after each templateMatch step, we do a further brute force search +/- say 2 pixels around the result
-# in increments of say 0.2 pixels (need to shift the image and use good interpolation) and perform
-# cv.computeECC(). so for each frame there'd be 25x25 calls to computeECC() to find the best sub pixel match.
-# 
+  run_track_template(config)
