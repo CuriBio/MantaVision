@@ -22,17 +22,19 @@ from tkinter.filedialog import askopenfilename, askdirectory
 
 from video2jpgs import video_to_jpgs
 
-# TODO: the template we use in the algo should be called the roi_template, 
+
+# TODO: the template we use in the algo should be called the roi_template and
 #       the template we get from the user should be called guide_template.
 #       so we get the guide_template and use it to find an roi_template in the video we're searching.
-
-# TODO: try adding in rotation of the template +/- some small range of angles for each position in the video frame.
 
 # TODO: we could get opencv to ask the user to define the roi since apparently it has a gui to do that.
 
 # TODO: we could introduce a max movement parameter that limited how far from the last results
 #       we look for a new match. i.e. if after the first fram we find a best match at (x, y)
 #       and max_movememnt = 50 pixels, then we'd look within the region: x - 50 and x + 50, and y - 50 and y + 50
+
+# TODO: we could try adding in rotation of the template +/- some small range of angles for each position per frame.
+
 
 def bestMatch(
   input_image_to_search: np.ndarray,
@@ -45,23 +47,22 @@ def bestMatch(
     Accuracy is +/-1 pixel if sub_pixel_search_increment is None or >= 1.0.
     Accuracy is +/-sub_pixel_search_increment if |sub_pixel_search_increment| < 1.0 and not None.
   '''
+
   if sub_pixel_search_increment is not None and not abs(sub_pixel_search_increment) < 1.0:
     print('WARNING. Passing sub_pixel_search_increment >= 1.0 to bestMatch() is pointless. Ignoring.')
     sub_pixel_search_increment = None
   
-  # TODO: don't alter the original input image or template so we can pass an unaltered version to sub pixel
-  #       we'll need to do the same for the template which is altered by the process that selects the template
   input_image = contrast_enhanced(cv.cvtColor(input_image_to_search, cv.COLOR_BGR2GRAY)).astype(np.uint8)
   template = contrast_enhanced(cv.cvtColor(template_to_match, cv.COLOR_BGR2GRAY)).astype(np.uint8)
 
-  # find the best match for the template in the current frame
+  # find the best match for template in input_image_to_search
   match_results = cv.matchTemplate(input_image, template, cv.TM_CCOEFF)
   _, match_measure, _, match_coordinates = cv.minMaxLoc(match_results)  # opencv returns in x, y order
 
   if sub_pixel_search_increment is None:
     return (match_measure, match_coordinates)
   # else
-  #   refine the results with a sub pixel step
+  #   refine the results with a sub pixel search
 
   # convert images to appropriate types for sub pixel match step
   input_image = cv.cvtColor(input_image_to_search, cv.COLOR_BGR2GRAY).astype(np.float64)
@@ -129,7 +130,7 @@ def bestSubPixelMatch(
     search_length_x = input_dim_x - template_dim_x
     max_ecc = 0.0
     max_coordinates = [0.0, 0.0]
-    shifted_input = np.ndarray([template_dim_y + 1, template_dim_x + 1])
+    shifted_input = np.ndarray(shape=[template_dim_y + 1, template_dim_x + 1], dtype=np.float64)
     for y_origin in np.arange(search_increment, search_length_y, search_increment):
       for x_origin in np.arange(search_increment, search_length_x, search_increment):
         sub_region_start_y = math.floor(y_origin)
@@ -164,7 +165,7 @@ def contrast_enhanced(image_to_adjust):
   return skimage_exposure.rescale_intensity(image_to_adjust, in_range=(0, optimal_threshold), out_range=uint8_range)
 
 
-def best_template_match_ccoef(video_to_search, template_to_find, max_frames_to_check) -> np.ndarray:
+def best_template_match(video_to_search, template_to_find, max_frames_to_check) -> np.ndarray:
   initial_frame_pos = video_to_search.get(cv.CAP_PROP_POS_FRAMES)
   if initial_frame_pos != 0:
     video_to_search.set(cv.CAP_PROP_POS_FRAMES, 0)
@@ -181,6 +182,7 @@ def best_template_match_ccoef(video_to_search, template_to_find, max_frames_to_c
     frame_returned, frame = video_to_search.read()
     if not frame_returned:
       print("Error. Unexpected problem during video frame capture. Exiting.")
+      sys.exit(1)
 
     # track the template
     frame_adjusted = contrast_enhanced(cv.cvtColor(frame, cv.COLOR_BGR2GRAY)).astype(np.uint8)
@@ -203,10 +205,6 @@ def best_template_match_ccoef(video_to_search, template_to_find, max_frames_to_c
   new_template_end_y = new_template_start_y + template_height
   new_template = best_match_frame[new_template_start_y:new_template_end_y, new_template_start_x:new_template_end_x]
   return new_template
-
-
-def best_template_match(video_to_search, template_to_find, max_frames_to_check) -> np.ndarray:
-  return best_template_match_ccoef(video_to_search, template_to_find, max_frames_to_check)
 
 
 def track_template(
@@ -279,8 +277,7 @@ def track_template(
       output_video_codec,
       frames_per_second,
       frame_size,
-      True
-      # False  # isColor = True by default
+      True # False  # isColor = True by default
     )
   else:
     output_video_stream = None
@@ -305,9 +302,9 @@ def track_template(
       sub_pixel_search_increment=sub_pixel_search_increment,
       sub_pixel_refinement_radius=sub_pixel_refinement_radius
     )
-    # TODO these vars should be called something to do with best match coordinates origin x etc
-    template_origin_x = match_coordinates[0]  
-    template_origin_y = match_coordinates[1]
+
+    best_match_origin_x = match_coordinates[0]  
+    best_match_origin_y = match_coordinates[1]
     tracking_results.append(
       {
         'FRAME_NUMBER': frame_number,
@@ -316,72 +313,71 @@ def track_template(
         'Y_DISPLACEMENT': 0,
         'X_DISPLACEMENT': 0,
         'XY_DISPLACEMENT': 0,
-        'TEMPLATE_MATCH_ORIGIN_X': template_origin_x,
-        'TEMPLATE_MATCH_ORIGIN_Y': template_origin_y,
+        'TEMPLATE_MATCH_ORIGIN_X': best_match_origin_x,
+        'TEMPLATE_MATCH_ORIGIN_Y': best_match_origin_y,
       }
     )
 
     # update the min and max positions of the template origin for ALL frames
-    if template_origin_y < min_template_origin_y: 
-      min_template_origin_y = template_origin_y
-      min_template_origin_x = template_origin_x
-    if template_origin_y > max_template_origin_y:
-      max_template_origin_y = template_origin_y
-      max_template_origin_x = template_origin_x
+    # using the position in the y dimension only as the reference measure 
+    if best_match_origin_y < min_template_origin_y: 
+      min_template_origin_y = best_match_origin_y
+      min_template_origin_x = best_match_origin_x
+    if best_match_origin_y > max_template_origin_y:
+      max_template_origin_y = best_match_origin_y
+      max_template_origin_x = best_match_origin_x
 
     # draw a grid over the region in the frame where the template matched
     if output_video_stream is not None:
-
-      # can't use sub pixel values for drawing on the image
+      # opencv drawing functions require integer coordinates
       # so we convert them to the nearest pixel
-      # TODO: we should be storing these int values as separate vars with different names
-      #       OR we can use the shift parameter in rectangle etc to draw sub pixel lines and rectangles?
-      template_origin_y = int(math.floor(template_origin_y + 0.5))
-      template_origin_x = int(math.floor(template_origin_x + 0.5))
-
+      grid_origin_y = int(math.floor(best_match_origin_y + 0.5))
+      grid_origin_x = int(math.floor(best_match_origin_x + 0.5))
 
       grid_colour_bgr = (255, 128, 0)      
-      grid_square_diameter = 10
+      grid_square_diameter = 20
       frame = raw_frame
 
       # mark the template ROI on each frame
       # first draw a rectangle around the template border
       grid_width = int(template_width/grid_square_diameter)*grid_square_diameter
       grid_height = int(template_height/grid_square_diameter)*grid_square_diameter
-      template_bottom_right_x = min(frame_width, template_origin_x + grid_width)
-      template_bottom_right_y = min(frame_height, template_origin_y + grid_height)
+      template_bottom_right_x = min(frame_width, grid_origin_x + grid_width)
+      template_bottom_right_y = min(frame_height, grid_origin_y + grid_height)
       cv.rectangle(
-        frame,
-        (template_origin_x, template_origin_y),
-        (template_bottom_right_x, template_bottom_right_y),
+        img=frame,
+        pt1=(grid_origin_x, grid_origin_y),
+        pt2=(template_bottom_right_x, template_bottom_right_y),
         color=grid_colour_bgr,
-        thickness=1
+        thickness=1,
+        lineType=cv.LINE_AA
       )
 
-      # then add horizontal grid lines within the rectangle
-      line_start_x = template_origin_x + 1
-      line_end_x = template_bottom_right_x - 1
-      for line_pos_y in range(template_origin_y + grid_square_diameter, template_bottom_right_y, grid_square_diameter):
-        cv.line(
-          frame,
-          (line_start_x, line_pos_y),
-          (line_end_x, line_pos_y),
-          color=grid_colour_bgr,
-          thickness=1
-        )
+      # # then add horizontal grid lines within the rectangle
+      # line_start_x = grid_origin_x + 1
+      # line_end_x = template_bottom_right_x - 1
+      # for line_pos_y in range(grid_origin_y + grid_square_diameter, template_bottom_right_y, grid_square_diameter):
+      #   cv.line(
+      #     img=frame,
+      #     pt1=(line_start_x, line_pos_y),
+      #     pt2=(line_end_x, line_pos_y),
+      #     color=grid_colour_bgr,
+      #     thickness=1,
+      #     lineType=cv.LINE_AA
+      #   )
       
-      # then add vertical grid lines within the rectangle 
-      line_start_y = template_origin_y + 1
-      line_end_y = template_bottom_right_y - 1
-      for line_pos_x in range(template_origin_x + grid_square_diameter, template_bottom_right_x, grid_square_diameter):
-        cv.line(
-          frame,
-          (line_pos_x, line_start_y),
-          (line_pos_x, line_end_y),
-          color=grid_colour_bgr,
-          thickness=1,
-          lineType=cv.LINE_AA
-        )
+      # # then add vertical grid lines within the rectangle 
+      # line_start_y = grid_origin_y + 1
+      # line_end_y = template_bottom_right_y - 1
+      # for line_pos_x in range(grid_origin_x + grid_square_diameter, template_bottom_right_x, grid_square_diameter):
+      #   cv.line(
+      #     img=frame,
+      #     pt1=(line_pos_x, line_start_y),
+      #     pt2=(line_pos_x, line_end_y),
+      #     color=grid_colour_bgr,
+      #     thickness=1,
+      #     lineType=cv.LINE_AA
+      #   )
 
       output_video_stream.write(frame)
 
@@ -527,7 +523,6 @@ def verified_inputs(config: {}) -> (str, [{}]):
     else:
       config['input_video_path'] = dir_path_via_gui
     print("...user input obtained from pop up dialog box.")
-    print()
 
   # check the file path to the template image
   open_template_dir_dialog = False
@@ -551,7 +546,6 @@ def verified_inputs(config: {}) -> (str, [{}]):
     else:
       config['template_guide_image_path'] = file_path_via_gui
     print("...user input obtained from pop up dialog box.")
-    print()
   
   # barf if there was an error with either the input video dir path or template file path
   if len(error_msgs) > 0:
