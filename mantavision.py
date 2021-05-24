@@ -22,47 +22,133 @@ from tkinter.filedialog import askopenfilename, askdirectory
 
 from video2jpgs import video_to_jpgs
 
-# TODO: add second step to alignment of each frame that does sub pixel alignment. 
-# after each templateMatch step, we do a further brute force search +/- say 2 pixels around the result
-# in increments of say 0.2 pixels (need to shift the image and use good interpolation) and perform
-# cv.computeECC(). so for each frame there'd be 25x25 calls to computeECC() to find the best sub pixel match.
+# TODO: the template we use in the algo should be called the roi_template, 
+#       the template we get from the user should be called guide_template.
+#       so we get the guide_template and use it to find an roi_template in the video we're searching.
 
 # TODO: try adding in rotation of the template +/- some small range of angles for each position in the video frame.
 
-# TODO:
-# the template we use in the algo should be called the roi_template and the one we get from the user 
-# should be called guide_template
-# so we get the guide_template and use it to find an roi_template in the video we're searching.
-# we could get opencv to ask the user to define the roi since apparently it has a gui to do that.
+# TODO: we could get opencv to ask the user to define the roi since apparently it has a gui to do that.
 
-def matchCoordinates(
+# TODO: we could introduce a max movement parameter that limited how far from the last results
+#       we look for a new match. i.e. if after the first fram we find a best match at (x, y)
+#       and max_movememnt = 50 pixels, then we'd look within the region: x - 50 and x + 50, and y - 50 and y + 50
+
+def bestMatch(
   input_image_to_search: np.ndarray,
   template_to_match: np.ndarray,
+  sub_pixel_search_increment: float=None,
+  sub_pixel_refinement_radius: int=None
+) -> (float, [float, float]):
+  '''
+    Computes the coordinates of the best match between the input image and template.
+    Accuracy is +/-1 pixel if sub_pixel_search_increment is None or >= 1.0.
+    Accuracy is +/-sub_pixel_search_increment if |sub_pixel_search_increment| < 1.0 and not None.
+  '''
+  if sub_pixel_search_increment is not None and not abs(sub_pixel_search_increment) < 1.0:
+    print('WARNING. Passing sub_pixel_search_increment >= 1.0 to bestMatch() is pointless. Ignoring.')
+    sub_pixel_search_increment = None
+  
+  # TODO: don't alter the original input image or template so we can pass an unaltered version to sub pixel
+  #       we'll need to do the same for the template which is altered by the process that selects the template
+  input_image = contrast_enhanced(cv.cvtColor(input_image_to_search, cv.COLOR_BGR2GRAY)).astype(np.uint8)
+  template = contrast_enhanced(cv.cvtColor(template_to_match, cv.COLOR_BGR2GRAY)).astype(np.uint8)
+
+  # find the best match for the template in the current frame
+  match_results = cv.matchTemplate(input_image, template, cv.TM_CCOEFF)
+  _, match_measure, _, match_coordinates = cv.minMaxLoc(match_results)  # opencv returns in x, y order
+
+  if sub_pixel_search_increment is None:
+    return (match_measure, match_coordinates)
+  # else
+  #   refine the results with a sub pixel step
+
+  # convert images to appropriate types for sub pixel match step
+  input_image = cv.cvtColor(input_image_to_search, cv.COLOR_BGR2GRAY).astype(np.float64)
+  template = cv.cvtColor(template_to_match, cv.COLOR_BGR2GRAY).astype(np.float64)
+
+  if sub_pixel_refinement_radius is None:
+    sub_pixel_search_radius = 1
+  else:
+    sub_pixel_search_radius = sub_pixel_refinement_radius
+  match_coordinates_origin_x = match_coordinates[0]
+  match_coordinates_origin_y = match_coordinates[1]
+  sub_region_y_start = max(
+    match_coordinates_origin_y - sub_pixel_search_radius,
+    0
+  )
+  sub_region_y_end = min(
+    match_coordinates_origin_y + template.shape[0] + sub_pixel_search_radius, 
+    input_image.shape[0]
+  )
+  sub_region_x_start = max(
+    match_coordinates_origin_x - sub_pixel_search_radius,
+    0
+  )
+  sub_region_x_end = min(
+    match_coordinates_origin_x + template.shape[1] + sub_pixel_search_radius,
+    input_image.shape[1]
+  )
+  match_measure, match_sub_coordinates  = bestSubPixelMatch(
+    input_image_to_search=input_image[
+      sub_region_y_start:sub_region_y_end, 
+      sub_region_x_start:sub_region_x_end
+    ],
+    template_to_match=template,
+    search_increment=sub_pixel_search_increment
+  )
+  match_coordinates = [
+    sub_region_x_start + match_sub_coordinates[0],
+    sub_region_y_start + match_sub_coordinates[1]
+  ]
+  return (match_measure, match_coordinates)
+
+
+def bestSubPixelMatch(
+  input_image_to_search: np.ndarray,
+  template_to_match: np.ndarray,  # must be .astype(np.float64)
   search_increment: float
-  ) -> (float, float):
+) -> (float, [float, float]):
     '''
-      Computes the coordinates of the best match between the input image and template.
-      If |search_increment| < 1, sub pixel matching is performed with interpolation.
+      Computes the coordinates of the best sub pixel match between the input image and template.
     '''
+    # the shift function turns the input image into a float64 dtype, and 
+    # computeECC requires both template & input to be the same type
+    error_msg = ""
+    if input_image_to_search.dtype != np.float64:
+      error_msg += "input_image_to_search must be of type np.float64\n"
+    if template_to_match.dtype != np.float64:
+      error_msg += "template_to_match must be of type np.float64\n"
+    if len(error_msg) > 0:
+      print("ERROR. In function bestSubPixelMatch:\n" + error_msg)
+      sys.exit(1)
+
     input_dim_y, input_dim_x = input_image_to_search.shape
     template_dim_y, template_dim_x = template_to_match.shape
     search_length_y = input_dim_y - template_dim_y
     search_length_x = input_dim_x - template_dim_x
     max_ecc = 0.0
-    max_coordinates = (0.0, 0.0)
+    max_coordinates = [0.0, 0.0]
     shifted_input = np.ndarray([template_dim_y + 1, template_dim_x + 1])
-    for y_origin in range(0.0, search_length_y, search_increment):
-      for x_origin in range(0.0, search_length_x, search_increment):
-        sub_image_to_shift = input_image_to_search[int(y_origin):template_dim_y + 1, int(x_origin):template_dim_x + 1]
+    for y_origin in np.arange(search_increment, search_length_y, search_increment):
+      for x_origin in np.arange(search_increment, search_length_x, search_increment):
+        sub_region_start_y = math.floor(y_origin)
+        sub_region_end_y = sub_region_start_y + template_dim_y + 1
+        sub_region_start_x = math.floor(x_origin)
+        sub_region_end_x = sub_region_start_x + template_dim_x + 1        
+        sub_image_to_shift = input_image_to_search[
+          sub_region_start_y:sub_region_end_y,
+          sub_region_start_x:sub_region_end_x,
+        ]
         shift(input=sub_image_to_shift, shift=[-y_origin, -x_origin], output=shifted_input)
         input_to_match = shifted_input[:template_dim_y, :template_dim_x]
+
         ecc = cv.computeECC(templateImage=template_to_match, inputImage=input_to_match)
         if ecc > max_ecc:
           max_ecc = ecc
-          max_coordinates = (y_origin, x_origin)
-    return max_coordinates
-  # TODO: note that we need to ensure the caller offsets the return coordinates
-  #       from the origin of the sub region they passed in
+          max_coordinates = [x_origin, y_origin]
+
+    return (max_ecc, max_coordinates)
   
 
 def contrast_enhanced(image_to_adjust):
@@ -97,8 +183,8 @@ def best_template_match_ccoef(video_to_search, template_to_find, max_frames_to_c
       print("Error. Unexpected problem during video frame capture. Exiting.")
 
     # track the template
-    frame = contrast_enhanced(cv.cvtColor(frame, cv.COLOR_BGR2GRAY)).astype(np.uint8)
-    match_results = cv.matchTemplate(frame, template_to_find, cv.TM_CCOEFF)
+    frame_adjusted = contrast_enhanced(cv.cvtColor(frame, cv.COLOR_BGR2GRAY)).astype(np.uint8)
+    match_results = cv.matchTemplate(frame_adjusted, template_to_find, cv.TM_CCOEFF)
     _, match_measure, _, match_coordinates = cv.minMaxLoc(match_results)
     if match_measure > best_match_measure:
       best_match_measure = match_measure
@@ -129,7 +215,9 @@ def track_template(
   output_video_path: str = None,
   guide_match_search_seconds: float = None,
   microns_per_pixel: float = None,
-  output_conversion_factor: float = None
+  output_conversion_factor: float = None,
+  sub_pixel_search_increment: float = None,
+  sub_pixel_refinement_radius: float = None  
 ) -> (str, [{}], float):
   '''
   Tracks a template image through each frame of a video.
@@ -205,20 +293,21 @@ def track_template(
   tracking_results = [] # will be a list of dicts
   number_of_frames = int(input_video_stream.get(cv.CAP_PROP_FRAME_COUNT))  
   for frame_number in range(number_of_frames):
+
     frame_returned, raw_frame = input_video_stream.read()
     if not frame_returned:
       error_msg = "Error. Unexpected problem during video frame capture. Exiting."
       return (error_msg, [{}], frames_per_second)
-
-    frame = contrast_enhanced(cv.cvtColor(raw_frame, cv.COLOR_BGR2GRAY)).astype(np.uint8)
-
-    # find the best match for the template in the current frame
-    match_results = cv.matchTemplate(frame, template, cv.TM_CCOEFF)
-
-    _, match_measure, _, match_coordinates = cv.minMaxLoc(match_results)  # opencv returns in x, y order
-    template_origin_x = match_coordinates[0]
+    
+    match_measure, match_coordinates = bestMatch(
+      input_image_to_search=raw_frame,
+      template_to_match=template,
+      sub_pixel_search_increment=sub_pixel_search_increment,
+      sub_pixel_refinement_radius=sub_pixel_refinement_radius
+    )
+    # TODO these vars should be called something to do with best match coordinates origin x etc
+    template_origin_x = match_coordinates[0]  
     template_origin_y = match_coordinates[1]
-
     tracking_results.append(
       {
         'FRAME_NUMBER': frame_number,
@@ -231,6 +320,7 @@ def track_template(
         'TEMPLATE_MATCH_ORIGIN_Y': template_origin_y,
       }
     )
+
     # update the min and max positions of the template origin for ALL frames
     if template_origin_y < min_template_origin_y: 
       min_template_origin_y = template_origin_y
@@ -241,6 +331,15 @@ def track_template(
 
     # draw a grid over the region in the frame where the template matched
     if output_video_stream is not None:
+
+      # can't use sub pixel values for drawing on the image
+      # so we convert them to the nearest pixel
+      # TODO: we should be storing these int values as separate vars with different names
+      #       OR we can use the shift parameter in rectangle etc to draw sub pixel lines and rectangles?
+      template_origin_y = int(math.floor(template_origin_y + 0.5))
+      template_origin_x = int(math.floor(template_origin_x + 0.5))
+
+
       grid_colour_bgr = (255, 128, 0)      
       grid_square_diameter = 10
       frame = raw_frame
@@ -502,6 +601,19 @@ def verified_inputs(config: {}) -> (str, [{}]):
   else:
     output_conversion_factor = config['output_conversion_factor']
 
+  if 'sub_pixel_search_increment' not in config:
+    sub_pixel_search_increment = None
+  else:
+    sub_pixel_search_increment = config['sub_pixel_search_increment']
+
+  if 'sub_pixel_refinement_radius' not in config:
+    sub_pixel_refinement_radius = None
+  else:
+    sub_pixel_refinement_radius = config['sub_pixel_refinement_radius']
+  if sub_pixel_search_increment is None:
+    print('WARNING. sub_pixel_refinement_radius ignored because sub_pixel_search_increment not provided')
+    sub_pixel_refinement_radius = None
+
   # set all the values needed to run template matching on each input video
   configs = []
   for file_name, file_extension in video_files:
@@ -567,6 +679,8 @@ def verified_inputs(config: {}) -> (str, [{}]):
       'guide_match_search_seconds': guide_match_search_seconds,
       'microns_per_pixel': microns_per_pixel,
       'output_conversion_factor': output_conversion_factor,
+      'sub_pixel_search_increment': sub_pixel_search_increment,
+      'sub_pixel_refinement_radius': sub_pixel_refinement_radius,
       'well_name': well_name,
       'date_stamp': date_stamp,      
     })
@@ -604,6 +718,7 @@ def run_track_template(config: {}):
   print("\nTemplate Tracker running...") 
   total_tracking_time = 0
   for input_args in args:
+    print(f'processing: {input_args["input_video_path"]}')
     video_tracking_start_time = time.time()
     error_msg, tracking_results, frames_per_second = track_template(
       input_args['input_video_path'],
@@ -611,7 +726,9 @@ def run_track_template(config: {}):
       input_args['output_video_path'],
       input_args['guide_match_search_seconds'],
       input_args['microns_per_pixel'],
-      input_args['output_conversion_factor']
+      input_args['output_conversion_factor'],
+      input_args['sub_pixel_search_increment'],
+      input_args['sub_pixel_refinement_radius']
     )
     total_tracking_time += (time.time() - video_tracking_start_time)
     
