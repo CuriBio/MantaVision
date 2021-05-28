@@ -52,8 +52,8 @@ def bestMatch(
     print('WARNING. Passing sub_pixel_search_increment >= 1.0 to bestMatch() is pointless. Ignoring.')
     sub_pixel_search_increment = None
   
-  input_image = contrast_enhanced(cv.cvtColor(input_image_to_search, cv.COLOR_BGR2GRAY)).astype(np.uint8)
-  template = contrast_enhanced(cv.cvtColor(template_to_match, cv.COLOR_BGR2GRAY)).astype(np.uint8)
+  input_image = contrast_adjusted(cv.cvtColor(input_image_to_search, cv.COLOR_BGR2GRAY)).astype(np.uint8)
+  template = contrast_adjusted(cv.cvtColor(template_to_match, cv.COLOR_BGR2GRAY)).astype(np.uint8)
 
   # find the best match for template in input_image_to_search
   match_results = cv.matchTemplate(input_image, template, cv.TM_CCOEFF)
@@ -150,19 +150,41 @@ def bestSubPixelMatch(
           max_coordinates = [x_origin, y_origin]
 
     return (max_ecc, max_coordinates)
-  
 
-def contrast_enhanced(image_to_adjust):
+
+def rescaled(intensity: float, intensity_min: float, intensity_range: float, new_scale: float = 1.0) -> float:
+  return new_scale*(intensity - intensity_min)/intensity_range
+
+
+def gamma_adjusted(intensity: float, gamma: float, intensity_range: float=255.0) -> float:
+  return intensity**gamma
+
+
+def contrast_adjusted(image_to_adjust: np.ndarray):
   '''
   Performs an automatic adjustment of the input intensity range to enhance contrast.
   
   Args:
     image_to_adjust: the image to adjust the contrast of. 
   '''
-  # optimal_threshold = skimage_filters.threshold_yen(image_to_adjust)
-  optimal_threshold = skimage_filters.threshold_minimum(image_to_adjust)
-  uint8_range = (0, 255)
-  return skimage_exposure.rescale_intensity(image_to_adjust, in_range=(0, optimal_threshold), out_range=uint8_range)
+  image_stddev = np.std(image_to_adjust)
+  gamma_value = 1.0/np.sqrt(np.log2(image_stddev))
+  gamma_adjusted_image = gamma_adjusted(
+    intensity=image_to_adjust,
+    gamma=gamma_value
+  )
+
+  gamma_adjusted_image_min: float = np.min(gamma_adjusted_image)
+  gamma_adjusted_image_max: float = np.max(gamma_adjusted_image)
+  gamma_adjusted_image_range: float = gamma_adjusted_image_max - gamma_adjusted_image_min
+  final_adjusted_image = rescaled(
+    intensity=gamma_adjusted_image,
+    intensity_min=gamma_adjusted_image_min,
+    intensity_range=gamma_adjusted_image_range,
+    new_scale=255.0
+  ).astype(np.uint8)
+
+  return final_adjusted_image
 
 
 def best_template_match(video_to_search, template_to_find, max_frames_to_check) -> np.ndarray:
@@ -185,7 +207,7 @@ def best_template_match(video_to_search, template_to_find, max_frames_to_check) 
       sys.exit(1)
 
     # track the template
-    frame_adjusted = contrast_enhanced(cv.cvtColor(frame, cv.COLOR_BGR2GRAY)).astype(np.uint8)
+    frame_adjusted = contrast_adjusted(cv.cvtColor(frame, cv.COLOR_BGR2GRAY)).astype(np.uint8)
     match_results = cv.matchTemplate(frame_adjusted, template_to_find, cv.TM_CCOEFF)
     _, match_measure, _, match_coordinates = cv.minMaxLoc(match_results)
     if match_measure > best_match_measure:
@@ -402,14 +424,14 @@ def track_template(
   output_conversion_factor
   for frame_info in tracking_results:
     y_displacement = (frame_info['TEMPLATE_MATCH_ORIGIN_Y'] - min_template_origin_y)*float(microns_per_pixel)
-    y_displacement*= float(output_conversion_factor)
+    y_displacement *= float(output_conversion_factor)
     frame_info['Y_DISPLACEMENT'] = y_displacement
     if positive_x_movement_slope:
       x_displacement = (max_template_origin_x - frame_info['TEMPLATE_MATCH_ORIGIN_X'])*float(microns_per_pixel)
     else:
       x_displacement = (frame_info['TEMPLATE_MATCH_ORIGIN_X'] - min_template_origin_x)*float(microns_per_pixel)
-      x_displacement*= float(output_conversion_factor)
-    frame_info['X_DISPLACEMENT'] = x_displacement 
+    x_displacement *= float(output_conversion_factor)
+    frame_info['X_DISPLACEMENT'] = x_displacement
     frame_info['XY_DISPLACEMENT'] = math.sqrt(x_displacement*x_displacement + y_displacement*y_displacement)
     adjusted_tracking_results.append(frame_info)
 
@@ -686,26 +708,26 @@ def run_track_template(config: {}):
   track_templates_start_time = time.time()
   dirs, args = verified_inputs(config)
    
-  # make all the dirs needed for writing the results 
-  # unless they already exist in which case we need to barf
-  dirs_exist_error_message = ''
-  if os.path.isdir(dirs['results_dir_path']):
-    dirs_exist_error_message += "results dir already exists. Cannot overwrite.\n"
-  if os.path.isdir(dirs['results_json_dir_path']):
-    dirs_exist_error_message += "json results dir already exists. Cannot overwrite.\n"
-  if os.path.isdir(dirs['results_xlsx_dir_path']):
-    dirs_exist_error_message += "xlsx results dir already exists. Cannot overwrite.\n"
-  if os.path.isdir(dirs['results_video_dir_path']):
-    dirs_exist_error_message += "video results dir already exists. Cannot overwrite.\n"
-  if len(dirs_exist_error_message) > 0:
-    dirs_exist_error_message = "ERROR.\n" + dirs_exist_error_message + "Nothing Tracked."
-    print(dirs_exist_error_message)
-    sys.exit(1)
-  os.mkdir(dirs['results_dir_path'])
-  os.mkdir(dirs['results_json_dir_path'])
-  os.mkdir(dirs['results_xlsx_dir_path'])
-  os.mkdir(dirs['results_video_dir_path'])
-  os.mkdir(dirs['results_video_frames_dir_path'])
+  # # make all the dirs needed for writing the results 
+  # # unless they already exist in which case we need to barf
+  # dirs_exist_error_message = ''
+  # if os.path.isdir(dirs['results_dir_path']):
+  #   dirs_exist_error_message += "results dir already exists. Cannot overwrite.\n"
+  # if os.path.isdir(dirs['results_json_dir_path']):
+  #   dirs_exist_error_message += "json results dir already exists. Cannot overwrite.\n"
+  # if os.path.isdir(dirs['results_xlsx_dir_path']):
+  #   dirs_exist_error_message += "xlsx results dir already exists. Cannot overwrite.\n"
+  # if os.path.isdir(dirs['results_video_dir_path']):
+  #   dirs_exist_error_message += "video results dir already exists. Cannot overwrite.\n"
+  # if len(dirs_exist_error_message) > 0:
+  #   dirs_exist_error_message = "ERROR.\n" + dirs_exist_error_message + "Nothing Tracked."
+  #   print(dirs_exist_error_message)
+  #   sys.exit(1)
+  # os.mkdir(dirs['results_dir_path'])
+  # os.mkdir(dirs['results_json_dir_path'])
+  # os.mkdir(dirs['results_xlsx_dir_path'])
+  # os.mkdir(dirs['results_video_dir_path'])
+  # os.mkdir(dirs['results_video_frames_dir_path'])
 
   # run the tracking routine on each input video
   # and write out the results
@@ -730,9 +752,9 @@ def run_track_template(config: {}):
       print(error_msg)
       sys.exit(1)
 
-    # write out the results video as frames
-    os.mkdir(input_args['output_video_frames_dir_path'])
-    video_to_jpgs(input_args['output_video_path'], input_args['output_video_frames_dir_path'])
+    # # write out the results video as frames
+    # os.mkdir(input_args['output_video_frames_dir_path'])
+    # video_to_jpgs(input_args['output_video_path'], input_args['output_video_frames_dir_path'])
 
     # write the results as xlsx
     # TODO: extract the date part from the first part of the file name
