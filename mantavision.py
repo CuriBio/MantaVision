@@ -27,13 +27,37 @@ from video2jpgs import video_to_jpgs
 #       the template we get from the user should be called guide_template.
 #       so we get the guide_template and use it to find an roi_template in the video we're searching.
 
-# TODO: we could get opencv to ask the user to define the roi since apparently it has a gui to do that.
-
 # TODO: we could introduce a max movement parameter that limited how far from the last results
 #       we look for a new match. i.e. if after the first fram we find a best match at (x, y)
 #       and max_movememnt = 50 pixels, then we'd look within the region: x - 50 and x + 50, and y - 50 and y + 50
 
 # TODO: we could try adding in rotation of the template +/- some small range of angles for each position per frame.
+
+
+def selectedROI(input_image: np.ndarray) -> np.ndarray:
+
+  print("Wating on user to manually select ROI...")
+  roi_selection = cv.selectROI("Select ROI", input_image, showCrosshair=False)
+  cv.destroyAllWindows()
+  print("ROI selection complete...")
+
+  x_start = roi_selection[0]
+  x_end = x_start + roi_selection[2]
+  if x_end - x_start == 0:
+    print("Invalid ROI selection. ROI width cannot be 0")
+    sys.exit(0)
+  y_start = roi_selection[1]
+  y_end = y_start + roi_selection[3]
+  if y_end - y_start == 0:
+    print("Invalid ROI selection. ROI height cannot be 0")
+    sys.exit(0)
+
+  roi = input_image[
+    y_start:y_end,
+    x_start:x_end,    
+  ]
+
+  return roi
 
 
 def bestMatch(
@@ -187,7 +211,12 @@ def contrast_adjusted(image_to_adjust: np.ndarray):
   return final_adjusted_image
 
 
-def best_template_match(video_to_search, template_to_find, max_frames_to_check) -> np.ndarray:
+def best_template_match(
+  video_to_search,
+  template_to_find,
+  max_frames_to_check,
+  user_roi_selection: bool=False
+) -> np.ndarray:
   initial_frame_pos = video_to_search.get(cv.CAP_PROP_POS_FRAMES)
   if initial_frame_pos != 0:
     video_to_search.set(cv.CAP_PROP_POS_FRAMES, 0)
@@ -203,8 +232,14 @@ def best_template_match(video_to_search, template_to_find, max_frames_to_check) 
   for _ in range(number_of_frames_to_check):
     frame_returned, frame = video_to_search.read()
     if not frame_returned:
-      print("Error. Unexpected problem during video frame capture. Exiting.")
+      print("Error. Unexpected problem occurred during video frame capture for template finder. Exiting.")
       sys.exit(1)
+
+    if user_roi_selection:
+      # reset the video to where it was initially before we return
+      video_to_search.set(cv.CAP_PROP_POS_FRAMES, initial_frame_pos)      
+      # return the selected roi
+      return selectedROI(frame)
 
     # track the template
     frame_adjusted = contrast_adjusted(cv.cvtColor(frame, cv.COLOR_BGR2GRAY)).astype(np.uint8)
@@ -237,7 +272,8 @@ def track_template(
   microns_per_pixel: float = None,
   output_conversion_factor: float = None,
   sub_pixel_search_increment: float = None,
-  sub_pixel_refinement_radius: float = None  
+  sub_pixel_refinement_radius: float = None,
+  user_roi_selection: bool = True
 ) -> (str, [{}], float):
   '''
   Tracks a template image through each frame of a video.
@@ -268,16 +304,19 @@ def track_template(
   frames_per_second = input_video_stream.get(cv.CAP_PROP_FPS)
 
   # open the template image
-  template = cv.imread(template_guide_image_path)
-  if template is None:
-    error_msg = "ERROR. The path provided for template does not point to an image file. Nothing has been tracked."
-    return (error_msg, [{}], frames_per_second)
-  template = cv.cvtColor(template, cv.COLOR_BGR2GRAY)
+  if user_roi_selection:
+    template = None
+  else:
+    template = cv.imread(template_guide_image_path)
+    if template is None:
+      error_msg = "ERROR. The path provided for template does not point to an image file. Nothing has been tracked."
+      return (error_msg, [{}], frames_per_second)
+    template = cv.cvtColor(template, cv.COLOR_BGR2GRAY)
   if guide_match_search_seconds is None:
     max_frames_to_check = None
   else:
     max_frames_to_check = int(math.ceil(frames_per_second*float(guide_match_search_seconds)))
-    template = best_template_match(input_video_stream, template, max_frames_to_check)
+    template = best_template_match(input_video_stream, template, max_frames_to_check, user_roi_selection=user_roi_selection)
   template_height = template.shape[0]
   template_width = template.shape[1]
   
@@ -315,7 +354,7 @@ def track_template(
 
     frame_returned, raw_frame = input_video_stream.read()
     if not frame_returned:
-      error_msg = "Error. Unexpected problem during video frame capture. Exiting."
+      error_msg = "Error. Unexpected problem occurred during video frame capture. Exiting."
       return (error_msg, [{}], frames_per_second)
     
     match_measure, match_coordinates = bestMatch(
@@ -547,28 +586,20 @@ def verified_inputs(config: {}) -> (str, [{}]):
     print("...user input obtained from pop up dialog box.")
 
   # check the file path to the template image
-  open_template_dir_dialog = False
+  user_roi_selection = False
   if 'template_guide_image_path' in config:
     if config['template_guide_image_path'] is None:
-      open_template_dir_dialog = True
+      config['template_guide_image_path'] = ''
+      user_roi_selection = True
+    elif config['template_guide_image_path'].lower() == '':
+      user_roi_selection = True
     else:
-      if config['template_guide_image_path'].lower() == 'ask' or config['template_guide_image_path'].lower() == '':
-        open_template_dir_dialog = True
-      elif not os.path.isfile(config['template_guide_image_path']):
+      if not os.path.isfile(config['template_guide_image_path']):
         error_msgs.append('Input template image file does not exist.')      
   else:
-      open_template_dir_dialog = True
-  # pop up a dialog to select the template file if required
-  if open_template_dir_dialog:
-    print()
-    print("waiting for user input (template to use) via pop up dialog box...")    
-    file_path_via_gui = get_file_path_via_gui()
-    if file_path_via_gui == () or file_path_via_gui == '':
-      error_msgs.append('No input template image path was provided.')
-    else:
-      config['template_guide_image_path'] = file_path_via_gui
-    print("...user input obtained from pop up dialog box.")
-  
+    config['template_guide_image_path'] = ''
+    user_roi_selection = True
+
   # barf if there was an error with either the input video dir path or template file path
   if len(error_msgs) > 0:
     error_msg = 'ERROR.'
@@ -629,7 +660,7 @@ def verified_inputs(config: {}) -> (str, [{}]):
   if sub_pixel_search_increment is None:
     print('WARNING. sub_pixel_refinement_radius ignored because sub_pixel_search_increment not provided')
     sub_pixel_refinement_radius = None
-
+    
   # set all the values needed to run template matching on each input video
   configs = []
   for file_name, file_extension in video_files:
@@ -687,6 +718,7 @@ def verified_inputs(config: {}) -> (str, [{}]):
     configs.append({
       'input_video_path': input_video_path,
       'template_guide_image_path': template_guide_image_path,
+      'user_roi_selection': user_roi_selection,
       'output_video_path': output_video_path,
       'output_video_frames_dir_path': output_video_frames_dir_path,
       'output_json_path': output_json_path,
@@ -698,7 +730,7 @@ def verified_inputs(config: {}) -> (str, [{}]):
       'sub_pixel_search_increment': sub_pixel_search_increment,
       'sub_pixel_refinement_radius': sub_pixel_refinement_radius,
       'well_name': well_name,
-      'date_stamp': date_stamp,      
+      'date_stamp': date_stamp,
     })
 
   return (dirs, configs)
@@ -744,7 +776,8 @@ def run_track_template(config: {}):
       input_args['microns_per_pixel'],
       input_args['output_conversion_factor'],
       input_args['sub_pixel_search_increment'],
-      input_args['sub_pixel_refinement_radius']
+      input_args['sub_pixel_refinement_radius'],
+      input_args['user_roi_selection']
     )
     total_tracking_time += (time.time() - video_tracking_start_time)
     
