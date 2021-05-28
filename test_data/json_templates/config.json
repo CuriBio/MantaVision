@@ -1,6 +1,7 @@
 {
-    "input_video_path":             "./test_data/videos/",
-    "template_guide_image_path":    "./test_data/image_templates/magnet_full_template.jpg",
+    "input_video_path":             "/storage/data/home/positimothy/dev/repo/curibio/optical-tracking/test_videos/flouro/",
+    "template_guide_image_path":    "./test_data/image_templates/magnet_full_template_hi_res.jpg",    
     "guide_match_search_seconds":   5,
-    "microns_per_pixel":            6.5
+    "sub_pixel_search_increment":   0.4,
+    "sub_pixel_refinement_radius":  1
 }
