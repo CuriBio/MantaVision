@@ -522,38 +522,36 @@ def contents_of_dir(dir_path: str, search_terms: [str]) -> ([str], [('str', 'str
   return base_dir, files
 
 
-def get_dir_path_via_gui() -> str:
+def get_dir_path_via_gui(window_title: str='') -> str:
   # show an "Open" dialog box and return the path to the selected dir
   window=tk()
   window.withdraw()
   window.lift()
   window.overrideredirect(True)
   window.call('wm', 'attributes', '.', '-topmost', True)
-  return askdirectory()
+  return askdirectory(
+    initialdir='./',
+    title=window_title
+  )
 
 
-def get_file_path_via_gui() -> str:
+def get_file_path_via_gui(window_title: str='') -> str:
   # show an "Open" dialog box and return the path to the selected file
   window=tk()
   window.withdraw()
   window.lift()  
   window.overrideredirect(True)
   window.call('wm', 'attributes', '.', '-topmost', True)
-  return askopenfilename() 
+  return askopenfilename(
+    initialdir='./',
+    title=window_title    
+  ) 
 
 
 def verified_inputs(config: {}) -> (str, [{}]):
   '''
 
   '''
-  # TODO: don't allow video path to be empty or non existent
-  #       can be 'file' or 'dir' or an actual path to a dir or file
-  # TODO: don't allow template path to be empty or non existent
-  #       can be 'file' or 'draw'
-  # TODO: if template is draw, we will open up the first frame of the first video
-  #       and then save the template in the results dir and set that path as the template
-  # TODO: need to be saving the template used in the results so we're completely reproducible 
-
   error_msgs = []
   # check the dir path to input videos
   open_video_dir_dialog = False
@@ -561,7 +559,7 @@ def verified_inputs(config: {}) -> (str, [{}]):
     if config['input_video_path'] is None:
       open_video_dir_dialog = True
     else:
-      if config['input_video_path'].lower() == 'ask' or config['input_video_path'].lower() == '':
+      if config['input_video_path'].lower() == 'select' or config['input_video_path'].lower() == '':
         open_video_dir_dialog = True
       elif not os.path.isdir(config['input_video_path']):
         error_msgs.append('Input path to video/s does not exist.')      
@@ -571,7 +569,7 @@ def verified_inputs(config: {}) -> (str, [{}]):
   if open_video_dir_dialog:
     print()
     print("waiting for user input (video dir) via pop up dialog box...")
-    dir_path_via_gui = get_dir_path_via_gui()
+    dir_path_via_gui = get_dir_path_via_gui(window_title='Select Directory With Videos To Track')
     if dir_path_via_gui == () or dir_path_via_gui == '':
       error_msgs.append('No input path to video/s was provided.')
     else:
@@ -580,18 +578,30 @@ def verified_inputs(config: {}) -> (str, [{}]):
 
   # check the file path to the template image
   user_roi_selection = False
+  open_template_dir_dialog = False
   if 'template_guide_image_path' in config:
     if config['template_guide_image_path'] is None:
-      config['template_guide_image_path'] = ''
-      user_roi_selection = True
-    elif config['template_guide_image_path'].lower() == '':
-      user_roi_selection = True
+      open_template_dir_dialog = True
     else:
-      if not os.path.isfile(config['template_guide_image_path']):
+      if config['template_guide_image_path'].lower() == 'select' or config['template_guide_image_path'].lower() == '':
+        open_template_dir_dialog = True
+      elif config['template_guide_image_path'].lower() == 'draw':
+        config['template_guide_image_path'] = ''
+        user_roi_selection = True
+      elif not os.path.isfile(config['template_guide_image_path']):
         error_msgs.append('Input template image file does not exist.')      
   else:
-    config['template_guide_image_path'] = ''
-    user_roi_selection = True
+      open_template_dir_dialog = True
+  # pop up a dialog to select the template file if required
+  if open_template_dir_dialog:
+    print()
+    print("waiting for user input (template to use) via pop up dialog box...")    
+    file_path_via_gui = get_file_path_via_gui(window_title='Select Directory With Videos To Track')
+    if file_path_via_gui == () or file_path_via_gui == '':
+      error_msgs.append('No input template image path was provided.')
+    else:
+      config['template_guide_image_path'] = file_path_via_gui
+    print("...user input obtained from pop up dialog box.")
 
   # barf if there was an error with either the input video dir path or template file path
   if len(error_msgs) > 0:
@@ -789,9 +799,9 @@ def run_track_template(config: {}):
     # write the template used for tracking to the results dir
     cv.imwrite(input_args['results_template_filename'], template)
 
-    # # write out the results video as frames
-    # os.mkdir(input_args['output_video_frames_dir_path'])
-    # video_to_jpgs(input_args['output_video_path'], input_args['output_video_frames_dir_path'])
+    # write out the results video as frames
+    os.mkdir(input_args['output_video_frames_dir_path'])
+    video_to_jpgs(input_args['output_video_path'], input_args['output_video_frames_dir_path'])
 
     # write the results as xlsx
     results_to_csv(
