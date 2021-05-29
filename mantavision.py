@@ -23,15 +23,15 @@ from tkinter.filedialog import askopenfilename, askdirectory
 from video2jpgs import video_to_jpgs
 
 
-# TODO: the template we use in the algo should be called the roi_template and
-#       the template we get from the user should be called guide_template.
-#       so we get the guide_template and use it to find an roi_template in the video we're searching.
-
 # TODO: we could introduce a max movement parameter that limited how far from the last results
 #       we look for a new match. i.e. if after the first fram we find a best match at (x, y)
 #       and max_movememnt = 50 pixels, then we'd look within the region: x - 50 and x + 50, and y - 50 and y + 50
 
 # TODO: we could try adding in rotation of the template +/- some small range of angles for each position per frame.
+
+# TODO: the template we use in the algo should be called the roi_template and
+#       the template we get from the user should be called guide_template.
+#       so we get the guide_template and use it to find an roi_template in the video we're searching.
 
 
 def selectedROI(input_image: np.ndarray) -> np.ndarray:
@@ -43,12 +43,12 @@ def selectedROI(input_image: np.ndarray) -> np.ndarray:
 
   x_start = roi_selection[0]
   x_end = x_start + roi_selection[2]
-  if x_end - x_start == 0:
+  if x_end - x_start <= 0:
     print("Invalid ROI selection. ROI width cannot be 0")
     sys.exit(0)
   y_start = roi_selection[1]
   y_end = y_start + roi_selection[3]
-  if y_end - y_start == 0:
+  if y_end - y_start <= 0:
     print("Invalid ROI selection. ROI height cannot be 0")
     sys.exit(0)
 
@@ -214,8 +214,9 @@ def contrast_adjusted(image_to_adjust: np.ndarray):
 def best_template_match(
   video_to_search,
   template_to_find,
-  max_frames_to_check,
-  user_roi_selection: bool=False
+  max_frames_to_check: int,
+  user_roi_selection: bool=False,
+
 ) -> np.ndarray:
   initial_frame_pos = video_to_search.get(cv.CAP_PROP_POS_FRAMES)
   if initial_frame_pos != 0:
@@ -274,30 +275,35 @@ def track_template(
   sub_pixel_search_increment: float = None,
   sub_pixel_refinement_radius: float = None,
   user_roi_selection: bool = True
-) -> (str, [{}], float):
+) -> (str, [{}], float, np.ndarray):
   '''
   Tracks a template image through each frame of a video.
 
   Args:
     input_video_path:           path of the input video to track the template.
-    template_guide_image_path:        path to an image that will be used as a template to match.
+    template_guide_image_path:  path to an image that will be used as a template to match.
     output_video_path:          path to write a video with the tracking results visualized. 
-    guide_match_search_seconds:  approximate number of seconds for template to complete a full period of movement.',
+    guide_match_search_seconds: approximate number of seconds for template to complete a full period of movement.',
   Returns:
-    and error string (or None if no errors occurred), a list of per frame tracking results, & the frame rate.
+    error string (or None if no errors occurred), 
+    list of per frame tracking results, 
+    frame rate,
+    template actually used for the tracking
   '''
   error_msg = None
   frames_per_second = float(0.0)
+  # TODO: need a proper return struct. particularly for when we return from an error
+  #       so we can just update the error val and return the same struct defined ONCE
 
   if input_video_path is None:
     error_msg = "ERROR. No path provided to an input video. Nothing has been tracked."
-    return (error_msg, [{}], frames_per_second)
+    return (error_msg, [{}], frames_per_second, None)
 
   # open a video reader stream
   input_video_stream = cv.VideoCapture(input_video_path)
   if not input_video_stream.isOpened():
     error_msg = "Error. Can't open videos stream for capture. Nothing has been tracked."
-    return (error_msg, [{}], frames_per_second)
+    return (error_msg, [{}], frames_per_second, None)
   frame_width  = int(input_video_stream.get(cv.CAP_PROP_FRAME_WIDTH))
   frame_height = int(input_video_stream.get(cv.CAP_PROP_FRAME_HEIGHT))
   frame_size = (frame_width, frame_height)
@@ -310,13 +316,18 @@ def track_template(
     template = cv.imread(template_guide_image_path)
     if template is None:
       error_msg = "ERROR. The path provided for template does not point to an image file. Nothing has been tracked."
-      return (error_msg, [{}], frames_per_second)
+      return (error_msg, [{}], frames_per_second, None)
     template = cv.cvtColor(template, cv.COLOR_BGR2GRAY)
   if guide_match_search_seconds is None:
     max_frames_to_check = None
   else:
     max_frames_to_check = int(math.ceil(frames_per_second*float(guide_match_search_seconds)))
-    template = best_template_match(input_video_stream, template, max_frames_to_check, user_roi_selection=user_roi_selection)
+    template = best_template_match(
+      input_video_stream,
+      template,
+      max_frames_to_check,
+      user_roi_selection=user_roi_selection
+    )
   template_height = template.shape[0]
   template_width = template.shape[1]
   
@@ -330,7 +341,7 @@ def track_template(
     else:
       error_msg = "Error. File format extension " + format_extension + " is not supported. "
       error_msg += "Only .mp4 and .avi are allowed. Nothing has been tracked."
-      return (error_msg, [{}], frames_per_second)
+      return (error_msg, [{}], frames_per_second, None)
 
     output_video_codec = cv.VideoWriter_fourcc(*'mp4v') #cv.VideoWriter_fourcc(*'DIVX') #     
     output_video_stream = cv.VideoWriter(
@@ -355,7 +366,7 @@ def track_template(
     frame_returned, raw_frame = input_video_stream.read()
     if not frame_returned:
       error_msg = "Error. Unexpected problem occurred during video frame capture. Exiting."
-      return (error_msg, [{}], frames_per_second)
+      return (error_msg, [{}], frames_per_second, None)
     
     match_measure, match_coordinates = bestMatch(
       input_image_to_search=raw_frame,
@@ -414,32 +425,6 @@ def track_template(
         lineType=cv.LINE_AA
       )
 
-      # # then add horizontal grid lines within the rectangle
-      # line_start_x = grid_origin_x + 1
-      # line_end_x = template_bottom_right_x - 1
-      # for line_pos_y in range(grid_origin_y + grid_square_diameter, template_bottom_right_y, grid_square_diameter):
-      #   cv.line(
-      #     img=frame,
-      #     pt1=(line_start_x, line_pos_y),
-      #     pt2=(line_end_x, line_pos_y),
-      #     color=grid_colour_bgr,
-      #     thickness=1,
-      #     lineType=cv.LINE_AA
-      #   )
-      
-      # # then add vertical grid lines within the rectangle 
-      # line_start_y = grid_origin_y + 1
-      # line_end_y = template_bottom_right_y - 1
-      # for line_pos_x in range(grid_origin_x + grid_square_diameter, template_bottom_right_x, grid_square_diameter):
-      #   cv.line(
-      #     img=frame,
-      #     pt1=(line_pos_x, line_start_y),
-      #     pt2=(line_pos_x, line_end_y),
-      #     color=grid_colour_bgr,
-      #     thickness=1,
-      #     lineType=cv.LINE_AA
-      #   )
-
       output_video_stream.write(frame)
 
   input_video_stream.release()
@@ -474,7 +459,7 @@ def track_template(
     frame_info['XY_DISPLACEMENT'] = math.sqrt(x_displacement*x_displacement + y_displacement*y_displacement)
     adjusted_tracking_results.append(frame_info)
 
-  return (error_msg, adjusted_tracking_results, frames_per_second)
+  return (error_msg, adjusted_tracking_results, frames_per_second, template)
 
 
 def results_to_csv(
@@ -561,6 +546,14 @@ def verified_inputs(config: {}) -> (str, [{}]):
   '''
 
   '''
+  # TODO: don't allow video path to be empty or non existent
+  #       can be 'file' or 'dir' or an actual path to a dir or file
+  # TODO: don't allow template path to be empty or non existent
+  #       can be 'file' or 'draw'
+  # TODO: if template is draw, we will open up the first frame of the first video
+  #       and then save the template in the results dir and set that path as the template
+  # TODO: need to be saving the template used in the results so we're completely reproducible 
+
   error_msgs = []
   # check the dir path to input videos
   open_video_dir_dialog = False
@@ -617,6 +610,7 @@ def verified_inputs(config: {}) -> (str, [{}]):
   results_json_dir_path = os.path.join(results_dir_path, 'json')
   results_xlsx_dir_path = os.path.join(results_dir_path, 'xlsx')
   results_video_dir_path = os.path.join(results_dir_path, 'video')
+  results_template_dir_path = os.path.join(results_dir_path, 'template')  
   results_video_frames_dir_path = os.path.join(results_video_dir_path, 'frames')  
 
   dirs = {
@@ -625,6 +619,7 @@ def verified_inputs(config: {}) -> (str, [{}]):
     'results_json_dir_path': results_json_dir_path,
     'results_xlsx_dir_path': results_xlsx_dir_path,
     'results_video_dir_path': results_video_dir_path,
+    'results_template_dir_path': results_template_dir_path,
     'results_video_frames_dir_path': results_video_frames_dir_path
   }
 
@@ -714,10 +709,13 @@ def verified_inputs(config: {}) -> (str, [{}]):
     output_json_path = os.path.join(results_json_dir_path, file_name + '-results.json')
     path_to_excel_results = os.path.join(results_xlsx_dir_path, file_name + '-reslts.xlsx')
     output_video_path = os.path.join(results_video_dir_path, file_name + '-results' + file_extension)
+    results_template_filename = os.path.join(results_template_dir_path, file_name + '-template.jpg')
+
 
     configs.append({
       'input_video_path': input_video_path,
       'template_guide_image_path': template_guide_image_path,
+      'results_template_filename': results_template_filename,
       'user_roi_selection': user_roi_selection,
       'output_video_path': output_video_path,
       'output_video_frames_dir_path': output_video_frames_dir_path,
@@ -740,26 +738,29 @@ def run_track_template(config: {}):
   track_templates_start_time = time.time()
   dirs, args = verified_inputs(config)
    
-  # # make all the dirs needed for writing the results 
-  # # unless they already exist in which case we need to barf
-  # dirs_exist_error_message = ''
-  # if os.path.isdir(dirs['results_dir_path']):
-  #   dirs_exist_error_message += "results dir already exists. Cannot overwrite.\n"
-  # if os.path.isdir(dirs['results_json_dir_path']):
-  #   dirs_exist_error_message += "json results dir already exists. Cannot overwrite.\n"
-  # if os.path.isdir(dirs['results_xlsx_dir_path']):
-  #   dirs_exist_error_message += "xlsx results dir already exists. Cannot overwrite.\n"
-  # if os.path.isdir(dirs['results_video_dir_path']):
-  #   dirs_exist_error_message += "video results dir already exists. Cannot overwrite.\n"
-  # if len(dirs_exist_error_message) > 0:
-  #   dirs_exist_error_message = "ERROR.\n" + dirs_exist_error_message + "Nothing Tracked."
-  #   print(dirs_exist_error_message)
-  #   sys.exit(1)
-  # os.mkdir(dirs['results_dir_path'])
-  # os.mkdir(dirs['results_json_dir_path'])
-  # os.mkdir(dirs['results_xlsx_dir_path'])
-  # os.mkdir(dirs['results_video_dir_path'])
-  # os.mkdir(dirs['results_video_frames_dir_path'])
+  # make all the dirs needed for writing the results 
+  # unless they already exist in which case we need to barf
+  dirs_exist_error_message = ''
+  if os.path.isdir(dirs['results_dir_path']):
+    dirs_exist_error_message += "results dir already exists. Cannot overwrite.\n"
+  if os.path.isdir(dirs['results_json_dir_path']):
+    dirs_exist_error_message += "json results dir already exists. Cannot overwrite.\n"
+  if os.path.isdir(dirs['results_xlsx_dir_path']):
+    dirs_exist_error_message += "xlsx results dir already exists. Cannot overwrite.\n"
+  if os.path.isdir(dirs['results_video_dir_path']):
+    dirs_exist_error_message += "video results dir already exists. Cannot overwrite.\n"
+  if os.path.isdir(dirs['results_template_dir_path']):
+    dirs_exist_error_message += "template results dir already exists. Cannot overwrite.\n"    
+  if len(dirs_exist_error_message) > 0:
+    dirs_exist_error_message = "ERROR.\n" + dirs_exist_error_message + "Nothing Tracked."
+    print(dirs_exist_error_message)
+    sys.exit(1)
+  os.mkdir(dirs['results_dir_path'])
+  os.mkdir(dirs['results_json_dir_path'])
+  os.mkdir(dirs['results_xlsx_dir_path'])
+  os.mkdir(dirs['results_video_dir_path'])
+  os.mkdir(dirs['results_template_dir_path'])  
+  os.mkdir(dirs['results_video_frames_dir_path'])
 
   # run the tracking routine on each input video
   # and write out the results
@@ -768,7 +769,7 @@ def run_track_template(config: {}):
   for input_args in args:
     print(f'processing: {input_args["input_video_path"]}')
     video_tracking_start_time = time.time()
-    error_msg, tracking_results, frames_per_second = track_template(
+    error_msg, tracking_results, frames_per_second, template = track_template(
       input_args['input_video_path'],
       input_args['template_guide_image_path'],
       input_args['output_video_path'],
@@ -785,12 +786,14 @@ def run_track_template(config: {}):
       print(error_msg)
       sys.exit(1)
 
+    # write the template used for tracking to the results dir
+    cv.imwrite(input_args['results_template_filename'], template)
+
     # # write out the results video as frames
     # os.mkdir(input_args['output_video_frames_dir_path'])
     # video_to_jpgs(input_args['output_video_path'], input_args['output_video_frames_dir_path'])
 
     # write the results as xlsx
-    # TODO: extract the date part from the first part of the file name
     results_to_csv(
       tracking_results,
       input_args['path_to_excel_template'],
