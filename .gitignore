@@ -1,9 +1,8 @@
 
 /test_output/
 /tmp/
-/test_videos/
-tracker_results/
-test_data/videos/results/
+/local_test/
+test_data/videos_to_track/
 *.zip
 __pycache__
 .ipynb_checkpoints/
