@@ -8,8 +8,14 @@ import cv2 as cv # pip install --user opencv-python
 
 
 # TODO: we could introduce a max movement parameter that limited how far from the last results
-#       we look for a new match. i.e. if after the first fram we find a best match at (x, y)
-#       and max_movememnt = 50 pixels, then we'd look within the region: x - 50 and x + 50, and y - 50 and y + 50
+#       we look for a new match. i.e. if after the first frame we find a best match at (x, y)
+#       and max_movement = 50 pixels, then we'd look within the region: x - 50 and x + 50, and y - 50 and y + 50
+
+# TODO: experiment with using a CC method that isn't computeECC() to make it faster
+
+# TODO: parallelise the check of each frame. i.e. if we have 10 processors, split up the search space into
+#       10 disjoint regions and have each thread process those regions independently then combine results
+#       to find the min among them.
 
 # TODO: we could try adding in rotation of the template +/- some small range of angles for each position per frame.
 
@@ -282,7 +288,10 @@ def userDrawnROI(input_image: np.ndarray) -> np.ndarray:
   '''
   '''
   print("Wating on user to manually select ROI...")
-  roi_selection = cv.selectROI("Select ROI", input_image, showCrosshair=False)
+  # create a window that can be resized
+  cv.namedWindow("DRAW RECTANGULAR ROI", flags=cv.WINDOW_NORMAL)
+  # open a roi selector in the resizeable window we just created
+  roi_selection = cv.selectROI("DRAW RECTANGULAR ROI", input_image, showCrosshair=False)
   cv.destroyAllWindows()
   print("ROI selection complete...")
 
