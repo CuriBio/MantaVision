@@ -12,6 +12,7 @@ import time
 import zipfile
 import openpyxl # pip install --user openpyxl
 from cv2 import imwrite  # pip install --user opencv-python
+from datetime import datetime
 from tkinter import Tk as tk
 from tkinter.filedialog import askopenfilename, askdirectory
 from video2jpgs import video_to_jpgs
@@ -179,7 +180,8 @@ def verifiedInputs(config: {}) -> (str, [{}]):
   file_extensions = ['mp4', 'avi']
   base_dir, video_files = contentsOfDir(dir_path=config['input_video_path'], search_terms=file_extensions)
   
-  results_dir_path = os.path.join(base_dir, 'results')
+  unique_name = "results_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+  results_dir_path = os.path.join(base_dir, unique_name)
   results_json_dir_path = os.path.join(results_dir_path, 'json')
   results_xlsx_dir_path = os.path.join(results_dir_path, 'xlsx')
   results_video_dir_path = os.path.join(results_dir_path, 'video')

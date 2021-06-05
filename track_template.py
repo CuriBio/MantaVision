@@ -7,6 +7,13 @@ import pathlib
 import cv2 as cv # pip install --user opencv-python
 
 
+# TODO: try implementing our own match measure. i.e.
+#       normalize each image,
+#       compute the diffs of the two overlapping image sections,
+#       compute the variance i.e. average of the diffs squared
+#       could also introduce additional measures like gradient orientation, MI. etc etc.
+
+
 # TODO: we could introduce a max movement parameter that limited how far from the last results
 #       we look for a new match. i.e. if after the first frame we find a best match at (x, y)
 #       and max_movement = 50 pixels, then we'd look within the region: x - 50 and x + 50, and y - 50 and y + 50
@@ -22,6 +29,11 @@ import cv2 as cv # pip install --user opencv-python
 # TODO: the template we use in the algo should be called the roi_template and
 #       the template we get from the user should be called guide_template.
 #       so we get the guide_template and use it to find an roi_template in the video we're searching.
+
+# TODO: in trackTemplate(), there needs to be a proper, named, return struct,
+#       that is initialized on entry, it's contents updated as state changes. 
+#       like when an error is returned, the named struct can be returned 
+#       with sensible default values and just the updated error val.
 
 
 def trackTemplate(
@@ -51,8 +63,6 @@ def trackTemplate(
   '''
   error_msg = None
   frames_per_second = float(0.0)
-  # TODO: need a proper return struct. particularly for when we return from an error
-  #       so we can just update the error val and return the same struct defined ONCE
 
   if input_video_path is None:
     error_msg = "ERROR. No path provided to an input video. Nothing has been tracked."
@@ -422,7 +432,7 @@ def bestSubPixelMatch(
     '''
       Computes the coordinates of the best sub pixel match between the input image and template.
     '''
-    # the shift function turns the input image into a float64 dtype, and 
+    # the shift function turns the input image into a float64 dtype, and
     # computeECC requires both template & input to be the same type
     error_msg = ""
     if input_image_to_search.dtype != np.float64:
