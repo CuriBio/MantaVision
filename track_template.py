@@ -259,10 +259,13 @@ def templateFromInputROI(
       raise RuntimeError(error_msg)
 
     if user_roi_selection:
+      print("Wating on user to manually select ROI...")
       roi = userDrawnROI(frame)
       if roi is None:
+        print("...No ROI selected")
         continue
       else:
+        print("...ROI selection complete")
         # reset the video to where it was initially before we return
         video_to_search.set(cv.CAP_PROP_POS_FRAMES, initial_frame_pos)      
         # return the selected roi
@@ -297,13 +300,11 @@ def templateFromInputROI(
 def userDrawnROI(input_image: np.ndarray) -> np.ndarray:
   '''
   '''
-  print("Wating on user to manually select ROI...")
   # create a window that can be resized
   cv.namedWindow("DRAW RECTANGULAR ROI", flags=cv.WINDOW_NORMAL)
   # open a roi selector in the resizeable window we just created
   roi_selection = cv.selectROI("DRAW RECTANGULAR ROI", input_image, showCrosshair=False)
   cv.destroyAllWindows()
-  print("ROI selection complete...")
 
   x_start = roi_selection[0]
   x_end = x_start + roi_selection[2]
