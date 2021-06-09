@@ -303,10 +303,15 @@ def templateFromInputROI(
 
 def userDrawnROI(input_image: np.ndarray) -> np.ndarray:
   '''
+  Show the user a window with an image they can draw a ROI on.
+  Args:
+    input_image: the image to show the user.
+  Returns:
+    ROI selected by the user from the input image.
   '''
   # create a window that can be resized
   roi_selector_window_name = "DRAW RECTANGULAR ROI"
-  roi_gui_flags = cv.WINDOW_GUI_NORMAL | cv.WINDOW_KEEPRATIO | cv.WINDOW_NORMAL  # can resize the window
+  roi_gui_flags = cv.WINDOW_KEEPRATIO | cv.WINDOW_NORMAL  # can resize the window
   cv.namedWindow(roi_selector_window_name, flags=roi_gui_flags)
 
   # open a roi selector in the resizeable window we just created
