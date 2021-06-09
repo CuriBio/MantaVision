@@ -7,18 +7,22 @@ import pathlib
 import cv2 as cv # pip install --user opencv-python
 
 
+# TODO: add a parameter for the direction of contraction and allow down, right, up, down, left, right
+#       from this we just rotate the image 0, 90, 180, -90 or 270 degrees
+
 # TODO: try implementing our own match measure. i.e.
 #       normalize each image,
 #       compute the diffs of the two overlapping image sections,
 #       compute the variance i.e. average of the diffs squared
 #       could also introduce additional measures like gradient orientation, MI. etc etc.
-
+#
+# OR
+#
+# TODO: experiment with using a CC method that isn't computeECC() to make it faster
 
 # TODO: we could introduce a max movement parameter that limited how far from the last results
 #       we look for a new match. i.e. if after the first frame we find a best match at (x, y)
 #       and max_movement = 50 pixels, then we'd look within the region: x - 50 and x + 50, and y - 50 and y + 50
-
-# TODO: experiment with using a CC method that isn't computeECC() to make it faster
 
 # TODO: parallelise the check of each frame. i.e. if we have 10 processors, split up the search space into
 #       10 disjoint regions and have each thread process those regions independently then combine results
@@ -301,10 +305,17 @@ def userDrawnROI(input_image: np.ndarray) -> np.ndarray:
   '''
   '''
   # create a window that can be resized
-  roi_gui_flags = cv.WINDOW_NORMAL | cv.WINDOW_KEEPRATIO | cv.WINDOW_GUI_EXPANDED
-  cv.namedWindow("DRAW RECTANGULAR ROI", flags=roi_gui_flags)
+  roi_selector_window_name = "DRAW RECTANGULAR ROI"
+  # roi_gui_flags = cv.WINDOW_GUI_EXPANDED | cv.WINDOW_KEEPRATIO | cv.WINDOW_NORMAL  # can resize the window
+  # roi_gui_flags = cv.WINDOW_GUI_EXPANDED | cv.WINDOW_KEEPRATIO | cv.WINDOW_AUTOSIZE  # can not resize the window
+  roi_gui_flags = cv.WINDOW_GUI_NORMAL  # cv.WINDOW_GUI_EXPANDED
+  cv.namedWindow(roi_selector_window_name, flags=roi_gui_flags)
+  cv.setWindowProperty(roi_selector_window_name, cv.WND_PROP_ASPECT_RATIO, cv.WINDOW_KEEPRATIO)
+  cv.setWindowProperty(roi_selector_window_name, cv.WND_PROP_AUTOSIZE, cv.WINDOW_NORMAL)
+  # cv.setWindowProperty(roi_selector_window_name, cv.WND_PROP_AUTOSIZE, cv.WINDOW_AUTOSIZE)
+
   # open a roi selector in the resizeable window we just created
-  roi_selection = cv.selectROI("DRAW RECTANGULAR ROI", input_image, showCrosshair=False)
+  roi_selection = cv.selectROI(roi_selector_window_name, input_image, showCrosshair=False)
   cv.destroyAllWindows()
 
   x_start = roi_selection[0]
