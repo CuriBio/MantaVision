@@ -306,13 +306,8 @@ def userDrawnROI(input_image: np.ndarray) -> np.ndarray:
   '''
   # create a window that can be resized
   roi_selector_window_name = "DRAW RECTANGULAR ROI"
-  # roi_gui_flags = cv.WINDOW_GUI_EXPANDED | cv.WINDOW_KEEPRATIO | cv.WINDOW_NORMAL  # can resize the window
-  # roi_gui_flags = cv.WINDOW_GUI_EXPANDED | cv.WINDOW_KEEPRATIO | cv.WINDOW_AUTOSIZE  # can not resize the window
-  roi_gui_flags = cv.WINDOW_GUI_NORMAL  # cv.WINDOW_GUI_EXPANDED
+  roi_gui_flags = cv.WINDOW_GUI_NORMAL | cv.WINDOW_KEEPRATIO | cv.WINDOW_NORMAL  # can resize the window
   cv.namedWindow(roi_selector_window_name, flags=roi_gui_flags)
-  cv.setWindowProperty(roi_selector_window_name, cv.WND_PROP_ASPECT_RATIO, cv.WINDOW_KEEPRATIO)
-  # cv.setWindowProperty(roi_selector_window_name, cv.WND_PROP_AUTOSIZE, cv.WINDOW_NORMAL)
-  cv.setWindowProperty(roi_selector_window_name, cv.WND_PROP_AUTOSIZE, cv.WINDOW_AUTOSIZE)
 
   # open a roi selector in the resizeable window we just created
   roi_selection = cv.selectROI(roi_selector_window_name, input_image, showCrosshair=False)
