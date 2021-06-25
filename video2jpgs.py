@@ -44,9 +44,6 @@ def video_to_jpgs(input_video_path: str = None, output_dir_path: str = None, enh
   # open the video capture stream
   video_stream = cv.VideoCapture(input_video_path)
   if not video_stream.isOpened():
-    # try to open it once in case there was an initialization error
-    video_stream.open()
-  if not video_stream.isOpened():
     print("Error. Can't open videos stream for capture. Nothing has been converted.")
     return error_code
 

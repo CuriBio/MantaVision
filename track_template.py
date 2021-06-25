@@ -5,30 +5,19 @@ from scipy.ndimage import shift
 import math
 import pathlib
 import cv2 as cv # pip install --user opencv-python
+from typing import Tuple, List, Dict
+from scipy.stats import linregress
 
 
-# TODO: add a parameter for the direction of contraction and allow down, right, up, down, left, right
-#       from this we just rotate the image 0, 90, 180, -90 or 270 degrees
+# TODO: parallelise the computation of matching for each frame. i.e. if we have 10 processors, split up the search space into
+#       10 disjoint regions and have each thread process those regions independently then combine results
+#       to find the min among them.
 
 # TODO: try implementing our own match measure. i.e.
 #       normalize each image,
 #       compute the diffs of the two overlapping image sections,
 #       compute the variance i.e. average of the diffs squared
 #       could also introduce additional measures like gradient orientation, MI. etc etc.
-#
-# OR
-#
-# TODO: experiment with using a CC method that isn't computeECC() to make it faster
-
-# TODO: we could introduce a max movement parameter that limited how far from the last results
-#       we look for a new match. i.e. if after the first frame we find a best match at (x, y)
-#       and max_movement = 50 pixels, then we'd look within the region: x - 50 and x + 50, and y - 50 and y + 50
-
-# TODO: parallelise the check of each frame. i.e. if we have 10 processors, split up the search space into
-#       10 disjoint regions and have each thread process those regions independently then combine results
-#       to find the min among them.
-
-# TODO: we could try adding in rotation of the template +/- some small range of angles for each position per frame.
 
 # TODO: the template we use in the algo should be called the roi_template and
 #       the template we get from the user should be called guide_template.
@@ -38,6 +27,8 @@ import cv2 as cv # pip install --user opencv-python
 #       that is initialized on entry, it's contents updated as state changes. 
 #       like when an error is returned, the named struct can be returned 
 #       with sensible default values and just the updated error val.
+
+# TODO: we could try adding in rotation of the template +/- some small range of angles for each position per frame.
 
 
 def trackTemplate(
@@ -49,7 +40,8 @@ def trackTemplate(
   output_conversion_factor: float = None,
   sub_pixel_search_increment: float = None,
   sub_pixel_refinement_radius: float = None,
-  user_roi_selection: bool = True
+  user_roi_selection: bool = True, 
+  max_movement_per_frame = None
 ) -> (str, [{}], float, np.ndarray):
   '''
   Tracks a template image through each frame of a video.
@@ -116,7 +108,6 @@ def trackTemplate(
       error_msg += "Only .mp4 and .avi are allowed. Nothing has been tracked."
       return (error_msg, [{}], frames_per_second, None)
 
-    output_video_codec = cv.VideoWriter_fourcc(*'mp4v') #cv.VideoWriter_fourcc(*'DIVX') #     
     output_video_stream = cv.VideoWriter(
       output_video_path,
       output_video_codec,
@@ -128,12 +119,16 @@ def trackTemplate(
     output_video_stream = None
 
   # track the template in the video stream
-  min_template_origin_x = frame_width
-  max_template_origin_x = 0
-  min_template_origin_y = frame_height
-  max_template_origin_y = 0
+  min_x_origin = (frame_width, frame_height)
+  min_y_origin = (frame_width, frame_height)  
+  max_x_origin = (0, 0)
+  max_y_origin = (0, 0)
+
   tracking_results = [] # will be a list of dicts
-  number_of_frames = int(input_video_stream.get(cv.CAP_PROP_FRAME_COUNT))  
+  number_of_frames = int(input_video_stream.get(cv.CAP_PROP_FRAME_COUNT))
+  best_match_origin_x = None
+  best_match_origin_y = None
+  match_points = []
   for frame_number in range(number_of_frames):
 
     frame_returned, raw_frame = input_video_stream.read()
@@ -141,54 +136,69 @@ def trackTemplate(
       error_msg = "Error. Unexpected problem occurred during video frame capture. Exiting."
       return (error_msg, [{}], frames_per_second, None)
     
+    # crop out a smaller sub region to search if required
+    if max_movement_per_frame is None:
+      sub_region_padding = None
+    else:
+      sub_region_padding = (
+        math.ceil(max_movement_per_frame[0]/microns_per_pixel), math.ceil(max_movement_per_frame[1]/microns_per_pixel)
+      )
+    input_image_sub_region_to_search, input_image_sub_region_origin = inputImageSubRegion(
+      input_image=raw_frame,
+      sub_region_base_shape=(template_width, template_height),
+      sub_region_origin=(best_match_origin_x, best_match_origin_y),
+      sub_region_padding=sub_region_padding
+    )
     match_measure, match_coordinates = bestMatch(
-      input_image_to_search=raw_frame,
+      input_image_to_search=input_image_sub_region_to_search,
       template_to_match=template,
       sub_pixel_search_increment=sub_pixel_search_increment,
       sub_pixel_refinement_radius=sub_pixel_refinement_radius
     )
 
-    best_match_origin_x = match_coordinates[0]  
-    best_match_origin_y = match_coordinates[1]
-    tracking_results.append(
-      {
-        'FRAME_NUMBER': frame_number,
-        'ELAPSED_TIME': frame_number/frames_per_second,
-        'MATCH_MEASURE': match_measure,
-        'Y_DISPLACEMENT': 0,
-        'X_DISPLACEMENT': 0,
-        'XY_DISPLACEMENT': 0,
-        'TEMPLATE_MATCH_ORIGIN_X': best_match_origin_x,
-        'TEMPLATE_MATCH_ORIGIN_Y': best_match_origin_y,
-      }
-    )
+    best_match_origin_x = match_coordinates[0] + input_image_sub_region_origin[0]
+    best_match_origin_y = match_coordinates[1] + input_image_sub_region_origin[1]
+
+    tracking_results.append({
+      'FRAME_NUMBER': frame_number,
+      'ELAPSED_TIME': frame_number/frames_per_second,
+      'MATCH_MEASURE': match_measure,
+      'Y_DISPLACEMENT': 0,
+      'X_DISPLACEMENT': 0,
+      'XY_DISPLACEMENT': 0,
+      'TEMPLATE_MATCH_ORIGIN_X': best_match_origin_x,
+      'TEMPLATE_MATCH_ORIGIN_Y': best_match_origin_y,
+    })
+    match_points.append((best_match_origin_x, best_match_origin_y))
 
     # update the min and max positions of the template origin for ALL frames
-    # using the position in the y dimension only as the reference measure 
-    if best_match_origin_y < min_template_origin_y: 
-      min_template_origin_y = best_match_origin_y
-      min_template_origin_x = best_match_origin_x
-    if best_match_origin_y > max_template_origin_y:
-      max_template_origin_y = best_match_origin_y
-      max_template_origin_x = best_match_origin_x
+    # using the position in the y dimension only as the reference measure
+    if best_match_origin_y < min_y_origin[1]:
+      min_y_origin = (best_match_origin_x, best_match_origin_y)
+    if best_match_origin_y > max_y_origin[1]:
+      max_y_origin = (best_match_origin_x, best_match_origin_y)
+    if best_match_origin_x < min_x_origin[0]:
+      min_x_origin = (best_match_origin_x, best_match_origin_y)
+    if best_match_origin_x > max_x_origin[0]:
+      max_x_origin = (best_match_origin_x, best_match_origin_y)
 
     # draw a grid over the region in the frame where the template matched
     if output_video_stream is not None:
+      frame = raw_frame
+
       # opencv drawing functions require integer coordinates
       # so we convert them to the nearest pixel
       grid_origin_y = int(math.floor(best_match_origin_y + 0.5))
       grid_origin_x = int(math.floor(best_match_origin_x + 0.5))
 
-      grid_colour_bgr = (255, 128, 0)      
-      grid_square_diameter = 20
-      frame = raw_frame
-
       # mark the template ROI on each frame
       # first draw a rectangle around the template border
+      grid_square_diameter = 20  # make the roi we draw a multiple of a set size
       grid_width = int(template_width/grid_square_diameter)*grid_square_diameter
       grid_height = int(template_height/grid_square_diameter)*grid_square_diameter
-      template_bottom_right_x = min(frame_width, grid_origin_x + grid_width)
       template_bottom_right_y = min(frame_height, grid_origin_y + grid_height)
+      template_bottom_right_x = min(frame_width, grid_origin_x + grid_width)      
+      grid_colour_bgr = (255, 128, 0)
       cv.rectangle(
         img=frame,
         pt1=(grid_origin_x, grid_origin_y),
@@ -197,43 +207,104 @@ def trackTemplate(
         thickness=1,
         lineType=cv.LINE_AA
       )
-
       output_video_stream.write(frame)
 
   input_video_stream.release()
   if output_video_stream is not None:
     output_video_stream.release()
 
-  # adjust the displacement values relative to a fixed orientation
-  # the top most position is always zero for movement in the y dimension, 
-  # zero for movement in the x dimension depends on whether the tracking movement
-  # is top left to bottom right, or bottom left to top right
-  # and of course compute the actual displacement in x-y i.e euclidean distance
-  if min_template_origin_x > max_template_origin_x:
-    positive_x_movement_slope = True
-  else:
-    positive_x_movement_slope = False
-  adjusted_tracking_results = []
+  extreme_points = [min_x_origin, min_y_origin, max_x_origin, max_y_origin]
+  adjusted_tracking_results = adjustTrackingResults(
+    tracking_results=tracking_results,
+    microns_per_pixel=microns_per_pixel,
+    output_conversion_factor=output_conversion_factor,
+    extreme_points=extreme_points
+  )
+ 
+  return (error_msg, adjusted_tracking_results, frames_per_second, template)
+
+
+def adjustTrackingResults(
+  tracking_results: List[Dict],
+  microns_per_pixel: float,
+  output_conversion_factor: float,
+  extreme_points: List[Tuple[float, float]],
+  contraction_vector: Tuple[int, int]=None  
+) -> List[Dict]:
+
   if microns_per_pixel is None:
     microns_per_pixel = 1.0
   if output_conversion_factor is None:
     output_conversion_factor = 1.0
-  output_conversion_factor
+  
+  # TODO: currently, positive movement is defined as down or right
+  #       we can use the contraction_vector parameter to define
+  #       which direction of contration is positive. i.e.
+  #       (0,  -1) means positive contractions are right to left,
+  #       (-1, -1) means positive contractions are bottom right to top left.
+  #       then readjust match origin coordinates accordingly so that
+  #       XY displacement is reported as 0 to some positive value that direction
+  min_x_origin, min_y_origin, max_x_origin, max_y_origin = extreme_points
+  range_of_x_movement = max_x_origin[0] - min_x_origin[0]
+  range_of_y_movement = max_y_origin[1] - min_y_origin[1]
+  if range_of_x_movement > range_of_y_movement:
+    main_movement_axis = 'x'
+    min_template_origin_x = min_x_origin[0]
+    min_template_origin_y = min_x_origin[1]
+  else:
+    main_movement_axis = 'y'
+    min_template_origin_x = min_y_origin[0]
+    min_template_origin_y = min_y_origin[1]
+  print(f'main axis along {main_movement_axis}')
+
+  adjusted_tracking_results = []
   for frame_info in tracking_results:
+    # re-adjust x and y positions so the min of the main axis of movement is the reference
+    x_displacement = (frame_info['TEMPLATE_MATCH_ORIGIN_X'] - min_template_origin_x)*float(microns_per_pixel)
+    x_displacement *= float(output_conversion_factor)
+    frame_info['X_DISPLACEMENT'] = x_displacement
     y_displacement = (frame_info['TEMPLATE_MATCH_ORIGIN_Y'] - min_template_origin_y)*float(microns_per_pixel)
     y_displacement *= float(output_conversion_factor)
     frame_info['Y_DISPLACEMENT'] = y_displacement
-    if positive_x_movement_slope:
-      x_displacement = (max_template_origin_x - frame_info['TEMPLATE_MATCH_ORIGIN_X'])*float(microns_per_pixel)
-    else:
-      x_displacement = (frame_info['TEMPLATE_MATCH_ORIGIN_X'] - min_template_origin_x)*float(microns_per_pixel)
-    x_displacement *= float(output_conversion_factor)
-    frame_info['X_DISPLACEMENT'] = x_displacement
     frame_info['XY_DISPLACEMENT'] = math.sqrt(x_displacement*x_displacement + y_displacement*y_displacement)
     adjusted_tracking_results.append(frame_info)
+  return adjusted_tracking_results
 
-  return (error_msg, adjusted_tracking_results, frames_per_second, template)
 
+def inputImageSubRegion(
+  input_image: np.ndarray,
+  sub_region_base_shape: Tuple[int, int],
+  sub_region_origin: Tuple[int, int],
+  sub_region_padding: Tuple[int, int]
+) -> Tuple[np.ndarray, Tuple[int, int]]:
+  ''' '''
+
+  sub_region_origin_x, sub_region_origin_y = sub_region_origin
+  if sub_region_origin_x is None or sub_region_origin_y is None:
+    return input_image, (0,0)
+
+  if sub_region_padding is None:
+    return input_image, (0, 0)    
+  sub_region_padding_x, sub_region_padding_y = sub_region_padding
+
+  input_shape_x, input_shape_y = (input_image.shape[1], input_image.shape[0])
+  sub_region_base_width, sub_region_base_height = sub_region_base_shape
+
+  # define the sub region end points
+  sub_region_start_x = math.floor(max(0, sub_region_origin_x - sub_region_padding_x))
+  sub_region_end_x = math.ceil(min(
+    input_shape_x, 
+    sub_region_origin_x + sub_region_base_width + sub_region_padding_x
+  ))
+  sub_region_start_y = math.floor(max(0, sub_region_origin_y - sub_region_padding_y))
+  sub_region_end_y = math.ceil(min(
+    input_shape_y, 
+    sub_region_origin_y + sub_region_base_height + sub_region_padding_y
+  ))
+  # crop out the new sub region
+  sub_region = input_image[sub_region_start_y:sub_region_end_y, sub_region_start_x:sub_region_end_x]
+  # return the new sub region and it's origin relateve to the input_image
+  return sub_region, (sub_region_start_x, sub_region_start_y)
 
 
 def templateFromInputROI(
@@ -476,7 +547,7 @@ def bestSubPixelMatch(
         shift(input=sub_image_to_shift, shift=[-y_origin, -x_origin], output=shifted_input)
         input_to_match = shifted_input[:template_dim_y, :template_dim_x]
 
-        ecc = cv.computeECC(templateImage=template_to_match, inputImage=input_to_match)
+        ecc = cv.computeECC(templateImage=template_to_match, inputImage=input_to_match)        
         if ecc > max_ecc:
           max_ecc = ecc
           max_coordinates = [x_origin, y_origin]

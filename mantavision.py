@@ -63,7 +63,8 @@ def runTrackTemplate(config: {}):
       input_args['output_conversion_factor'],
       input_args['sub_pixel_search_increment'],
       input_args['sub_pixel_refinement_radius'],
-      input_args['user_roi_selection']
+      input_args['user_roi_selection'],
+      input_args['max_movement_per_frame']
     )
     total_tracking_time += (time.time() - video_tracking_start_time)
     
@@ -230,7 +231,12 @@ def verifiedInputs(config: {}) -> (str, [{}]):
   if sub_pixel_search_increment is None:
     print('WARNING. sub_pixel_refinement_radius ignored because sub_pixel_search_increment not provided')
     sub_pixel_refinement_radius = None
-    
+  
+  if 'max_movement_per_frame' not in config:
+    max_movement_per_frame = None
+  else:
+    max_movement_per_frame = (config['max_movement_per_frame'][0], config['max_movement_per_frame'][1])
+          
   # set all the values needed to run template matching on each input video
   configs = []
   for file_name, file_extension in video_files:
@@ -302,6 +308,7 @@ def verifiedInputs(config: {}) -> (str, [{}]):
       'output_conversion_factor': output_conversion_factor,
       'sub_pixel_search_increment': sub_pixel_search_increment,
       'sub_pixel_refinement_radius': sub_pixel_refinement_radius,
+      'max_movement_per_frame': max_movement_per_frame,
       'well_name': well_name,
       'date_stamp': date_stamp,
     })
