@@ -2,23 +2,15 @@ import argparse
 import os
 import sys
 import cv2 as cv # pip install --user opencv-python
-from skimage import filters as skimage_filters # pip install --user scikit-image
-from skimage import exposure as skimage_exposure 
+from track_template import contrastAdjusted, gammaAdjusted, rescaled
 
 
-def contrast_enhanced(image_to_adjust):
-  '''
-  Performs an automatic adjustment of the input intensity range to enhance contrast.
-  
-  Args:
-    image_to_adjust: the image to adjust the contrast of. 
-  '''
-  optimal_threshold = skimage_filters.threshold_yen(image_to_adjust)
-  rgb_range = (0, 255)
-  return skimage_exposure.rescale_intensity(image_to_adjust, in_range=(0, optimal_threshold), out_range=rgb_range)
-
-
-def video_to_jpgs(input_video_path: str = None, output_dir_path: str = None, enhance_contrast: bool = False) -> int:
+def video_to_jpgs(
+  input_video_path: str=None,
+  output_dir_path: str=None,
+  enhance_contrast: bool=False,
+  frame_number_to_write: int=None,
+) -> int:
   '''
   Converts an input video to a sequence of jpg images.
 
@@ -50,22 +42,36 @@ def video_to_jpgs(input_video_path: str = None, output_dir_path: str = None, enh
   # set the video basename for each frame
   frame_base_name = os.path.basename(input_video_path)
 
-  # write out all the video frames as images
+  # write out the video frames as images
   number_of_frames = int(video_stream.get(cv.CAP_PROP_FRAME_COUNT))
-  zero_padding_length = len(str(number_of_frames))
-  for frame_number in range(number_of_frames):
+  zero_padding_length = len(str(number_of_frames))  
+  if frame_number_to_write is not None: # only write the single frame
+    video_stream.set(cv.CAP_PROP_POS_FRAMES, frame_number_to_write)
     frame_returned, frame = video_stream.read()
     if not frame_returned:
       print("Error. Unexpected problem during video frame capture. Exiting.")
       return error_code
-    frame_file_name = frame_base_name + "_frame_" + str(frame_number).zfill(zero_padding_length) + ".jpg"
+    frame_file_name = frame_base_name + "_frame_" + str(frame_number_to_write).zfill(zero_padding_length) + ".jpg"
     frame_path = os.path.join(output_dir_path, frame_file_name)
     # auto_contrast_msg = ''
     if enhance_contrast:
-      frame = contrast_enhanced(frame) 
-      auto_contrast_msg = '(auto contrast enhanced)'
+      frame = contrastAdjusted(frame) 
+      # auto_contrast_msg = '(auto contrast enhanced)'
     cv.imwrite(frame_path, frame)
-    # print(f'Saved frame {frame_number} to {frame_path} {auto_contrast_msg}')
+  else: # write out all the frames
+    for frame_number in range(number_of_frames):
+      frame_returned, frame = video_stream.read()
+      if not frame_returned:
+        print("Error. Unexpected problem during video frame capture. Exiting.")
+        return error_code
+      frame_file_name = frame_base_name + "_frame_" + str(frame_number).zfill(zero_padding_length) + ".jpg"
+      frame_path = os.path.join(output_dir_path, frame_file_name)
+      # auto_contrast_msg = ''
+      if enhance_contrast:
+        frame = contrastAdjusted(frame) 
+        # auto_contrast_msg = '(auto contrast enhanced)'
+      cv.imwrite(frame_path, frame)
+      # print(f'Saved frame {frame_number} to {frame_path} {auto_contrast_msg}')
 
   return conversion_success
 

@@ -54,7 +54,7 @@ def runTrackTemplate(config: {}):
   for input_args in args:
     print(f'processing: {input_args["input_video_path"]}')
     video_tracking_start_time = time.time()
-    error_msg, tracking_results, frames_per_second, template = trackTemplate(
+    error_msg, tracking_results, frames_per_second, template, min_frame_number = trackTemplate(
       input_args['input_video_path'],
       input_args['template_guide_image_path'],
       input_args['output_video_path'],
@@ -79,6 +79,15 @@ def runTrackTemplate(config: {}):
     os.mkdir(input_args['output_video_frames_dir_path'])
     video_to_jpgs(input_args['output_video_path'], input_args['output_video_frames_dir_path'])
 
+    # write out the frame with the min movement position
+    os.mkdir(input_args['output_video_min_frame_dir_path'])
+    video_to_jpgs(
+      input_video_path=input_args['input_video_path'],
+      output_dir_path=input_args['output_video_min_frame_dir_path'],
+      enhance_contrast=False,
+      frame_number_to_write=min_frame_number
+    )
+
     # write the results as xlsx
     resultsToCSV(
       tracking_results,
@@ -93,6 +102,7 @@ def runTrackTemplate(config: {}):
     if input_args['output_json_path'] is not None:
       tracking_results_complete = {
         "INPUT_ARGS": input_args,
+        "ERROR_MSGS": error_msg,
         "RESULTS": tracking_results
       }
       with open(input_args['output_json_path'], 'w') as outfile:
@@ -161,7 +171,7 @@ def verifiedInputs(config: {}) -> (str, [{}]):
   if open_template_dir_dialog:
     print()
     print("waiting for user input (template to use) via pop up dialog box...")    
-    file_path_via_gui = getFilePathViaGUI(window_title='Select Directory With Videos To Track')
+    file_path_via_gui = getFilePathViaGUI(window_title='Select File With Template To Track')
     if file_path_via_gui == () or file_path_via_gui == '':
       error_msgs.append('No input template image path was provided.')
     else:
@@ -287,6 +297,7 @@ def verifiedInputs(config: {}) -> (str, [{}]):
     # set all the required path values
     input_video_path = os.path.join(base_dir, file_name + file_extension)
     output_video_frames_dir_path = os.path.join(results_video_frames_dir_path, file_name)
+    output_video_min_frame_dir_path = os.path.join(output_video_frames_dir_path, 'min_frame')
     output_json_path = os.path.join(results_json_dir_path, file_name + '-results.json')
     path_to_excel_results = os.path.join(results_xlsx_dir_path, file_name + '-reslts.xlsx')
     output_video_path = os.path.join(results_video_dir_path, file_name + '-results' + file_extension)
@@ -300,6 +311,7 @@ def verifiedInputs(config: {}) -> (str, [{}]):
       'user_roi_selection': user_roi_selection,
       'output_video_path': output_video_path,
       'output_video_frames_dir_path': output_video_frames_dir_path,
+      'output_video_min_frame_dir_path': output_video_min_frame_dir_path,
       'output_json_path': output_json_path,
       'path_to_excel_template': path_to_excel_template,
       'path_to_excel_results': path_to_excel_results,

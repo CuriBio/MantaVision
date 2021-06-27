@@ -6,7 +6,6 @@ import math
 import pathlib
 import cv2 as cv # pip install --user opencv-python
 from typing import Tuple, List, Dict
-from scipy.stats import linregress
 
 
 # TODO: parallelise the computation of matching for each frame. i.e. if we have 10 processors, split up the search space into
@@ -42,7 +41,7 @@ def trackTemplate(
   sub_pixel_refinement_radius: float = None,
   user_roi_selection: bool = True, 
   max_movement_per_frame = None
-) -> (str, [{}], float, np.ndarray):
+) -> (str, List[Dict], float, np.ndarray, int):
   '''
   Tracks a template image through each frame of a video.
 
@@ -120,9 +119,11 @@ def trackTemplate(
 
   # track the template in the video stream
   min_x_origin = (frame_width, frame_height)
-  min_y_origin = (frame_width, frame_height)  
   max_x_origin = (0, 0)
+  min_x_frame = 0
+  min_y_origin = (frame_width, frame_height)  
   max_y_origin = (0, 0)
+  min_y_frame = 0
 
   tracking_results = [] # will be a list of dicts
   number_of_frames = int(input_video_stream.get(cv.CAP_PROP_FRAME_COUNT))
@@ -175,10 +176,12 @@ def trackTemplate(
     # using the position in the y dimension only as the reference measure
     if best_match_origin_y < min_y_origin[1]:
       min_y_origin = (best_match_origin_x, best_match_origin_y)
+      min_y_frame = frame_number
     if best_match_origin_y > max_y_origin[1]:
       max_y_origin = (best_match_origin_x, best_match_origin_y)
     if best_match_origin_x < min_x_origin[0]:
       min_x_origin = (best_match_origin_x, best_match_origin_y)
+      min_x_frame = frame_number
     if best_match_origin_x > max_x_origin[0]:
       max_x_origin = (best_match_origin_x, best_match_origin_y)
 
@@ -214,14 +217,16 @@ def trackTemplate(
     output_video_stream.release()
 
   extreme_points = [min_x_origin, min_y_origin, max_x_origin, max_y_origin]
-  adjusted_tracking_results = adjustTrackingResults(
+  min_frame_numbers = (min_x_frame, min_y_frame)
+  adjusted_tracking_results, min_frame_number = adjustTrackingResults(
     tracking_results=tracking_results,
     microns_per_pixel=microns_per_pixel,
     output_conversion_factor=output_conversion_factor,
-    extreme_points=extreme_points
+    extreme_points=extreme_points,
+    min_frame_numbers=min_frame_numbers
   )
  
-  return (error_msg, adjusted_tracking_results, frames_per_second, template)
+  return (error_msg, adjusted_tracking_results, frames_per_second, template, min_frame_number)
 
 
 def adjustTrackingResults(
@@ -229,7 +234,8 @@ def adjustTrackingResults(
   microns_per_pixel: float,
   output_conversion_factor: float,
   extreme_points: List[Tuple[float, float]],
-  contraction_vector: Tuple[int, int]=None  
+  min_frame_numbers: Tuple[int, int],
+  contraction_vector: Tuple[int, int]=None
 ) -> List[Dict]:
 
   if microns_per_pixel is None:
@@ -251,11 +257,13 @@ def adjustTrackingResults(
     main_movement_axis = 'x'
     min_template_origin_x = min_x_origin[0]
     min_template_origin_y = min_x_origin[1]
+    min_frame_number = min_frame_numbers[0]
   else:
     main_movement_axis = 'y'
     min_template_origin_x = min_y_origin[0]
     min_template_origin_y = min_y_origin[1]
-  print(f'main axis along {main_movement_axis}')
+    min_frame_number = min_frame_numbers[1]
+  print(f'main axis of movement detected along {main_movement_axis}')
 
   adjusted_tracking_results = []
   for frame_info in tracking_results:
@@ -268,7 +276,7 @@ def adjustTrackingResults(
     frame_info['Y_DISPLACEMENT'] = y_displacement
     frame_info['XY_DISPLACEMENT'] = math.sqrt(x_displacement*x_displacement + y_displacement*y_displacement)
     adjusted_tracking_results.append(frame_info)
-  return adjusted_tracking_results
+  return adjusted_tracking_results, min_frame_number
 
 
 def inputImageSubRegion(
