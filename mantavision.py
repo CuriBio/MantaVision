@@ -245,7 +245,7 @@ def verifiedInputs(config: {}) -> (str, [{}]):
   if 'max_movement_per_frame' not in config:
     max_movement_per_frame = None
   else:
-    max_movement_per_frame = (config['max_movement_per_frame'][0], config['max_movement_per_frame'][1])
+    max_movement_per_frame = (config['max_movement_per_frame'], config['max_movement_per_frame'])
           
   # set all the values needed to run template matching on each input video
   configs = []
