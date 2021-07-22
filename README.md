@@ -8,10 +8,14 @@ One way to run the notebook interface is to download the anaconda package
 
 https://www.anaconda.com/products/individual
 
-Once that has been installed, from the windows menu open spyder (anaconda).
+Once that has been installed, there are two options to install all the required packages.
+
+Option 1) open install_requirements.ipynb and run it.
+
+Option 2) from the windows menu open spyder (anaconda).
 From the main (top) menu in spyder select view -> window layouts -> spyder default.
 Then in the sub window at the top right you will see some tabs at the botoom of that sub window,
-one of those tabs is 'Files', select this tab and navigate to the curi_tracker directory.
+one of those tabs is 'Files', select this tab and navigate to the mantavision directory.
 This sets the console sub window below it to the directory you just navigated to.
 In the Console (1/A) sub window in the bottom right, type following commands to install some required packages:
 
@@ -27,7 +31,7 @@ You can now run the notebook from either spyder or jupyter.
 
 To run with jupyter (recommended):
 from the windows menu open Jupyter (anaconda),
-navigate to the curi_tracker directory and select the curi_tracker.ipynb file.
+navigate to the mantavision directory and select the mantavision_ui.ipynb file.
 You can now run this notebook by pressing Shift and Enter.
 
 To run with spyder: 
@@ -36,7 +40,8 @@ Re-open spyder, from the windows menu open spyder (anaconda).
 You will now see that in the main window there are two tabs, Editor and Notebook.
 Select the Notebook tab. In the top right hand corner of the notebook sub window 
 you will so 3 horizontal stripes, click this and select open. Navigate to the 
-curi_tracker.ipynb file and select it.
+mantavision_ui.ipynb file and select it.
+
 You can now run the notebook by pressing Shift and Enter.
 
 ## Using the command line interface ##
