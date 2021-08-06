@@ -11,7 +11,7 @@ import pathlib
 import time
 import zipfile
 import openpyxl # pip install --user openpyxl
-from cv2 import imwrite  # pip install --user opencv-python
+from cv2 import cv2 as cv  # pip install --user opencv-python
 from datetime import datetime
 from tkinter import Tk as tk
 from tkinter.filedialog import askopenfilename, askdirectory
@@ -73,7 +73,7 @@ def runTrackTemplate(config: {}):
       sys.exit(1)
 
     # write the template used for tracking to the results dir
-    imwrite(input_args['results_template_filename'], template)
+    cv.imwrite(input_args['results_template_filename'], template)
 
     # write out the results video as frames
     os.mkdir(input_args['output_video_frames_dir_path'])
@@ -249,7 +249,7 @@ def verifiedInputs(config: {}) -> (str, [{}]):
           
   # set all the values needed to run template matching on each input video
   configs = []
-  for file_name, file_extension in video_files:
+  for file_name, input_file_extension in video_files:
 
     # check the file name conforms to minimum requirements
     num_chars_in_datestamp = len('yyyy-mm-dd')
@@ -295,12 +295,13 @@ def verifiedInputs(config: {}) -> (str, [{}]):
       sys.exit(1)
 
     # set all the required path values
-    input_video_path = os.path.join(base_dir, file_name + file_extension)
+    input_video_path = os.path.join(base_dir, file_name + input_file_extension)
     output_video_frames_dir_path = os.path.join(results_video_frames_dir_path, file_name)
     output_video_min_frame_dir_path = os.path.join(output_video_frames_dir_path, 'min_frame')
     output_json_path = os.path.join(results_json_dir_path, file_name + '-results.json')
     path_to_excel_results = os.path.join(results_xlsx_dir_path, file_name + '-reslts.xlsx')
-    output_video_path = os.path.join(results_video_dir_path, file_name + '-results' + file_extension)
+    output_file_extension = '.avi'
+    output_video_path = os.path.join(results_video_dir_path, file_name + '-results' + output_file_extension)
     results_template_filename = os.path.join(results_template_dir_path, file_name + '-template.jpg')
 
 

@@ -4,9 +4,16 @@ import numpy as np
 from scipy.ndimage import shift
 import math
 import pathlib
-import cv2 as cv # pip install --user opencv-python
+from cv2 import cv2 as cv # pip install --user opencv-python
 from typing import Tuple, List, Dict
+import sys
 
+# TODO: for the contrast adjustment, instead of taking the actual min after gamma adjusting
+#       we should be taking the intensity value at the 2/5/?% in the increasing ordered image array
+#       i.e. the 2nd percentile, or 5th percentile. The reason being that just a single very low value
+#       in the gamma adjusted image can make the image extremely bright.
+#       so then the question is, what do we do with values below that min, do we just set them to the
+#       xth percentile or do we perform some sort of binning on the whole image...?
 
 # TODO: parallelise the computation of matching for each frame. i.e. if we have 10 processors, split up the search space into
 #       10 disjoint regions and have each thread process those regions independently then combine results
@@ -28,6 +35,22 @@ from typing import Tuple, List, Dict
 #       with sensible default values and just the updated error val.
 
 # TODO: we could try adding in rotation of the template +/- some small range of angles for each position per frame.
+
+
+def fourccNum(c1, c2, c3, c4) -> int:
+  return (
+    (ord(c1) & 255) + ((ord(c2) & 255) << 8) + ((ord(c3) & 255) << 16) + ((ord(c4) & 255) << 24)
+  )
+
+
+def fourccChars(codec_num: int) -> [str]:
+  chars = []
+  chars.append(chr(  codec_num & 255) )
+  chars.append(chr( (codec_num >> 8) & 255 ))
+  chars.append(chr( (codec_num >> 16) & 255 ))
+  chars.append(chr( (codec_num >> 24) & 255 ))
+  return chars
+  # avc1 is the codec returned by videos from curi's microscope
 
 
 def trackTemplate(
@@ -94,7 +117,7 @@ def trackTemplate(
   )
   template_height = template.shape[0]
   template_width = template.shape[1]
-  
+
   # open a video writer stream if required
   if output_video_path is not None:
     format_extension = pathlib.Path(output_video_path).suffix
@@ -103,10 +126,12 @@ def trackTemplate(
     elif format_extension == '.mp4':
       output_video_codec = cv.VideoWriter_fourcc(*'mp4v') 
     else:
-      error_msg = "Error. File format extension " + format_extension + " is not supported. "
-      error_msg += "Only .mp4 and .avi are allowed. Nothing has been tracked."
-      return (error_msg, [{}], frames_per_second, None)
-
+      output_video_codec = int(input_video_stream.get(cv.CAP_PROP_FOURCC))
+      # output_video_codec = cv.VideoWriter_fourcc(*'X264')
+      # error_msg = "Error. File format extension " + format_extension + " is not supported. "
+      # error_msg += "Only .mp4 and .avi are allowed. Nothing has been tracked."
+      # return (error_msg, [{}], frames_per_second, None)
+  
     output_video_stream = cv.VideoWriter(
       output_video_path,
       output_video_codec,
@@ -136,7 +161,7 @@ def trackTemplate(
     if not frame_returned:
       error_msg = "Error. Unexpected problem occurred during video frame capture. Exiting."
       return (error_msg, [{}], frames_per_second, None)
-    
+
     # crop out a smaller sub region to search if required
     if max_movement_per_frame is None:
       sub_region_padding = None
@@ -160,9 +185,12 @@ def trackTemplate(
     best_match_origin_x = match_coordinates[0] + input_image_sub_region_origin[0]
     best_match_origin_y = match_coordinates[1] + input_image_sub_region_origin[1]
 
+    milliseconds_per_second = 1000.0
+    time_stamp = input_video_stream.get(cv.CAP_PROP_POS_MSEC)/milliseconds_per_second
     tracking_results.append({
       'FRAME_NUMBER': frame_number,
       'ELAPSED_TIME': frame_number/frames_per_second,
+      'TIME_STAMP': time_stamp, 
       'MATCH_MEASURE': match_measure,
       'Y_DISPLACEMENT': 0,
       'X_DISPLACEMENT': 0,
