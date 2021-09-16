@@ -409,8 +409,7 @@ def resultsToCSV(
   num_rows_to_write = len(tracking_results)
   for results_row in range(num_rows_to_write):
       tracking_result = tracking_results[results_row]
-      # elapsed_time = float(tracking_result['ELAPSED_TIME'])
-      elapsed_time = float(tracking_result['TIME_STAMP'])
+      elapsed_time = float(tracking_result['ELAPSED_TIME'])
       post_displacement = float(tracking_result['XY_DISPLACEMENT'])
       sheet_row = results_row + template_start_row
       sheet[time_column + str(sheet_row)] = elapsed_time

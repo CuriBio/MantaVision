@@ -169,9 +169,9 @@ def trackTemplate(
   for frame_number in range(number_of_frames):
     frame_returned, raw_frame = input_video_stream.read()
     if not frame_returned:
-      error_msg = "Error. Unexpected problem occurred during video frame capture. Exiting."
-      return (error_msg, [{}], frames_per_second, None, -1)
-  
+      print(f'WARNING. Number of expected frames {number_of_frames} does not match actual number of frames {frame_number}.')
+      break
+
     # crop out a smaller sub region to search if required
     if max_movement_per_frame is None:
       sub_region_padding = None
@@ -200,8 +200,8 @@ def trackTemplate(
     time_stamp_in_seconds = original_time_stamp/milliseconds_per_second
     tracking_results.append({
       'FRAME_NUMBER': frame_number,
-      'ELAPSED_TIME': frame_number/frames_per_second,
-      'TIME_STAMP': time_stamp_in_seconds, 
+      'FRAME_TIME': frame_number/frames_per_second,
+      'ELAPSED_TIME': time_stamp_in_seconds, 
       'MATCH_MEASURE': match_measure,
       'Y_DISPLACEMENT': 0,
       'X_DISPLACEMENT': 0,
