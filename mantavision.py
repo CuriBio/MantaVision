@@ -300,6 +300,8 @@ def verifiedInputs(config: {}) -> (str, [{}]):
     output_video_min_frame_dir_path = os.path.join(output_video_frames_dir_path, 'min_frame')
     output_json_path = os.path.join(results_json_dir_path, file_name + '-results.json')
     path_to_excel_results = os.path.join(results_xlsx_dir_path, file_name + '-reslts.xlsx')
+    # for now we are forcing an avi output format because the NIKON software is borked
+    # and some videos only output if we make the output format avi
     output_file_extension = '.avi'
     output_video_path = os.path.join(results_video_dir_path, file_name + '-results' + output_file_extension)
     results_template_filename = os.path.join(results_template_dir_path, file_name + '-template.jpg')
@@ -407,7 +409,8 @@ def resultsToCSV(
   num_rows_to_write = len(tracking_results)
   for results_row in range(num_rows_to_write):
       tracking_result = tracking_results[results_row]
-      elapsed_time = float(tracking_result['ELAPSED_TIME'])
+      # elapsed_time = float(tracking_result['ELAPSED_TIME'])
+      elapsed_time = float(tracking_result['TIME_STAMP'])
       post_displacement = float(tracking_result['XY_DISPLACEMENT'])
       sheet_row = results_row + template_start_row
       sheet[time_column + str(sheet_row)] = elapsed_time

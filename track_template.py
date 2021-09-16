@@ -96,6 +96,14 @@ def trackTemplate(
   frame_size = (frame_width, frame_height)
   frames_per_second = input_video_stream.get(cv.CAP_PROP_FPS)
 
+  # frame_count = float(input_video_stream.get(cv.CAP_PROP_FRAME_COUNT))
+  # video_duration = frame_count/frames_per_second
+  # print(f'Video Details')
+  # print(f'frames/sec: {frames_per_second}')
+  # print(f'frame dimensions: ({frame_width}, {frame_height})')  
+  # print(f'frame count: {frame_count}')
+  # print(f'video duration: {video_duration}')
+    
   # open the template image
   if user_roi_selection:
     template = None
@@ -105,10 +113,12 @@ def trackTemplate(
       error_msg = "ERROR. The path provided for template does not point to an image file. Nothing has been tracked."
       return (error_msg, [{}], frames_per_second, None)
     template = cv.cvtColor(template, cv.COLOR_BGR2GRAY)
+  
   if guide_match_search_seconds is None:
     max_frames_to_check = None
   else:
     max_frames_to_check = int(math.ceil(frames_per_second*float(guide_match_search_seconds)))
+
   template = templateFromInputROI(
     input_video_stream,
     template,
@@ -155,13 +165,13 @@ def trackTemplate(
   best_match_origin_x = None
   best_match_origin_y = None
   match_points = []
-  for frame_number in range(number_of_frames):
 
+  for frame_number in range(number_of_frames):
     frame_returned, raw_frame = input_video_stream.read()
     if not frame_returned:
       error_msg = "Error. Unexpected problem occurred during video frame capture. Exiting."
-      return (error_msg, [{}], frames_per_second, None)
-
+      return (error_msg, [{}], frames_per_second, None, -1)
+  
     # crop out a smaller sub region to search if required
     if max_movement_per_frame is None:
       sub_region_padding = None
@@ -186,11 +196,12 @@ def trackTemplate(
     best_match_origin_y = match_coordinates[1] + input_image_sub_region_origin[1]
 
     milliseconds_per_second = 1000.0
-    time_stamp = input_video_stream.get(cv.CAP_PROP_POS_MSEC)/milliseconds_per_second
+    original_time_stamp = input_video_stream.get(cv.CAP_PROP_POS_MSEC)
+    time_stamp_in_seconds = original_time_stamp/milliseconds_per_second
     tracking_results.append({
       'FRAME_NUMBER': frame_number,
       'ELAPSED_TIME': frame_number/frames_per_second,
-      'TIME_STAMP': time_stamp, 
+      'TIME_STAMP': time_stamp_in_seconds, 
       'MATCH_MEASURE': match_measure,
       'Y_DISPLACEMENT': 0,
       'X_DISPLACEMENT': 0,
