@@ -8,6 +8,9 @@ from cv2 import cv2 as cv # pip install --user opencv-python
 from typing import Tuple, List, Dict
 import sys
 
+import av
+from fractions import Fraction
+
 # TODO: for the contrast adjustment, instead of taking the actual min after gamma adjusting
 #       we should be taking the intensity value at the 2/5/?% in the increasing ordered image array
 #       i.e. the 2nd percentile, or 5th percentile. The reason being that just a single very low value
@@ -79,30 +82,27 @@ def trackTemplate(
     frame rate,
     template actually used for the tracking
   '''
-  error_msg = None
-  frames_per_second = float(0.0)
 
+  if microns_per_pixel is None:
+    microns_per_pixel = 1.0
+  if output_conversion_factor is None:
+    output_conversion_factor = 1.0
+
+  error_msg = None
+  warning_msg = None
+  frames_per_second = float(0.0)  
   if input_video_path is None:
     error_msg = "ERROR. No path provided to an input video. Nothing has been tracked."
-    return (error_msg, [{}], frames_per_second, None)
+    return (error_msg, [{}], frames_per_second, None, -1)
 
   # open a video reader stream
   input_video_stream = cv.VideoCapture(input_video_path)
   if not input_video_stream.isOpened():
     error_msg = "Error. Can't open videos stream for capture. Nothing has been tracked."
-    return (error_msg, [{}], frames_per_second, None)
+    return (error_msg, [{}], frames_per_second, None, -1)
   frame_width  = int(input_video_stream.get(cv.CAP_PROP_FRAME_WIDTH))
   frame_height = int(input_video_stream.get(cv.CAP_PROP_FRAME_HEIGHT))
-  frame_size = (frame_width, frame_height)
   frames_per_second = input_video_stream.get(cv.CAP_PROP_FPS)
-
-  # frame_count = float(input_video_stream.get(cv.CAP_PROP_FRAME_COUNT))
-  # video_duration = frame_count/frames_per_second
-  # print(f'Video Details')
-  # print(f'frames/sec: {frames_per_second}')
-  # print(f'frame dimensions: ({frame_width}, {frame_height})')  
-  # print(f'frame count: {frame_count}')
-  # print(f'video duration: {video_duration}')
     
   # open the template image
   if user_roi_selection:
@@ -111,7 +111,7 @@ def trackTemplate(
     template = cv.imread(template_guide_image_path)
     if template is None:
       error_msg = "ERROR. The path provided for template does not point to an image file. Nothing has been tracked."
-      return (error_msg, [{}], frames_per_second, None)
+      return (error_msg, [{}], frames_per_second, None, -1)
     template = cv.cvtColor(template, cv.COLOR_BGR2GRAY)
   
   if guide_match_search_seconds is None:
@@ -128,27 +128,33 @@ def trackTemplate(
   template_height = template.shape[0]
   template_width = template.shape[1]
 
-  # open a video writer stream if required
+  input_video_conainer = av.open(input_video_path)
+  # input_video_duration = input_video_conainer.duration
+  # input_video_time_base = input_video_conainer.streams.video[0].time_base
+  input_video_avg_fps_fraction = input_video_conainer.streams.video[0].average_rate
+  input_video_codec_name = input_video_conainer.streams.video[0].codec_context.name
+  input_video_pix_fmt = input_video_conainer.streams.video[0].pix_fmt
+  input_video_bitrate = input_video_conainer.streams.video[0].bit_rate
+  input_video_conainer.close()
+
+  # open a writable video stream if required
   if output_video_path is not None:
-    format_extension = pathlib.Path(output_video_path).suffix
-    if format_extension == '.avi':
-      output_video_codec = cv.VideoWriter_fourcc('M','J','P','G')
-    elif format_extension == '.mp4':
-      output_video_codec = cv.VideoWriter_fourcc(*'mp4v') 
+    output_video_bitrate = input_video_bitrate
+    output_video_fps = input_video_avg_fps_fraction.numerator/input_video_avg_fps_fraction.denominator
+    if input_video_codec_name == 'rawvideo':
+      # mp4 doesn't support rawvideo and neither do a lot of players
+      output_video_codec = 'h264'
+      output_video_pix_fmt = 'yuv420p'
     else:
-      output_video_codec = int(input_video_stream.get(cv.CAP_PROP_FOURCC))
-      # output_video_codec = cv.VideoWriter_fourcc(*'X264')
-      # error_msg = "Error. File format extension " + format_extension + " is not supported. "
-      # error_msg += "Only .mp4 and .avi are allowed. Nothing has been tracked."
-      # return (error_msg, [{}], frames_per_second, None)
-  
-    output_video_stream = cv.VideoWriter(
-      output_video_path,
-      output_video_codec,
-      frames_per_second,
-      frame_size,
-      True # False  # isColor = True by default
-    )
+      output_video_codec = input_video_codec_name  # just use 'h264' if this ever fails
+      output_video_pix_fmt = input_video_pix_fmt
+    output_video_container = av.open(output_video_path, mode='w')
+    output_video_stream = output_video_container.add_stream(output_video_codec, rate=str(round(output_video_fps, 2)))
+    output_video_stream.codec_context.time_base = Fraction(1, 1000)  # milliseconds
+    output_video_stream.bit_rate = output_video_bitrate # can be small i.e. 2**20 & very still very viewable
+    output_video_stream.pix_fmt = output_video_pix_fmt  # use 'yuv420p' if this ever fails 
+    output_video_stream.height = frame_height
+    output_video_stream.width = frame_width
   else:
     output_video_stream = None
 
@@ -166,12 +172,9 @@ def trackTemplate(
   best_match_origin_y = None
   match_points = []
 
-  for frame_number in range(number_of_frames):
-    frame_returned, raw_frame = input_video_stream.read()
-    if not frame_returned:
-      print(f'WARNING. Number of expected frames {number_of_frames} does not match actual number of frames {frame_number}.')
-      break
-
+  frame_number = 0
+  frame_returned, raw_frame = input_video_stream.read()
+  while frame_returned:
     # crop out a smaller sub region to search if required
     if max_movement_per_frame is None:
       sub_region_padding = None
@@ -195,13 +198,13 @@ def trackTemplate(
     best_match_origin_x = match_coordinates[0] + input_image_sub_region_origin[0]
     best_match_origin_y = match_coordinates[1] + input_image_sub_region_origin[1]
 
-    milliseconds_per_second = 1000.0
     original_time_stamp = input_video_stream.get(cv.CAP_PROP_POS_MSEC)
+    milliseconds_per_second = 1000.0
     time_stamp_in_seconds = original_time_stamp/milliseconds_per_second
     tracking_results.append({
       'FRAME_NUMBER': frame_number,
       'FRAME_TIME': frame_number/frames_per_second,
-      'ELAPSED_TIME': time_stamp_in_seconds, 
+      'TIME_STAMP': time_stamp_in_seconds,
       'MATCH_MEASURE': match_measure,
       'Y_DISPLACEMENT': 0,
       'X_DISPLACEMENT': 0,
@@ -239,8 +242,8 @@ def trackTemplate(
       grid_width = int(template_width/grid_square_diameter)*grid_square_diameter
       grid_height = int(template_height/grid_square_diameter)*grid_square_diameter
       template_bottom_right_y = min(frame_height, grid_origin_y + grid_height)
-      template_bottom_right_x = min(frame_width, grid_origin_x + grid_width)      
-      grid_colour_bgr = (255, 128, 0)
+      template_bottom_right_x = min(frame_width, grid_origin_x + grid_width)
+      grid_colour_bgr = (0, 255, 0)
       cv.rectangle(
         img=frame,
         pt1=(grid_origin_x, grid_origin_y),
@@ -249,11 +252,26 @@ def trackTemplate(
         thickness=1,
         lineType=cv.LINE_AA
       )
-      output_video_stream.write(frame)
 
-  input_video_stream.release()
+      output_video_frame = av.VideoFrame.from_ndarray(frame, format='rgb24')
+      output_video_frame.pts = original_time_stamp
+      for output_video_packet in output_video_stream.encode(output_video_frame):
+        output_video_container.mux(output_video_packet)
+
+    frame_returned, raw_frame = input_video_stream.read()
+    frame_number += 1
+
+  if frame_number != number_of_frames:
+    warning_msg = '\nWARNING.\n'
+    warning_msg += ' Number of expected frames ' + str(number_of_frames)
+    warning_msg += ' does not match actual number of frames ' + str(frame_number) + '.\n'
+
   if output_video_stream is not None:
-    output_video_stream.release()
+    # flush any remaining data in the output stream
+    for output_video_packet in output_video_stream.encode():
+      output_video_container.mux(output_video_packet)   
+    output_video_container.close()
+  input_video_stream.release()
 
   extreme_points = [min_x_origin, min_y_origin, max_x_origin, max_y_origin]
   min_frame_numbers = (min_x_frame, min_y_frame)
@@ -265,7 +283,7 @@ def trackTemplate(
     min_frame_numbers=min_frame_numbers
   )
  
-  return (error_msg, adjusted_tracking_results, frames_per_second, template, min_frame_number)
+  return ((warning_msg, error_msg), adjusted_tracking_results, frames_per_second, template, min_frame_number)
 
 
 def adjustTrackingResults(
@@ -276,11 +294,6 @@ def adjustTrackingResults(
   min_frame_numbers: Tuple[int, int],
   contraction_vector: Tuple[int, int]=None
 ) -> List[Dict]:
-
-  if microns_per_pixel is None:
-    microns_per_pixel = 1.0
-  if output_conversion_factor is None:
-    output_conversion_factor = 1.0
   
   # TODO: currently, positive movement is defined as down or right
   #       we can use the contraction_vector parameter to define
@@ -405,7 +418,7 @@ def templateFromInputROI(
   # reset the video to where it was initially
   video_to_search.set(cv.CAP_PROP_POS_FRAMES, initial_frame_pos)
   if best_match_frame is None:
-    error_msg = "ERROR. No ROI drawn by user for template. Cannot perform matcning without a template. Exiting."
+    error_msg = "ERROR. No ROI drawn by user for template. Cannot perform matching without a template. Exiting."
     raise RuntimeError(error_msg)
 
   # cut out a new best match template from the best match frame

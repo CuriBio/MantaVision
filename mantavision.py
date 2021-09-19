@@ -54,7 +54,7 @@ def runTrackTemplate(config: {}):
   for input_args in args:
     print(f'processing: {input_args["input_video_path"]}')
     video_tracking_start_time = time.time()
-    error_msg, tracking_results, frames_per_second, template, min_frame_number = trackTemplate(
+    messages, tracking_results, frames_per_second, template, min_frame_number = trackTemplate(
       input_args['input_video_path'],
       input_args['template_guide_image_path'],
       input_args['output_video_path'],
@@ -64,10 +64,15 @@ def runTrackTemplate(config: {}):
       input_args['sub_pixel_search_increment'],
       input_args['sub_pixel_refinement_radius'],
       input_args['user_roi_selection'],
-      input_args['max_movement_per_frame']
+      input_args['max_pixel_movement_per_frame']
     )
     total_tracking_time += (time.time() - video_tracking_start_time)
     
+    warning_msg, error_msg = messages
+
+    if warning_msg is not None:
+      print(warning_msg)
+
     if error_msg is not None:
       print(error_msg)
       sys.exit(1)
@@ -103,6 +108,7 @@ def runTrackTemplate(config: {}):
       tracking_results_complete = {
         "INPUT_ARGS": input_args,
         "ERROR_MSGS": error_msg,
+        "WARNING_MSGS": warning_msg,
         "RESULTS": tracking_results
       }
       with open(input_args['output_json_path'], 'w') as outfile:
@@ -188,8 +194,8 @@ def verifiedInputs(config: {}) -> (str, [{}]):
     sys.exit(1)
   
   template_guide_image_path = config['template_guide_image_path']
-  file_extensions = ['mp4', 'avi']
-  base_dir, video_files = contentsOfDir(dir_path=config['input_video_path'], search_terms=file_extensions)
+  supported_file_extensions = ['.mp4', '.avi']
+  base_dir, video_files = contentsOfDir(dir_path=config['input_video_path'], search_terms=supported_file_extensions)
   
   unique_name = "results_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
   results_dir_path = os.path.join(base_dir, unique_name)
@@ -225,7 +231,7 @@ def verifiedInputs(config: {}) -> (str, [{}]):
     microns_per_pixel = config['microns_per_pixel']
 
   if 'output_conversion_factor' not in config:
-    output_conversion_factor = 1.0
+    output_conversion_factor = None
   else:
     output_conversion_factor = config['output_conversion_factor']
 
@@ -238,14 +244,14 @@ def verifiedInputs(config: {}) -> (str, [{}]):
     sub_pixel_refinement_radius = None
   else:
     sub_pixel_refinement_radius = config['sub_pixel_refinement_radius']
-  if sub_pixel_search_increment is None:
+  if sub_pixel_search_increment is None and sub_pixel_refinement_radius is not None:
     print('WARNING. sub_pixel_refinement_radius ignored because sub_pixel_search_increment not provided')
     sub_pixel_refinement_radius = None
   
-  if 'max_movement_per_frame' not in config:
-    max_movement_per_frame = None
+  if 'max_pixel_movement_per_frame' not in config:
+    max_pixel_movement_per_frame = None
   else:
-    max_movement_per_frame = (config['max_movement_per_frame'], config['max_movement_per_frame'])
+    max_pixel_movement_per_frame = (config['max_pixel_movement_per_frame'], config['max_pixel_movement_per_frame'])
           
   # set all the values needed to run template matching on each input video
   configs = []
@@ -300,12 +306,12 @@ def verifiedInputs(config: {}) -> (str, [{}]):
     output_video_min_frame_dir_path = os.path.join(output_video_frames_dir_path, 'min_frame')
     output_json_path = os.path.join(results_json_dir_path, file_name + '-results.json')
     path_to_excel_results = os.path.join(results_xlsx_dir_path, file_name + '-reslts.xlsx')
-    # for now we are forcing an avi output format because the NIKON software is borked
-    # and some videos only output if we make the output format avi
-    output_file_extension = '.avi'
+    if input_file_extension in supported_file_extensions:
+      output_file_extension = input_file_extension
+    else:
+      output_file_extension = '.mp4'  # TODO: we should probably just barf here for unsupported formats
     output_video_path = os.path.join(results_video_dir_path, file_name + '-results' + output_file_extension)
     results_template_filename = os.path.join(results_template_dir_path, file_name + '-template.jpg')
-
 
     configs.append({
       'input_video_path': input_video_path,
@@ -323,7 +329,7 @@ def verifiedInputs(config: {}) -> (str, [{}]):
       'output_conversion_factor': output_conversion_factor,
       'sub_pixel_search_increment': sub_pixel_search_increment,
       'sub_pixel_refinement_radius': sub_pixel_refinement_radius,
-      'max_movement_per_frame': max_movement_per_frame,
+      'max_pixel_movement_per_frame': max_pixel_movement_per_frame,
       'well_name': well_name,
       'date_stamp': date_stamp,
     })
@@ -409,10 +415,10 @@ def resultsToCSV(
   num_rows_to_write = len(tracking_results)
   for results_row in range(num_rows_to_write):
       tracking_result = tracking_results[results_row]
-      elapsed_time = float(tracking_result['ELAPSED_TIME'])
+      time_stamp = float(tracking_result['TIME_STAMP'])
       post_displacement = float(tracking_result['XY_DISPLACEMENT'])
       sheet_row = results_row + template_start_row
-      sheet[time_column + str(sheet_row)] = elapsed_time
+      sheet[time_column + str(sheet_row)] = time_stamp
       sheet[displacement_column + str(sheet_row)] = post_displacement
 
   workbook.save(filename=path_to_output_file)

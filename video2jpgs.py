@@ -1,7 +1,7 @@
 import argparse
 import os
 import sys
-import cv2 as cv # pip install --user opencv-python
+from cv2 import cv2 as cv # pip install --user opencv-python
 from track_template import contrastAdjusted, gammaAdjusted, rescaled
 
 
@@ -49,29 +49,30 @@ def video_to_jpgs(
     video_stream.set(cv.CAP_PROP_POS_FRAMES, frame_number_to_write)
     frame_returned, frame = video_stream.read()
     if not frame_returned:
-      print("Error. Unexpected problem during video frame capture. Exiting.")
+      print("ERROR. Unexpected problem during video frame capture. Exiting.")
       return error_code
     frame_file_name = frame_base_name + "_frame_" + str(frame_number_to_write).zfill(zero_padding_length) + ".jpg"
     frame_path = os.path.join(output_dir_path, frame_file_name)
-    # auto_contrast_msg = ''
     if enhance_contrast:
       frame = contrastAdjusted(frame) 
-      # auto_contrast_msg = '(auto contrast enhanced)'
     cv.imwrite(frame_path, frame)
   else: # write out all the frames
-    for frame_number in range(number_of_frames):
-      frame_returned, frame = video_stream.read()
-      if not frame_returned:
-        print("Error. Unexpected problem during video frame capture. Exiting.")
-        return error_code
+    frame_number = 0
+    frame_returned, frame = video_stream.read()
+    while frame_returned:
       frame_file_name = frame_base_name + "_frame_" + str(frame_number).zfill(zero_padding_length) + ".jpg"
       frame_path = os.path.join(output_dir_path, frame_file_name)
       # auto_contrast_msg = ''
       if enhance_contrast:
         frame = contrastAdjusted(frame) 
-        # auto_contrast_msg = '(auto contrast enhanced)'
       cv.imwrite(frame_path, frame)
-      # print(f'Saved frame {frame_number} to {frame_path} {auto_contrast_msg}')
+      frame_returned, frame = video_stream.read()
+      frame_number += 1
+    video_stream.release()
+    if frame_number != number_of_frames:
+      warning_msg = '\nWARNING.\n'
+      warning_msg += ' Number of expected frames ' + str(number_of_frames)
+      warning_msg += ' does not match actual number of frames ' + str(frame_number) + '.\n'
 
   return conversion_success
 
