@@ -130,7 +130,9 @@ def computeMorphologyMetrics(
 
   left_distance_marker_x = left_roi['ORIGIN_X'] + left_roi['WIDTH']
   right_distance_marker = right_roi['ORIGIN_X']
-  midpoint_marker = right_distance_marker - left_distance_marker_x
+  pixel_distance_between_rois = right_distance_marker - left_distance_marker_x
+  distance_between_rois = microns_per_pixel*pixel_distance_between_rois
+  midpoint_marker = left_distance_marker_x + int(pixel_distance_between_rois/2)
 
   search_image_gray = cv.cvtColor(search_image, cv.COLOR_BGR2GRAY)
   vertical_intensities = search_image_gray[:, midpoint_marker]
@@ -144,7 +146,8 @@ def computeMorphologyMetrics(
   upper_edge_pos_value = edges['upper_edge_pos_value']
   print(f'upper_edge_pos: {upper_edge_pos} (value: {upper_edge_pos_value})')
   print(f'lower_edge_pos: {lower_edge_pos} (value: {lower_edge_pos_value})')
-  print(f'computed thickness at midpoint: {computed_thickness}')
+  print(f'inner distance (microns) between rois: {distance_between_rois}')
+  print(f'computed thickness (microns) at midpoint: {computed_thickness}')
 
   # find max and max_position for actual peak i.e. the value is max for it's pixels left and right of it.
   # then find max and max_position (again, of actual peak) when searcing from left of image and from right of max
@@ -199,6 +202,10 @@ def findEdges(input_array: np.ndarray) -> int:
     np.ones(len_of_average)/len_of_average,
     mode='valid'
   )
+
+
+
+  # # PLOTS
   # plt.plot(input_array_gradmag_ma)
   # plt.show()
 
@@ -214,10 +221,15 @@ def findEdges(input_array: np.ndarray) -> int:
   # plt.plot(input_array_2nd_gradient, label='input_array_2nd_gradient', color = 'b')
   # plt.show()
 
+
+
+
   # find what we presume is the edge (one of two) with the highest gradmag intensity
   max_intensity_pos = np.argmax(input_array_gradmag_ma)
   max_intensity = input_array_gradmag_ma[max_intensity_pos]
   half_max_intensity = max_intensity/2
+
+  print(f'half_max_intensity: {half_max_intensity}')
 
   # find what we presume is the second edge, with lower intensity that the other one
   # if we know the correct direction, we can basically just keep looking for a peak
@@ -231,14 +243,20 @@ def findEdges(input_array: np.ndarray) -> int:
   upper_cumulative_sum = np.sum(input_array_gradmag_ma[:max_intensity_pos])
   lower_cumulative_sum = np.sum(input_array_gradmag_ma[max_intensity_pos:])
   if lower_cumulative_sum < upper_cumulative_sum:
+    print('searching from left to right')
     start_pos = max_intensity_pos + 1
     end_pos = input_array_gradmag_ma_length
     increment = 1
   else:
+    print('searching from right to left')
     # traverse 'backwards'
     start_pos = input_array_gradmag_ma_length - 1
     end_pos = max_intensity_pos
     increment = -1
+
+# TODO: the gradmag is smaller than the original image
+#       so we need to figure out how it shrinks 
+#       and account for that (i'm guessing if the radius of the ddx operator is 5, then we loose 10 pixel in total, 5 at each end)
 
   search_radius = 5
   other_peak_max_pos = start_pos
@@ -247,22 +265,26 @@ def findEdges(input_array: np.ndarray) -> int:
     min_pos = max(0, pos - search_radius)
     max_pos = min(pos + search_radius + 1, input_array_gradmag_ma_length)
 
-    search_sub_region_max_value = -np.inf
+    search_sub_region_max_value = input_array_gradmag_ma[min_pos]
     search_sub_region_max_pos = min_pos
     for search_sub_region_pos in range(min_pos, max_pos):
       current_value = input_array_gradmag_ma[search_sub_region_pos]
-      if search_sub_region_max_value > half_max_intensity:
-        # we arbitrarily decide the other peak must be at least half the global max
-        if current_value < search_sub_region_max_value/2.0:
-          break  # we must have found the other peak
-      if current_value > search_sub_region_max_value:
+      if current_value >= search_sub_region_max_value:
         search_sub_region_max_value = current_value
         search_sub_region_max_pos = search_sub_region_pos
+
     if search_sub_region_max_pos == pos:
       # local max so check it's a 'global' max with what we've checked so far
-      if search_sub_region_max_value > other_peak_max_value:
+      if search_sub_region_max_value >= other_peak_max_value:
         other_peak_max_pos = search_sub_region_max_pos
         other_peak_max_value = search_sub_region_max_value
+
+    if other_peak_max_value > half_max_intensity:
+      # we arbitrarily decide the other peak must be at least half the global max
+      if search_sub_region_max_value < other_peak_max_value/2:
+        # if the current search values have dropped by half from the max 
+        print('other peak found')
+        break  # we must have found the other peak
 
   if max_intensity_pos < other_peak_max_pos:
     upper_edge_pos = max_intensity_pos
