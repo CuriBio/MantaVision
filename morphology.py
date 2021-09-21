@@ -6,6 +6,8 @@ from cv2 import cv2 as cv # pip install --user opencv-python
 from typing import Tuple, List, Dict
 from track_template import bestMatch
 from mantavision import getFilePathViaGUI
+from skimage import filters as skimagefilters
+
 from matplotlib import pyplot as plt
 
 
@@ -86,12 +88,13 @@ def roiInfoFromUserDrawings(input_image: np.ndarray) -> List[Dict]:
   return rois
 
 
-def computeMorphologyMetrics(
+def morphologyMetrics(
   search_image_path: str=None,
   template_image_paths: List[str]=None,
   sub_pixel_search_increment: float = None,
   sub_pixel_refinement_radius: float = None,
-  microns_per_pixel: float=None
+  microns_per_pixel: float=None,
+  background_is_white: bool=True
 ):
 
   if microns_per_pixel is None:
@@ -129,63 +132,91 @@ def computeMorphologyMetrics(
   # TODO: deal with more than 2 roi's being drawn??? maybe not.
 
   left_distance_marker_x = left_roi['ORIGIN_X'] + left_roi['WIDTH']
-  right_distance_marker = right_roi['ORIGIN_X']
-  pixel_distance_between_rois = right_distance_marker - left_distance_marker_x
+  right_distance_marker_x = right_roi['ORIGIN_X']
+  pixel_distance_between_rois = right_distance_marker_x - left_distance_marker_x
   distance_between_rois = microns_per_pixel*pixel_distance_between_rois
-  midpoint_marker = left_distance_marker_x + int(pixel_distance_between_rois/2)
+  horizontal_midpoint = left_distance_marker_x + int(pixel_distance_between_rois/2)
 
   search_image_gray = cv.cvtColor(search_image, cv.COLOR_BGR2GRAY)
-  vertical_intensities = search_image_gray[:, midpoint_marker]
-  edges = findEdges(vertical_intensities)
-  computed_thickness = microns_per_pixel*(edges['lower_edge_pos'] - edges['upper_edge_pos'])
-  # Note: can do abs of computed_thickness if need to but shouldn't need to
+  horizontal_midpoint_vertical_intensities = search_image_gray[:, horizontal_midpoint]
+  edges = outerEdges(horizontal_midpoint_vertical_intensities)
+
+  distance_between_edges = microns_per_pixel*(edges['lower_edge_pos'] - edges['upper_edge_pos'])
+  # Note: can do abs of distance_between_edges if need to but shouldn't need to
 
   lower_edge_pos = edges['lower_edge_pos']
-  lower_edge_pos_value = edges['lower_edge_pos_value']
+  # lower_edge_pos_value = edges['lower_edge_pos_value']
   upper_edge_pos = edges['upper_edge_pos']
-  upper_edge_pos_value = edges['upper_edge_pos_value']
-  print(f'upper_edge_pos: {upper_edge_pos} (value: {upper_edge_pos_value})')
-  print(f'lower_edge_pos: {lower_edge_pos} (value: {lower_edge_pos_value})')
-  print(f'inner distance (microns) between rois: {distance_between_rois}')
-  print(f'computed thickness (microns) at midpoint: {computed_thickness}')
+  # upper_edge_pos_value = edges['upper_edge_pos_value']
 
-  # find max and max_position for actual peak i.e. the value is max for it's pixels left and right of it.
-  # then find max and max_position (again, of actual peak) when searcing from left of image and from right of max
-  # so in other words, we need to find a position that is a local max, AND has a value that is higher than any other peak we find.
-  # that gives us 2 peaks and we take the second peak as the one that isn't the same as the first one we found
+  # cut out a sub region around the area of interest and segmentation that
+  distance_between_edges_radius = float(distance_between_edges)/2.0
+  sub_region_vertical_start = int(max(0, upper_edge_pos - distance_between_edges_radius))
+  sub_region_vertical_end = int(min(len(search_image_gray), lower_edge_pos + distance_between_edges_radius))
+  sub_region = search_image_gray[
+    sub_region_vertical_start:sub_region_vertical_end, left_distance_marker_x:right_distance_marker_x
+  ]
+  sub_region_threshold, _ = cv.threshold(src=sub_region, thresh=None, maxval=None, type=cv.THRESH_TRIANGLE)
+  foreground_value = 1
+  if background_is_white:
+    threshold_type = cv.THRESH_BINARY_INV
+  else:
+    threshold_type = cv.THRESH_BINARY  
+  _, sub_region_segmented = cv.threshold(sub_region, sub_region_threshold, foreground_value, threshold_type)
 
-  # maybe we just use the cumsum of the original intensities
-  # then we find can compute a piecewise smooth version which would have 
-  # approx 3 pieces, 2 very steep and 1 close to horizontal. 
-  # the close to horizontal region is the part we're interested in.
-  # given how steep the edges are, could use a very crude set threshold
-  # of the first place (from the left and the right) where the gradmag is > some fixed value
-  # because we're normalizing, this could actually work.
+  # plt.imshow(sub_region)
+  # plt.show()
+  # plt.imshow(sub_region_segmented)
+  # plt.show()
 
-  # TODO: implement and run segmentation and related functions
-  #       from the locations, determine the horizontal separation, the midpoint and the thickness at the midpoint
-  #       the thickness at the midpoint could be determined in a similar manner to the readcoor fiducial finder,
-  #       or we could take the region between the rois, and using a horizontal line, use the intensity of that
-  #       horizontal line as a guide to perform a segmentation, where the midline pixel intensities become the foreground
-  #       draw a vertical line from the central point and find the darkest pixel on that line which becomes the background,
-  #       then we run a k-means or 2 gaussian mixture model to segment. we could of course also just run otsu
-  #       on some small region between the rois only (and probably some fixed vertical height)
-  #       we could also just use gradients i.e. compute the gradient along the vertical line thorugh the 
-  #       horizontal midpoint of the rois. then where the gradient becomes significantly more than some epsilon
-  #       we consider that to be the edges.
+  # find the average distance between the 'edges' of the thresholded object of interest
+  # where the average is +/- some small horizontal region around the horizontal midpoint 
+  sub_sub_region_horizontal_radius = 5
+  sub_region_midpoint = pixel_distance_between_rois/2
+  sub_sub_region_start_x = int(max(0, sub_region_midpoint - sub_sub_region_horizontal_radius))
+  sub_sub_region_end_x = int(min(pixel_distance_between_rois, sub_region_midpoint + sub_sub_region_horizontal_radius))
+  sub_sub_region_segmented = sub_region_segmented[:, sub_sub_region_start_x:sub_sub_region_end_x]  
+  first_occurances = np.argmax(sub_sub_region_segmented, axis=0)
+  sub_sub_region_segmented_height = sub_sub_region_segmented.shape[0]
+  last_occurances = np.argmax(
+    np.flip(sub_sub_region_segmented, axis=0),
+    axis=0
+  )
+  last_occurances = sub_sub_region_segmented_height - last_occurances
+  sub_sub_region_vertical_thicknesses = last_occurances - first_occurances
+  midpoint_thickness_avg = np.median(sub_sub_region_vertical_thicknesses)
 
-  # I think the easiest thing to do is determine the intensity derivative and look up an down from the centra point
-  # and choose the highest point above and the highest point below that central point as the edges
-  # and calculate the length between each edge.
-  # we can then also accumulate the intensities within and without for foreground/background
-  # then segment the rest of the region between the rois based on those intensity values for the foreground
+  # print(first_occurances)
+  # print(last_occurances)
+
+  # print(f'upper_edge_pos: {upper_edge_pos} (value: {upper_edge_pos_value})')
+  # print(f'lower_edge_pos: {lower_edge_pos} (value: {lower_edge_pos_value})')
+  # print(f'distance between edges at horizontal midpoint: {round(distance_between_edges, 2)} (microns)')
+  # print(f'horizontal midpoint: {horizontal_midpoint}')
+
+  # compute an estimate of the 'area' of the object of interest
+  area_between_rois = microns_per_pixel*np.sum(sub_region_segmented)
+  metrics = {
+    'distance_between_rois': distance_between_rois,
+    'midpoint_thickness_avg': midpoint_thickness_avg,
+    'area_between_rois': area_between_rois 
+  }
+  return metrics
 
 
-def findEdges(input_array: np.ndarray) -> int:
+def outerEdges(input_array: np.ndarray) -> int:
   '''
-  Presumes there are two edges i.e. ______|__|_______
+  Presumes there are two main edges on the outside of a
+  horizontally aligned "tube/rectangle" like structure
+  i.e. 
+  ------------
+
+  ------------
+  The input should be a vertical cross section 1 pixel thick
+  so a 1D array of intensities (either raw or gradmag)
   '''
 
+  # normalize the input
   input_array_min = np.min(input_array)
   input_array_max = np.max(input_array)
   input_array_range = input_array_max - input_array_min
@@ -193,17 +224,18 @@ def findEdges(input_array: np.ndarray) -> int:
   input_array_normalized = input_array_new_range * (
     (input_array - input_array_min)/float(input_array_range)
   )
+
+  # compute a moving average (ma) smoothed gradmag of the input
   input_array_gradient = np.gradient(input_array_normalized, edge_order=2)
   input_array_gradmag = np.square(input_array_gradient)
   # compute a moving averge
-  len_of_average = 10
+  ma_radius = 5
+  len_of_average = 2*ma_radius + 1
   input_array_gradmag_ma = np.convolve(
     input_array_gradmag,
     np.ones(len_of_average)/len_of_average,
     mode='valid'
   )
-
-
 
   # # PLOTS
   # plt.plot(input_array_gradmag_ma)
@@ -229,34 +261,25 @@ def findEdges(input_array: np.ndarray) -> int:
   max_intensity = input_array_gradmag_ma[max_intensity_pos]
   half_max_intensity = max_intensity/2
 
-  print(f'half_max_intensity: {half_max_intensity}')
-
-  # find what we presume is the second edge, with lower intensity that the other one
+  # find what we presume is the second edge, with lower intensity than the first one we found
   # if we know the correct direction, we can basically just keep looking for a peak
   # and when the intensity has dropped to half the value of the current max of a proper local max
   # we bail out and say we must have found the peak.
-  # but how do we deal with the initial finding of a local max peak while still checking if we've dropped?
-  # do we just make the initial peak max intensity None? or -ve?
-
   input_array_gradmag_ma_length = len(input_array_gradmag_ma)
-
   upper_cumulative_sum = np.sum(input_array_gradmag_ma[:max_intensity_pos])
   lower_cumulative_sum = np.sum(input_array_gradmag_ma[max_intensity_pos:])
   if lower_cumulative_sum < upper_cumulative_sum:
-    print('searching from left to right')
     start_pos = max_intensity_pos + 1
     end_pos = input_array_gradmag_ma_length
     increment = 1
   else:
-    print('searching from right to left')
     # traverse 'backwards'
     start_pos = input_array_gradmag_ma_length - 1
     end_pos = max_intensity_pos
     increment = -1
 
-# TODO: the gradmag is smaller than the original image
-#       so we need to figure out how it shrinks 
-#       and account for that (i'm guessing if the radius of the ddx operator is 5, then we loose 10 pixel in total, 5 at each end)
+  # print(f'input_array_gradmag_ma_length: {input_array_gradmag_ma_length + 2*ma_radius} ')
+  # print(f'input_array_length: {len(input_array)}')
 
   search_radius = 5
   other_peak_max_pos = start_pos
@@ -283,31 +306,42 @@ def findEdges(input_array: np.ndarray) -> int:
       # we arbitrarily decide the other peak must be at least half the global max
       if search_sub_region_max_value < other_peak_max_value/2:
         # if the current search values have dropped by half from the max 
-        print('other peak found')
-        break  # we must have found the other peak
+        # we must be walking down the descending side of a peak and therefore 
+        # we presume we have found the other peak so bail out of the search
+        break  
 
   if max_intensity_pos < other_peak_max_pos:
     upper_edge_pos = max_intensity_pos
-    upper_edge_pos_value = max_intensity
+    # upper_edge_pos_value = max_intensity
     lower_edge_pos = other_peak_max_pos
-    lower_edge_pos_value = other_peak_max_value
+    # lower_edge_pos_value = other_peak_max_value
   else:
     upper_edge_pos = other_peak_max_pos
-    upper_edge_pos_value = other_peak_max_value
+    # upper_edge_pos_value = other_peak_max_value
     lower_edge_pos = max_intensity_pos
-    lower_edge_pos_value = max_intensity
+    # lower_edge_pos_value = max_intensity
+
+  # adjust for the moving average clipping the ends off
+  upper_edge_pos += ma_radius
+  lower_edge_pos += ma_radius
+
   return {
       'lower_edge_pos': lower_edge_pos,
-      'lower_edge_pos_value': lower_edge_pos_value,
+      # 'lower_edge_pos_value': lower_edge_pos_value,
       'upper_edge_pos': upper_edge_pos,
-      'upper_edge_pos_value': upper_edge_pos_value,
+      # 'upper_edge_pos_value': upper_edge_pos_value,
   }
 
 
 if __name__ == '__main__':
-  computeMorphologyMetrics(
+  
+  metrics = morphologyMetrics(
     search_image_path=None,
     template_image_paths=None,
     sub_pixel_search_increment=None,
     sub_pixel_refinement_radius=None
   )
+
+  print(f"horizontal inner distance between rois: {round(metrics['distance_between_rois'], 2)} (microns)")
+  print(f"vertical thickness at midpoint between rois: {round(metrics['midpoint_thickness_avg'], 2)} (microns)")
+  print(f"area between rois: {round(metrics['area_between_rois'], 2)} (square microns)")
