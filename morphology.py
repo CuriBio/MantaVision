@@ -65,6 +65,7 @@ def roiInfoFromUserDrawings(input_image: np.ndarray) -> List[Dict]:
   # open a roi selector in the resizeable window we just created
   roi_selections = cv.selectROIs(roi_selector_window_name, input_image, showCrosshair=False)
   cv.destroyAllWindows()
+  print()
 
   rois = []
   for roi_selection in roi_selections:
@@ -109,10 +110,10 @@ def morphologyMetrics(
   # search_image = cv.cvtColor(search_image_rgb, cv.COLOR_BGR2GRAY)
   search_image = search_image_rgb
 
-  if template_image_paths is None:
+  if template_image_paths == 'draw':
     rois_info = roiInfoFromUserDrawings(search_image)
   else:
-    if template_image_paths == 'select':
+    if template_image_paths is None or template_image_paths == 'select':
       template_1_image_path = getFilePathViaGUI('template to find path')  
       template_2_image_path = getFilePathViaGUI('template to find path')  
       template_image_paths = [template_1_image_path, template_2_image_path],
