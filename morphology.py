@@ -12,7 +12,6 @@ from matplotlib import pyplot as plt
 
 
 # TODO:
-# - compute area using the edges not segmentation
 
 # - when doing multiple images, if we manually select ROIs, we use the same templates for all images
 
@@ -275,49 +274,72 @@ def morphologyMetrics(
   # results_image += results_image_overlay
 
   # draw the results metrics on the results image
-  line_colour_rgb = (0, 255, 255)
-  # left ROI inner edge object thickness line
-  cv.line(
-    results_image,
-    pt1=(left_distance_marker_x, left_end_point_lower_edge_pos),
-    pt2=(left_distance_marker_x, left_end_point_upper_edge_pos),
-    color=line_colour_rgb,
-    thickness=2,
-    lineType=cv.LINE_AA
-  )
-  # right ROI inner edge object thickness line
-  cv.line(
-    results_image,
-    pt1=(right_distance_marker_x, right_end_point_lower_edge_pos),
-    pt2=(right_distance_marker_x, right_end_point_upper_edge_pos),
-    color=line_colour_rgb,
-    thickness=2,
-    lineType=cv.LINE_AA
-  )
-  # horizontal midpoint object thickness line
-  cv.line(
-    results_image,
-    pt1=(horizontal_midpoint, sub_region_vertical_start + last_occurances_median),
-    pt2=(horizontal_midpoint, sub_region_vertical_start + first_occurances_median),
-    color=line_colour_rgb,
-    thickness=2,
-    lineType=cv.LINE_AA
-  )  
+
   # horizontal line between left and right ROI inner edges
+  horizontal_line_position_colour_rgb = (0, 43, 198)
   horizontal_line_position_y = int(midpoint_upper_edge_position + distance_between_edges_at_midpoint_radius)
   cv.line(
     results_image,
     pt1=(left_distance_marker_x, horizontal_line_position_y),
     pt2=(right_distance_marker_x, horizontal_line_position_y),
-    color=line_colour_rgb,
-    thickness=2,
+    color=horizontal_line_position_colour_rgb,
+    thickness=3,
     lineType=cv.LINE_AA
   )
 
-  # TODO: draw the edge points
-  # edge_points
+  # upper and lower edges of object
+  edge_contour_colour_rgb = (0, 43, 198)
+  points_to_find_edges_at = [point for point in range(left_distance_marker_x, right_distance_marker_x)]
+  for index in range(len(edge_points)):
+    edge_point_x = points_to_find_edges_at[index]
+    edge_points_y = edge_points[index]
+    lower_edge_point_y = edge_points_y['lower_edge_pos']
+    cv.line(
+      results_image,
+      pt1=(edge_point_x, lower_edge_point_y),
+      pt2=(edge_point_x, lower_edge_point_y),
+      color=edge_contour_colour_rgb,
+      thickness=3,
+      lineType=cv.LINE_AA
+    )
+    upper_edge_point_y = edge_points_y['upper_edge_pos']
+    cv.line(
+      results_image,
+      pt1=(edge_point_x, upper_edge_point_y),
+      pt2=(edge_point_x, upper_edge_point_y),
+      color=edge_contour_colour_rgb,
+      thickness=3,
+      lineType=cv.LINE_AA
+    )
 
-  # TODO: make lines different colours
+  # left ROI inner edge object vertical thickness line
+  line_colour_rgb = (0, 176, 24)  # (0, 255, 255)
+  cv.line(
+    results_image,
+    pt1=(left_distance_marker_x, left_end_point_lower_edge_pos),
+    pt2=(left_distance_marker_x, left_end_point_upper_edge_pos),
+    color=line_colour_rgb,
+    thickness=3,
+    lineType=cv.LINE_AA
+  )
+  # right ROI inner edge object vertical thickness line
+  cv.line(
+    results_image,
+    pt1=(right_distance_marker_x, right_end_point_lower_edge_pos),
+    pt2=(right_distance_marker_x, right_end_point_upper_edge_pos),
+    color=line_colour_rgb,
+    thickness=3,
+    lineType=cv.LINE_AA
+  )
+  # horizontal midpoint object vertical thickness line
+  cv.line(
+    results_image,
+    pt1=(horizontal_midpoint, sub_region_vertical_start + last_occurances_median),
+    pt2=(horizontal_midpoint, sub_region_vertical_start + first_occurances_median),
+    color=line_colour_rgb,
+    thickness=3,
+    lineType=cv.LINE_AA
+  )  
   
   return results_image, metrics 
 
