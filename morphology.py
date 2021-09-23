@@ -193,7 +193,7 @@ def morphologyMetrics(
   )
   last_occurances = sub_sub_region_segmented_height - last_occurances
   sub_sub_region_vertical_thicknesses = last_occurances - first_occurances
-  midpoint_thickness_avg = np.median(sub_sub_region_vertical_thicknesses)
+  midpoint_thickness_avg = microns_per_pixel*np.median(sub_sub_region_vertical_thicknesses)
 
   # compute an estimate of the 'area' of the object of interest
   area_between_rois = microns_per_pixel*np.sum(sub_region_segmented)
