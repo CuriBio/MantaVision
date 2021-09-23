@@ -101,7 +101,7 @@ def morphologyMetrics(
   if microns_per_pixel is None:
     microns_per_pixel = 1.0
 
-  if search_image_path is None:
+  if search_image_path is None or search_image_path.lower() == 'select':
     search_image_path = getFilePathViaGUI('image to search path')
   search_image_rgb = cv.imread(search_image_path)
   if search_image_rgb is None:
@@ -141,14 +141,10 @@ def morphologyMetrics(
   search_image_gray = cv.cvtColor(search_image, cv.COLOR_BGR2GRAY)
   horizontal_midpoint_vertical_intensities = search_image_gray[:, horizontal_midpoint]
   edges = outerEdges(horizontal_midpoint_vertical_intensities)
-
+  lower_edge_pos = edges['lower_edge_pos']
+  upper_edge_pos = edges['upper_edge_pos']
   distance_between_edges = microns_per_pixel*(edges['lower_edge_pos'] - edges['upper_edge_pos'])
   # Note: can do abs of distance_between_edges if need to but shouldn't need to
-
-  lower_edge_pos = edges['lower_edge_pos']
-  # lower_edge_pos_value = edges['lower_edge_pos_value']
-  upper_edge_pos = edges['upper_edge_pos']
-  # upper_edge_pos_value = edges['upper_edge_pos_value']
 
   # cut out a sub region around the area of interest and segmentation that
   distance_between_edges_radius = float(distance_between_edges)/2.0
@@ -165,10 +161,22 @@ def morphologyMetrics(
     threshold_type = cv.THRESH_BINARY  
   _, sub_region_segmented = cv.threshold(sub_region, sub_region_threshold, foreground_value, threshold_type)
 
-  # plt.imshow(sub_region)
-  # plt.show()
-  # plt.imshow(sub_region_segmented)
-  # plt.show()
+  # create a version of the input that has the results drawn on it
+  # first we overlay the segmentaion results
+  results_image_overlay = np.zeros(search_image_rgb.shape, np.int8)
+  channel_to_overlay = 2  # blue channel
+  results_image_overlay[
+      sub_region_vertical_start:sub_region_vertical_end, left_distance_marker_x:right_distance_marker_x, channel_to_overlay
+  ] = sub_region_segmented
+  results_image = search_image_rgb.copy()
+  colour_to_overlay = [0, 0, 128]
+  results_image[results_image_overlay[:,:,channel_to_overlay] > 0] = colour_to_overlay
+  # then we draw the horzontal and vertical measurements
+  
+  plt.imshow(results_image)
+  plt.show()
+
+
 
   # find the average distance between the 'edges' of the thresholded object of interest
   # where the average is +/- some small horizontal region around the horizontal midpoint 
@@ -186,14 +194,6 @@ def morphologyMetrics(
   last_occurances = sub_sub_region_segmented_height - last_occurances
   sub_sub_region_vertical_thicknesses = last_occurances - first_occurances
   midpoint_thickness_avg = np.median(sub_sub_region_vertical_thicknesses)
-
-  # print(first_occurances)
-  # print(last_occurances)
-
-  # print(f'upper_edge_pos: {upper_edge_pos} (value: {upper_edge_pos_value})')
-  # print(f'lower_edge_pos: {lower_edge_pos} (value: {lower_edge_pos_value})')
-  # print(f'distance between edges at horizontal midpoint: {round(distance_between_edges, 2)} (microns)')
-  # print(f'horizontal midpoint: {horizontal_midpoint}')
 
   # compute an estimate of the 'area' of the object of interest
   area_between_rois = microns_per_pixel*np.sum(sub_region_segmented)
@@ -246,17 +246,6 @@ def outerEdges(input_array: np.ndarray) -> int:
   # plt.plot(gradient_cumulative_sum, label='Cummulative Distribution of Gradient', color = 'b')
   # plt.show()
 
-  # gradmag_cumulative_sum = np.cumsum(input_array_gradmag)
-  # plt.plot(gradmag_cumulative_sum, label='Cummulative Distribution of Gradmag', color = 'b')
-  # plt.show()
-
-  # input_array_2nd_gradient = np.gradient(input_array_gradient, edge_order=2)
-  # plt.plot(input_array_2nd_gradient, label='input_array_2nd_gradient', color = 'b')
-  # plt.show()
-
-
-
-
   # find what we presume is the edge (one of two) with the highest gradmag intensity
   max_intensity_pos = np.argmax(input_array_gradmag_ma)
   max_intensity = input_array_gradmag_ma[max_intensity_pos]
@@ -278,9 +267,6 @@ def outerEdges(input_array: np.ndarray) -> int:
     start_pos = input_array_gradmag_ma_length - 1
     end_pos = max_intensity_pos
     increment = -1
-
-  # print(f'input_array_gradmag_ma_length: {input_array_gradmag_ma_length + 2*ma_radius} ')
-  # print(f'input_array_length: {len(input_array)}')
 
   search_radius = 5
   other_peak_max_pos = start_pos
@@ -313,14 +299,10 @@ def outerEdges(input_array: np.ndarray) -> int:
 
   if max_intensity_pos < other_peak_max_pos:
     upper_edge_pos = max_intensity_pos
-    # upper_edge_pos_value = max_intensity
     lower_edge_pos = other_peak_max_pos
-    # lower_edge_pos_value = other_peak_max_value
   else:
     upper_edge_pos = other_peak_max_pos
-    # upper_edge_pos_value = other_peak_max_value
     lower_edge_pos = max_intensity_pos
-    # lower_edge_pos_value = max_intensity
 
   # adjust for the moving average clipping the ends off
   upper_edge_pos += ma_radius
@@ -328,9 +310,7 @@ def outerEdges(input_array: np.ndarray) -> int:
 
   return {
       'lower_edge_pos': lower_edge_pos,
-      # 'lower_edge_pos_value': lower_edge_pos_value,
       'upper_edge_pos': upper_edge_pos,
-      # 'upper_edge_pos_value': upper_edge_pos_value,
   }
 
 
