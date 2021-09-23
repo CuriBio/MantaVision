@@ -12,12 +12,7 @@ from matplotlib import pyplot as plt
 
 
 # TODO:
-# - output all the metrics i.e. where the centre was found and show all the plots etc.
-# - output markings on an output image for each of the measurements
-# i.e. draw the edges, draw the thickness lines etc etc.
-
 # - compute area using the edges not segmentation
-# - compute the thickness at the points at the roi edges
 
 # - when doing multiple images, if we manually select ROIs, we use the same templates for all images
 
@@ -158,17 +153,36 @@ def morphologyMetrics(
   right_distance_marker_x = right_roi['ORIGIN_X']
   pixel_distance_between_rois = right_distance_marker_x - left_distance_marker_x
   distance_between_rois = microns_per_pixel*pixel_distance_between_rois
-  
+
+  search_image_gray = cv.cvtColor(search_image, cv.COLOR_BGR2GRAY)
+
+  # compute an estimate of the 'area' of the object of interest
+  # NOTE: computing outerEdges for the entire object is pretty slow
+  # so if it turns out the area computation is useless (don't do it and)
+  # remove this computation of outerEdges for all points and
+  # go back to just computing outerEdges for the 3 points of interest.
+  points_to_find_edges_at = [point for point in range(left_distance_marker_x, right_distance_marker_x)]
+  edge_points = []
+  for point_to_find_edges_at in points_to_find_edges_at:
+    edge_points.append(
+      outerEdges(search_image_gray[:,point_to_find_edges_at])
+    )
+  area_between_rois = 0
+  for edge_point in edge_points:
+    area_between_rois += (edge_point['lower_edge_pos'] - edge_point['upper_edge_pos'])  
+  area_between_rois *= microns_per_pixel
+
   # find distance between edges at the midpoint
   # we do this using segmentation because just using the edges is not robust
   # since the peak in the gradient magnitude image is not always AT the very edge
-  horizontal_midpoint = left_distance_marker_x + int(pixel_distance_between_rois/2)
-  search_image_gray = cv.cvtColor(search_image, cv.COLOR_BGR2GRAY)
-  horizontal_midpoint_vertical_intensities = search_image_gray[:, horizontal_midpoint]
-  edges_at_midpoint = outerEdges(horizontal_midpoint_vertical_intensities)
+  half_pixel_distance_between_rois = int(pixel_distance_between_rois/2)
+  horizontal_midpoint = left_distance_marker_x + half_pixel_distance_between_rois
+  # horizontal_midpoint_vertical_intensities = search_image_gray[:, horizontal_midpoint]
+  # edges_at_midpoint = outerEdges(horizontal_midpoint_vertical_intensities)
+  edges_at_midpoint = edge_points[half_pixel_distance_between_rois]
   midpoint_lower_edge_position = edges_at_midpoint['lower_edge_pos']
   midpoint_upper_edge_position = edges_at_midpoint['upper_edge_pos']
-  distance_between_edges_at_midpoint = microns_per_pixel*(midpoint_lower_edge_position - midpoint_upper_edge_position)
+  distance_between_edges_at_midpoint = (midpoint_lower_edge_position - midpoint_upper_edge_position)
   # Note: can do abs of distance_between_edges_at_midpoint if need to but shouldn't need to
 
   # cut out a sub region around the area of interest and segmentation that
@@ -220,26 +234,24 @@ def morphologyMetrics(
   midpoint_thickness_avg = microns_per_pixel*sub_sub_region_vertical_thicknesses
 
   # find thickness at left roi inner edge
-  left_end_point_edges_vertical_intensities = search_image_gray[:, left_distance_marker_x]
-  left_end_point_edges = outerEdges(left_end_point_edges_vertical_intensities)
+  # left_end_point_edges_vertical_intensities = search_image_gray[:, left_distance_marker_x]
+  # left_end_point_edges = outerEdges(left_end_point_edges_vertical_intensities)
+  left_end_point_edges = edge_points[0]
   left_end_point_lower_edge_pos = left_end_point_edges['lower_edge_pos']
   left_end_point_upper_edge_pos = left_end_point_edges['upper_edge_pos']
   left_end_point_thickness  = microns_per_pixel*(
     left_end_point_lower_edge_pos - left_end_point_upper_edge_pos
   )
   # find thickness at right roi inner edge
-  right_end_point_edges_vertical_intensities = search_image_gray[:, right_distance_marker_x]
-  right_end_point_edges = outerEdges(right_end_point_edges_vertical_intensities)
+  # right_end_point_edges_vertical_intensities = search_image_gray[:, right_distance_marker_x]
+  # right_end_point_edges = outerEdges(right_end_point_edges_vertical_intensities)
+  right_end_point_edges = edge_points[-1]  
   right_end_point_lower_edge_pos = right_end_point_edges['lower_edge_pos']
   right_end_point_upper_edge_pos = right_end_point_edges['upper_edge_pos']
   right_end_point_thickness = microns_per_pixel*(
     right_end_point_lower_edge_pos - right_end_point_upper_edge_pos
   )
 
-  # compute an estimate of the 'area' of the object of interest
-  # TODO: redo this using the edges at the end points
-  area_between_rois = microns_per_pixel*np.sum(sub_region_segmented)
-  
   metrics = {
     'distance_between_rois': distance_between_rois,
     'midpoint_thickness_avg': midpoint_thickness_avg,
@@ -302,6 +314,11 @@ def morphologyMetrics(
     lineType=cv.LINE_AA
   )
 
+  # TODO: draw the edge points
+  # edge_points
+
+  # TODO: make lines different colours
+  
   return results_image, metrics 
 
 
@@ -313,10 +330,9 @@ def outerEdges(input_array: np.ndarray) -> int:
   ------------
 
   ------------
-  The input should be a vertical cross section 1 pixel thick
-  so a 1D array of intensities (either raw or gradmag)
+  If horizontal_pos is None, input_array should be a 1D array of intensities 
+  (either raw or gradmag) i.e. a vertical cross section 1 pixel thick
   '''
-
   # normalize the input
   input_array_min = np.min(input_array)
   input_array_max = np.max(input_array)
