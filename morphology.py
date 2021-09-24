@@ -40,12 +40,10 @@ def roiInfoFromTemplates(
   '''
   rois = []
   for template_image_path in template_image_paths:
-    template_image_rgb = cv.imread(template_image_path)
-    if template_image_rgb is None:
+    template_image = cv.imread(template_image_path)
+    if template_image is None:
       print(f'ERROR. Could not open the template image pointed to by the path provided: {template_image_path}. Exiting.')
       return None
-    # template_image = cv.cvtColor(template_image_rgb, cv.COLOR_BGR2GRAY)
-    template_image = template_image_rgb
 
     _, match_coordinates = bestMatch(
       input_image_to_search=search_image,
@@ -276,19 +274,19 @@ def morphologyMetrics(
   # draw the results metrics on the results image
 
   # horizontal line between left and right ROI inner edges
-  horizontal_line_position_colour_rgb = (0, 43, 198)
+  horizontal_line_position_colour_bgr = (255, 0, 0)
   horizontal_line_position_y = int(midpoint_upper_edge_position + distance_between_edges_at_midpoint_radius)
   cv.line(
     results_image,
     pt1=(left_distance_marker_x, horizontal_line_position_y),
     pt2=(right_distance_marker_x, horizontal_line_position_y),
-    color=horizontal_line_position_colour_rgb,
+    color=horizontal_line_position_colour_bgr,
     thickness=3,
     lineType=cv.LINE_AA
   )
 
   # upper and lower edges of object
-  edge_contour_colour_rgb = (0, 43, 198)
+  edge_contour_colour_bgr = (0, 0, 255)
   points_to_find_edges_at = [point for point in range(left_distance_marker_x, right_distance_marker_x)]
   for index in range(len(edge_points)):
     edge_point_x = points_to_find_edges_at[index]
@@ -298,7 +296,7 @@ def morphologyMetrics(
       results_image,
       pt1=(edge_point_x, lower_edge_point_y),
       pt2=(edge_point_x, lower_edge_point_y),
-      color=edge_contour_colour_rgb,
+      color=edge_contour_colour_bgr,
       thickness=3,
       lineType=cv.LINE_AA
     )
@@ -307,18 +305,18 @@ def morphologyMetrics(
       results_image,
       pt1=(edge_point_x, upper_edge_point_y),
       pt2=(edge_point_x, upper_edge_point_y),
-      color=edge_contour_colour_rgb,
+      color=edge_contour_colour_bgr,
       thickness=3,
       lineType=cv.LINE_AA
     )
 
   # left ROI inner edge object vertical thickness line
-  line_colour_rgb = (0, 176, 24)  # (0, 255, 255)
+  edge_width_lines_colour_bgr = (0, 255, 0)
   cv.line(
     results_image,
     pt1=(left_distance_marker_x, left_end_point_lower_edge_pos),
     pt2=(left_distance_marker_x, left_end_point_upper_edge_pos),
-    color=line_colour_rgb,
+    color=edge_width_lines_colour_bgr,
     thickness=3,
     lineType=cv.LINE_AA
   )
@@ -327,7 +325,7 @@ def morphologyMetrics(
     results_image,
     pt1=(right_distance_marker_x, right_end_point_lower_edge_pos),
     pt2=(right_distance_marker_x, right_end_point_upper_edge_pos),
-    color=line_colour_rgb,
+    color=edge_width_lines_colour_bgr,
     thickness=3,
     lineType=cv.LINE_AA
   )
@@ -336,7 +334,7 @@ def morphologyMetrics(
     results_image,
     pt1=(horizontal_midpoint, sub_region_vertical_start + last_occurances_median),
     pt2=(horizontal_midpoint, sub_region_vertical_start + first_occurances_median),
-    color=line_colour_rgb,
+    color=edge_width_lines_colour_bgr,
     thickness=3,
     lineType=cv.LINE_AA
   )  
