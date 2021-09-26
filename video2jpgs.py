@@ -10,6 +10,7 @@ def video_to_jpgs(
   output_dir_path: str=None,
   enhance_contrast: bool=False,
   frame_number_to_write: int=None,
+  image_extension: str='tif'
 ) -> int:
   '''
   Converts an input video to a sequence of jpg images.
@@ -32,6 +33,9 @@ def video_to_jpgs(
   if not os.path.isdir(output_dir_path):
     print("ERROR. Output directory provided does not exist. Nothing has been converted.")
     return error_code
+  if image_extension != "jpg" and image_extension != 'tif' and image_extension != 'png':
+    print(f'ERROR. extension {image_extension} for output images not valid. Nothing has been converted.')
+    return error_code    
 
   # open the video capture stream
   video_stream = cv.VideoCapture(input_video_path)
@@ -51,7 +55,7 @@ def video_to_jpgs(
     if not frame_returned:
       print("ERROR. Unexpected problem during video frame capture. Exiting.")
       return error_code
-    frame_file_name = frame_base_name + "_frame_" + str(frame_number_to_write).zfill(zero_padding_length) + ".jpg"
+    frame_file_name = frame_base_name + "_frame_" + str(frame_number_to_write).zfill(zero_padding_length) + "." + image_extension
     frame_path = os.path.join(output_dir_path, frame_file_name)
     if enhance_contrast:
       frame = contrastAdjusted(frame) 
@@ -60,7 +64,7 @@ def video_to_jpgs(
     frame_number = 0
     frame_returned, frame = video_stream.read()
     while frame_returned:
-      frame_file_name = frame_base_name + "_frame_" + str(frame_number).zfill(zero_padding_length) + ".jpg"
+      frame_file_name = frame_base_name + "_frame_" + str(frame_number).zfill(zero_padding_length) + "." + image_extension
       frame_path = os.path.join(output_dir_path, frame_file_name)
       # auto_contrast_msg = ''
       if enhance_contrast:

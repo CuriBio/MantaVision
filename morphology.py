@@ -7,6 +7,8 @@ from typing import Tuple, List, Dict
 from track_template import bestMatch
 from mantavision import getFilePathViaGUI
 from skimage import filters as skimagefilters
+from track_template import contrastAdjusted
+from numpy.polynomial.polynomial import polyfit, Polynomial
 
 from matplotlib import pyplot as plt
 
@@ -152,130 +154,73 @@ def morphologyMetrics(
   distance_between_rois = microns_per_pixel*pixel_distance_between_rois
 
   search_image_gray = cv.cvtColor(search_image, cv.COLOR_BGR2GRAY)
+  search_image_gray = contrastAdjusted(search_image_gray) 
 
   # compute an estimate of the 'area' of the object of interest
-  # NOTE: computing outerEdges for the entire object is pretty slow
-  # so if it turns out the area computation is useless (don't do it and)
-  # remove this computation of outerEdges for all points and
-  # go back to just computing outerEdges for the 3 points of interest.
-  points_to_find_edges_at = [point for point in range(left_distance_marker_x, right_distance_marker_x)]
+  # first find the points we think area at the upper/lower edges  
+  points_to_find_edges_at = np.asarray(range(left_distance_marker_x, right_distance_marker_x))
+  points_to_fit_poly_at = np.asarray(range(pixel_distance_between_rois))  
+  upper_edge_points = np.empty(pixel_distance_between_rois)
+  lower_edge_points = np.empty(pixel_distance_between_rois)
+  # TODO: remove edge_points and just use the upper and lower edge_points np arrays
   edge_points = []
-  for point_to_find_edges_at in points_to_find_edges_at:
-    edge_points.append(
-      outerEdges(search_image_gray[:,point_to_find_edges_at])
-    )
-  area_between_rois = 0
-  for edge_point in edge_points:
-    area_between_rois += (edge_point['lower_edge_pos'] - edge_point['upper_edge_pos'])  
-  area_between_rois *= microns_per_pixel
+  for index, point_to_find_edges_at in enumerate(points_to_find_edges_at):
+    edge_point = outerEdges(search_image_gray[:, point_to_find_edges_at])    
+    edge_points.append(edge_point)
+    upper_edge_points[index] = edge_point['upper_edge_pos']
+    lower_edge_points[index] = edge_point['lower_edge_pos']
+
+  # TODO: maybe try to limit the extreme points by computing the median and x percentiles
+  #       and then pulling in anything above the x percentile
+
+  # then fit curves to those upper/lower "edge points" because it can be very noisy
+  polyfit_deg = 4
+  upper_edge_points_polyfit = polyfit(points_to_fit_poly_at, upper_edge_points, polyfit_deg)
+  upper_edge_points_poly = Polynomial(upper_edge_points_polyfit)
+  upper_edge_points = upper_edge_points_poly(points_to_fit_poly_at)
+  lower_edge_points_polyfit = polyfit(points_to_fit_poly_at, lower_edge_points, polyfit_deg)
+  lower_edge_points_poly = Polynomial(lower_edge_points_polyfit)
+  lower_edge_points = lower_edge_points_poly(points_to_fit_poly_at)
+  
+  # now compute the actual area between the fitted curves
+  edge_point_diffs = lower_edge_points - upper_edge_points
+  area_between_rois = microns_per_pixel * np.sum(edge_point_diffs)
 
   # find distance between edges at the midpoint
-  # we do this using segmentation because just using the edges is not robust
-  # since the peak in the gradient magnitude image is not always AT the very edge
-  half_pixel_distance_between_rois = int(pixel_distance_between_rois/2)
-  horizontal_midpoint = left_distance_marker_x + half_pixel_distance_between_rois
-  # horizontal_midpoint_vertical_intensities = search_image_gray[:, horizontal_midpoint]
-  # edges_at_midpoint = outerEdges(horizontal_midpoint_vertical_intensities)
-  edges_at_midpoint = edge_points[half_pixel_distance_between_rois]
-  midpoint_lower_edge_position = edges_at_midpoint['lower_edge_pos']
-  midpoint_upper_edge_position = edges_at_midpoint['upper_edge_pos']
-  distance_between_edges_at_midpoint = (midpoint_lower_edge_position - midpoint_upper_edge_position)
-  # Note: can do abs of distance_between_edges_at_midpoint if need to but shouldn't need to
-
-  # cut out a sub region around the area of interest and segmentation that
-  distance_between_edges_at_midpoint_radius = float(distance_between_edges_at_midpoint)*0.5  # might need to make this 0.75
-  sub_region_vertical_start = int(max(0, midpoint_upper_edge_position - distance_between_edges_at_midpoint_radius))
-  sub_region_vertical_end = int(
-    min(
-      search_image_gray.shape[0], 
-      midpoint_lower_edge_position + distance_between_edges_at_midpoint_radius
-    )
+  half_pixel_distance_between_rois = round(pixel_distance_between_rois/2)
+  midpoint_upper_edge_position = lower_edge_points[half_pixel_distance_between_rois]
+  midpoint_thickness = microns_per_pixel*(
+    midpoint_upper_edge_position - upper_edge_points[half_pixel_distance_between_rois]
   )
-  sub_region_horizontal_radius = 10
-  sub_region_horizontal_start = int(max(0, horizontal_midpoint - sub_region_horizontal_radius))
-  sub_region_horizontal_end = int(
-    min(
-      search_image_gray.shape[1],
-      horizontal_midpoint + sub_region_horizontal_radius
-    )
-  )
-  sub_region = search_image_gray[
-    sub_region_vertical_start:sub_region_vertical_end, sub_region_horizontal_start:sub_region_horizontal_end
-  ]
-  sub_region_threshold, _ = cv.threshold(src=sub_region, thresh=None, maxval=None, type=cv.THRESH_TRIANGLE)
-  foreground_value = 1
-  if background_is_white:
-    threshold_type = cv.THRESH_BINARY_INV
-  else:
-    threshold_type = cv.THRESH_BINARY  
-  _, sub_region_segmented = cv.threshold(sub_region, sub_region_threshold, foreground_value, threshold_type)
-
-  # find the average distance between the 'edges_at_midpoint' of the thresholded object of interest
-  # where the average is +/- some small horizontal region around the horizontal midpoint 
-  sub_region_length = sub_region.shape[1]
-  sub_sub_region_horizontal_radius = 5
-  sub_region_midpoint = sub_region_horizontal_radius
-  sub_sub_region_start_x = int(max(0, sub_region_midpoint - sub_sub_region_horizontal_radius))
-  sub_sub_region_end_x = int(min(sub_region_length, sub_region_midpoint + sub_sub_region_horizontal_radius))
-  sub_sub_region_segmented = sub_region_segmented[:, sub_sub_region_start_x:sub_sub_region_end_x]  
-  first_occurances = np.argmax(sub_sub_region_segmented, axis=0)
-  first_occurances_median = round(np.median(first_occurances))
-  sub_sub_region_segmented_height = sub_sub_region_segmented.shape[0]
-  last_occurances = np.argmax(
-    np.flip(sub_sub_region_segmented, axis=0),
-    axis=0
-  )
-  last_occurances = sub_sub_region_segmented_height - last_occurances
-  last_occurances_median = round(np.median(last_occurances))
-  sub_sub_region_vertical_thicknesses = last_occurances_median - first_occurances_median
-  midpoint_thickness_avg = microns_per_pixel*sub_sub_region_vertical_thicknesses
 
   # find thickness at left roi inner edge
-  # left_end_point_edges_vertical_intensities = search_image_gray[:, left_distance_marker_x]
-  # left_end_point_edges = outerEdges(left_end_point_edges_vertical_intensities)
-  left_end_point_edges = edge_points[0]
-  left_end_point_lower_edge_pos = left_end_point_edges['lower_edge_pos']
-  left_end_point_upper_edge_pos = left_end_point_edges['upper_edge_pos']
-  left_end_point_thickness  = microns_per_pixel*(
-    left_end_point_lower_edge_pos - left_end_point_upper_edge_pos
-  )
+  left_end_point_thickness = microns_per_pixel*(lower_edge_points[0] - upper_edge_points[0])
+
   # find thickness at right roi inner edge
-  # right_end_point_edges_vertical_intensities = search_image_gray[:, right_distance_marker_x]
-  # right_end_point_edges = outerEdges(right_end_point_edges_vertical_intensities)
-  right_end_point_edges = edge_points[-1]  
-  right_end_point_lower_edge_pos = right_end_point_edges['lower_edge_pos']
-  right_end_point_upper_edge_pos = right_end_point_edges['upper_edge_pos']
-  right_end_point_thickness = microns_per_pixel*(
-    right_end_point_lower_edge_pos - right_end_point_upper_edge_pos
-  )
+  right_end_point_thickness = microns_per_pixel*(lower_edge_points[-1] - upper_edge_points[-1])
 
   metrics = {
     'distance_between_rois': distance_between_rois,
-    'midpoint_thickness_avg': midpoint_thickness_avg,
+    'midpoint_thickness': midpoint_thickness,
     'left_end_point_thickness': left_end_point_thickness,
     'right_end_point_thickness': right_end_point_thickness,
     'area_between_rois': area_between_rois 
   }
 
   # create a version of the input that has the results drawn on it
+  # TODO: figure out if I have to make the results image a uint8
+  #       becuase i don't think it's necessary.
+  #       other than for adding colours.
   results_image = search_image.copy().astype(np.uint8)
 
-  # # overlay the segmentaion on the results image
-  # results_image_overlay = np.zeros(search_image.shape, np.uint8)
-  # channel_to_overlay = 2  # blue channel
-  # results_image_overlay[
-  #     sub_region_vertical_start:sub_region_vertical_end, sub_region_horizontal_start:sub_region_horizontal_end, channel_to_overlay
-  # ] = sub_region_segmented
-  # results_image_overlay_channel_max = np.max(results_image, axis=channel_to_overlay)
-  # results_image_overlay_value = 255 - results_image_overlay_channel_max
-  # results_image_overlay[:,:,channel_to_overlay] *= results_image_overlay_value
-  # results_image += results_image_overlay
-
   # draw the results metrics on the results image
-
-  # horizontal line between left and right ROI inner edges
+  # draw the horizontal line between left and right ROI inner edges
   horizontal_line_position_colour_bgr = (255, 0, 0)
-  horizontal_line_position_y = int(midpoint_upper_edge_position + distance_between_edges_at_midpoint_radius)
+  upper_midpoint_pos_y = upper_edge_points[half_pixel_distance_between_rois]
+  lower_midpoint_pos_y = lower_edge_points[half_pixel_distance_between_rois]
+  horizontal_line_position_y = round(
+    upper_midpoint_pos_y + (lower_midpoint_pos_y - upper_midpoint_pos_y)*0.5
+  )
   cv.line(
     results_image,
     pt1=(left_distance_marker_x, horizontal_line_position_y),
@@ -285,33 +230,33 @@ def morphologyMetrics(
     lineType=cv.LINE_AA
   )
 
-  # upper and lower edges of object
+  # draw the upper and lower edges of object
   edge_contour_colour_bgr = (0, 0, 255)
-  points_to_find_edges_at = [point for point in range(left_distance_marker_x, right_distance_marker_x)]
-  for index in range(len(edge_points)):
-    edge_point_x = points_to_find_edges_at[index]
-    edge_points_y = edge_points[index]
-    lower_edge_point_y = edge_points_y['lower_edge_pos']
-    cv.line(
-      results_image,
-      pt1=(edge_point_x, lower_edge_point_y),
-      pt2=(edge_point_x, lower_edge_point_y),
-      color=edge_contour_colour_bgr,
-      thickness=3,
-      lineType=cv.LINE_AA
-    )
-    upper_edge_point_y = edge_points_y['upper_edge_pos']
-    cv.line(
-      results_image,
-      pt1=(edge_point_x, upper_edge_point_y),
-      pt2=(edge_point_x, upper_edge_point_y),
-      color=edge_contour_colour_bgr,
-      thickness=3,
-      lineType=cv.LINE_AA
-    )
+  lower_edge_points_to_draw = np.dstack((points_to_find_edges_at.astype(np.int32), lower_edge_points.astype(np.int32)))[0]
+  lower_edge_points_to_draw = lower_edge_points_to_draw.reshape((-1, 1, 2))
+  cv.polylines(
+    results_image,
+    pts=[lower_edge_points_to_draw],
+    isClosed=False,    
+    color=edge_contour_colour_bgr,
+    thickness=3,
+    lineType=cv.LINE_AA
+  )
+  upper_edge_points_to_draw = np.dstack((points_to_find_edges_at.astype(np.int32), upper_edge_points.astype(np.int32)))[0]
+  upper_edge_points_to_draw = upper_edge_points_to_draw.reshape((-1, 1, 2))
+  cv.polylines(
+    results_image,
+    pts=[upper_edge_points_to_draw],
+    isClosed=False,
+    color=edge_contour_colour_bgr,
+    thickness=3,
+    lineType=cv.LINE_AA
+  )
 
-  # left ROI inner edge object vertical thickness line
+  # draw the left ROI inner edge object vertical thickness line
   edge_width_lines_colour_bgr = (0, 255, 0)
+  left_end_point_upper_edge_pos = round(upper_edge_points[0])
+  left_end_point_lower_edge_pos = round(lower_edge_points[0])
   cv.line(
     results_image,
     pt1=(left_distance_marker_x, left_end_point_lower_edge_pos),
@@ -320,7 +265,9 @@ def morphologyMetrics(
     thickness=3,
     lineType=cv.LINE_AA
   )
-  # right ROI inner edge object vertical thickness line
+  # draw the right ROI inner edge object vertical thickness line
+  right_end_point_upper_edge_pos = round(upper_edge_points[-1])
+  right_end_point_lower_edge_pos = round(lower_edge_points[-1]) 
   cv.line(
     results_image,
     pt1=(right_distance_marker_x, right_end_point_lower_edge_pos),
@@ -329,11 +276,13 @@ def morphologyMetrics(
     thickness=3,
     lineType=cv.LINE_AA
   )
-  # horizontal midpoint object vertical thickness line
+  # draw the horizontal midpoint object vertical thickness line
+  midpoint_point_upper_edge_pos = round(upper_edge_points[half_pixel_distance_between_rois])
+  midpoint_point_lower_edge_pos = round(lower_edge_points[half_pixel_distance_between_rois]) 
   cv.line(
     results_image,
-    pt1=(horizontal_midpoint, sub_region_vertical_start + last_occurances_median),
-    pt2=(horizontal_midpoint, sub_region_vertical_start + first_occurances_median),
+    pt1=(left_distance_marker_x + half_pixel_distance_between_rois, midpoint_point_upper_edge_pos),
+    pt2=(left_distance_marker_x + half_pixel_distance_between_rois, midpoint_point_lower_edge_pos),
     color=edge_width_lines_colour_bgr,
     thickness=3,
     lineType=cv.LINE_AA
@@ -342,7 +291,7 @@ def morphologyMetrics(
   return results_image, metrics 
 
 
-def outerEdges(input_array: np.ndarray) -> int:
+def outerEdges(input_array: np.ndarray, show_plots: bool=False) -> int:
   '''
   Presumes there are two main edges on the outside of a
   horizontally aligned "tube/rectangle" like structure
@@ -374,13 +323,13 @@ def outerEdges(input_array: np.ndarray) -> int:
     mode='valid'
   )
 
-  # # PLOTS
-  # plt.plot(input_array_gradmag_ma, label='Gradient Magnitude of vertical line at midpoint', color = 'g')
-  # plt.show()
+  if show_plots:
+    plt.plot(input_array_gradmag_ma, label='Gradient Magnitude of vertical line at midpoint', color = 'g')
+    plt.show()
 
-  # gradient_cumulative_sum = np.cumsum(input_array_gradient)
-  # plt.plot(gradient_cumulative_sum, label='Cummulative Distribution of Gradient', color = 'b')
-  # plt.show()
+    # gradient_cumulative_sum = np.cumsum(input_array_gradient)
+    # plt.plot(gradient_cumulative_sum, label='Cummulative Distribution of Gradient', color = 'b')
+    # plt.show()
 
   # find what we presume is the edge (one of two) with the highest gradmag intensity
   max_intensity_pos = np.argmax(input_array_gradmag_ma)
@@ -463,5 +412,5 @@ if __name__ == '__main__':
   )
 
   print(f"horizontal inner distance between rois: {round(metrics['distance_between_rois'], 2)} (microns)")
-  print(f"vertical thickness at midpoint between rois: {round(metrics['midpoint_thickness_avg'], 2)} (microns)")
+  print(f"vertical thickness at midpoint between rois: {round(metrics['midpoint_thickness'], 2)} (microns)")
   print(f"area between rois: {round(metrics['area_between_rois'], 2)} (square microns)")
