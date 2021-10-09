@@ -11,22 +11,16 @@ import sys
 import av
 from fractions import Fraction
 
-# TODO: for the contrast adjustment, instead of taking the actual min after gamma adjusting
+# TODO: parallelise the computation of matching for each frame. i.e. if we have 10 processors, split up the search space into
+#       10 disjoint regions and have each thread process those regions independently then combine results
+#       to find the min among them.
+
+# TODO: for the contrast adjustment, maybe instead of taking the actual min after gamma adjusting
 #       we should be taking the intensity value at the 2/5/?% in the increasing ordered image array
 #       i.e. the 2nd percentile, or 5th percentile. The reason being that just a single very low value
 #       in the gamma adjusted image can make the image extremely bright.
 #       so then the question is, what do we do with values below that min, do we just set them to the
 #       xth percentile or do we perform some sort of binning on the whole image...?
-
-# TODO: parallelise the computation of matching for each frame. i.e. if we have 10 processors, split up the search space into
-#       10 disjoint regions and have each thread process those regions independently then combine results
-#       to find the min among them.
-
-# TODO: try implementing our own match measure. i.e.
-#       normalize each image,
-#       compute the diffs of the two overlapping image sections,
-#       compute the variance i.e. average of the diffs squared
-#       could also introduce additional measures like gradient orientation, MI. etc etc.
 
 # TODO: the template we use in the algo should be called the roi_template and
 #       the template we get from the user should be called guide_template.
@@ -39,23 +33,6 @@ from fractions import Fraction
 
 # TODO: we could try adding in rotation of the template +/- some small range of angles for each position per frame.
 
-
-def fourccNum(c1, c2, c3, c4) -> int:
-  return (
-    (ord(c1) & 255) + ((ord(c2) & 255) << 8) + ((ord(c3) & 255) << 16) + ((ord(c4) & 255) << 24)
-  )
-
-
-def fourccChars(codec_num: int) -> [str]:
-  chars = []
-  chars.append(chr(  codec_num & 255) )
-  chars.append(chr( (codec_num >> 8) & 255 ))
-  chars.append(chr( (codec_num >> 16) & 255 ))
-  chars.append(chr( (codec_num >> 24) & 255 ))
-  return chars
-  # avc1 is the codec returned by videos from curi's microscope
-
-
 def trackTemplate(
   input_video_path: str,
   template_guide_image_path: str,
@@ -67,7 +44,7 @@ def trackTemplate(
   sub_pixel_refinement_radius: float = None,
   user_roi_selection: bool = True, 
   max_movement_per_frame = None
-) -> (str, List[Dict], float, np.ndarray, int):
+) -> Tuple[str, List[Dict], float, np.ndarray, int]:
   '''
   Tracks a template image through each frame of a video.
 
@@ -188,7 +165,7 @@ def trackTemplate(
       sub_region_origin=(best_match_origin_x, best_match_origin_y),
       sub_region_padding=sub_region_padding
     )
-    match_measure, match_coordinates = bestMatch(
+    match_measure, match_coordinates = matchResults(
       input_image_to_search=input_image_sub_region_to_search,
       template_to_match=template,
       sub_pixel_search_increment=sub_pixel_search_increment,
@@ -499,12 +476,12 @@ def rescaled(intensity: float, intensity_min: float, intensity_range: float, new
   return new_scale*(intensity - intensity_min)/intensity_range
 
 
-def bestMatch(
+def matchResults(
   input_image_to_search: np.ndarray,
   template_to_match: np.ndarray,
   sub_pixel_search_increment: float=None,
   sub_pixel_refinement_radius: int=None
-) -> (float, [float, float]):
+) -> Tuple[float, List[float]]:
   '''
     Computes the coordinates of the best match between the input image and template.
     Accuracy is +/-1 pixel if sub_pixel_search_increment is None or >= 1.0.
@@ -528,8 +505,8 @@ def bestMatch(
   #   refine the results with a sub pixel search
 
   # convert images to appropriate types for sub pixel match step
-  input_image = cv.cvtColor(input_image_to_search, cv.COLOR_BGR2GRAY).astype(np.float64)
-  template = cv.cvtColor(template_to_match, cv.COLOR_BGR2GRAY).astype(np.float64)
+  input_image = cv.cvtColor(input_image_to_search, cv.COLOR_BGR2GRAY).astype(np.float32)
+  template = cv.cvtColor(template_to_match, cv.COLOR_BGR2GRAY).astype(np.float32)
 
   if sub_pixel_refinement_radius is None:
     sub_pixel_search_radius = 1
@@ -553,7 +530,7 @@ def bestMatch(
     match_coordinates_origin_x + template.shape[1] + sub_pixel_search_radius,
     input_image.shape[1]
   )
-  match_measure, match_sub_coordinates  = bestSubPixelMatch(
+  match_measure, match_sub_coordinates = bestSubPixelMatch(
     input_image_to_search=input_image[
       sub_region_y_start:sub_region_y_end, 
       sub_region_x_start:sub_region_x_end
@@ -561,6 +538,7 @@ def bestMatch(
     template_to_match=template,
     search_increment=sub_pixel_search_increment
   )
+
   match_coordinates = [
     sub_region_x_start + match_sub_coordinates[0],
     sub_region_y_start + match_sub_coordinates[1]
@@ -572,28 +550,17 @@ def bestSubPixelMatch(
   input_image_to_search: np.ndarray,
   template_to_match: np.ndarray,  # must be .astype(np.float64)
   search_increment: float
-) -> (float, [float, float]):
+) -> Tuple[float, List[float]]:
     '''
       Computes the coordinates of the best sub pixel match between the input image and template.
     '''
-    # the shift function turns the input image into a float64 dtype, and
-    # computeECC requires both template & input to be the same type
-    error_msg = ""
-    if input_image_to_search.dtype != np.float64:
-      error_msg += "input_image_to_search must be of type np.float64\n"
-    if template_to_match.dtype != np.float64:
-      error_msg += "template_to_match must be of type np.float64\n"
-    if len(error_msg) > 0:
-      error_msg += "ERROR. In function bestSubPixelMatch:\n" + error_msg
-      raise TypeError(error_msg)
-
     input_dim_y, input_dim_x = input_image_to_search.shape
     template_dim_y, template_dim_x = template_to_match.shape
     search_length_y = input_dim_y - template_dim_y
     search_length_x = input_dim_x - template_dim_x
-    max_ecc = 0.0
+    max_match_measure = 0.0
     max_coordinates = [0.0, 0.0]
-    shifted_input = np.ndarray(shape=[template_dim_y + 1, template_dim_x + 1], dtype=np.float64)
+    shifted_input = np.ndarray(shape=[template_dim_y + 1, template_dim_x + 1], dtype=np.float32)
     for y_origin in np.arange(search_increment, search_length_y, search_increment):
       for x_origin in np.arange(search_increment, search_length_x, search_increment):
         sub_region_start_y = math.floor(y_origin)
@@ -606,10 +573,26 @@ def bestSubPixelMatch(
         ]
         shift(input=sub_image_to_shift, shift=[-y_origin, -x_origin], output=shifted_input)
         input_to_match = shifted_input[:template_dim_y, :template_dim_x]
-
-        ecc = cv.computeECC(templateImage=template_to_match, inputImage=input_to_match)        
-        if ecc > max_ecc:
-          max_ecc = ecc
+        match_results = cv.matchTemplate(input_to_match, template_to_match, cv.TM_CCOEFF)
+        _, match_measure, _, _ = cv.minMaxLoc(match_results)
+        if match_measure > max_match_measure:
+          max_match_measure = match_measure
           max_coordinates = [x_origin, y_origin]
 
-    return (max_ecc, max_coordinates)
+    return (max_match_measure, max_coordinates)
+
+
+def fourccNum(c1, c2, c3, c4) -> int:
+  return (
+    (ord(c1) & 255) + ((ord(c2) & 255) << 8) + ((ord(c3) & 255) << 16) + ((ord(c4) & 255) << 24)
+  )
+
+
+def fourccChars(codec_num: int) -> List[str]:
+  chars = []
+  chars.append(chr(  codec_num & 255) )
+  chars.append(chr( (codec_num >> 8) & 255 ))
+  chars.append(chr( (codec_num >> 16) & 255 ))
+  chars.append(chr( (codec_num >> 24) & 255 ))
+  return chars
+  # avc1 is the codec returned by videos from curi's microscope
