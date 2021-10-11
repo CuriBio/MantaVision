@@ -7,9 +7,9 @@ import pathlib
 from cv2 import cv2 as cv # pip install --user opencv-python
 from typing import Tuple, List, Dict
 import sys
-
 import av
 from fractions import Fraction
+
 
 # TODO: parallelise the computation of matching for each frame. i.e. if we have 10 processors, split up the search space into
 #       10 disjoint regions and have each thread process those regions independently then combine results
@@ -90,12 +90,10 @@ def trackTemplate(
       error_msg = "ERROR. The path provided for template does not point to an image file. Nothing has been tracked."
       return (error_msg, [{}], frames_per_second, None, -1)
     template = cv.cvtColor(template, cv.COLOR_BGR2GRAY)
-  
   if guide_match_search_seconds is None:
     max_frames_to_check = None
   else:
     max_frames_to_check = int(math.ceil(frames_per_second*float(guide_match_search_seconds)))
-
   template = templateFromInputROI(
     input_video_stream,
     template,
@@ -105,6 +103,7 @@ def trackTemplate(
   template_height = template.shape[0]
   template_width = template.shape[1]
 
+  # get some meta data from the input video that we need for the output video
   input_video_conainer = av.open(input_video_path)
   # input_video_duration = input_video_conainer.duration
   # input_video_time_base = input_video_conainer.streams.video[0].time_base
@@ -114,7 +113,7 @@ def trackTemplate(
   input_video_bitrate = input_video_conainer.streams.video[0].bit_rate
   input_video_conainer.close()
 
-  # open a writable video stream if required
+  # open a output (writable) video stream if required
   if output_video_path is not None:
     output_video_bitrate = input_video_bitrate
     output_video_fps = input_video_avg_fps_fraction.numerator/input_video_avg_fps_fraction.denominator
@@ -165,8 +164,11 @@ def trackTemplate(
       sub_region_origin=(best_match_origin_x, best_match_origin_y),
       sub_region_padding=sub_region_padding
     )
+    input_image_sub_region_to_search = contrastAdjusted(
+      cv.cvtColor(input_image_sub_region_to_search, cv.COLOR_BGR2GRAY)
+    ).astype(np.float32)
     match_measure, match_coordinates = matchResults(
-      input_image_to_search=input_image_sub_region_to_search,
+      image_to_search=input_image_sub_region_to_search,
       template_to_match=template,
       sub_pixel_search_increment=sub_pixel_search_increment,
       sub_pixel_refinement_radius=sub_pixel_refinement_radius
@@ -252,26 +254,30 @@ def trackTemplate(
 
   extreme_points = [min_x_origin, min_y_origin, max_x_origin, max_y_origin]
   min_frame_numbers = (min_x_frame, min_y_frame)
-  adjusted_tracking_results, min_frame_number = adjustTrackingResults(
-    tracking_results=tracking_results,
+  # adjust match displacements so they're relative to the match closest to the origin
+  displacement_adjusted_results, min_frame_number = displacementAdjustedResults(
+    results_to_adjust=tracking_results,
     microns_per_pixel=microns_per_pixel,
     output_conversion_factor=output_conversion_factor,
     extreme_points=extreme_points,
     min_frame_numbers=min_frame_numbers
   )
  
-  return ((warning_msg, error_msg), adjusted_tracking_results, frames_per_second, template, min_frame_number)
+  return ((warning_msg, error_msg), displacement_adjusted_results, frames_per_second, template, min_frame_number)
 
 
-def adjustTrackingResults(
-  tracking_results: List[Dict],
+def displacementAdjustedResults(
+  results_to_adjust: List[Dict],
   microns_per_pixel: float,
   output_conversion_factor: float,
   extreme_points: List[Tuple[float, float]],
   min_frame_numbers: Tuple[int, int],
   contraction_vector: Tuple[int, int]=None
 ) -> List[Dict]:
-  
+  ''' Adjust displacement values for all video frames so they are relative to the
+      point in the video where the template (roi) match is closest to the origin
+      instead of the being relative to the actual video frame origin.
+  '''
   # TODO: currently, positive movement is defined as down or right
   #       we can use the contraction_vector parameter to define
   #       which direction of contration is positive. i.e.
@@ -295,7 +301,7 @@ def adjustTrackingResults(
   print(f'main axis of movement detected along {main_movement_axis}')
 
   adjusted_tracking_results = []
-  for frame_info in tracking_results:
+  for frame_info in results_to_adjust:
     # re-adjust x and y positions so the min of the main axis of movement is the reference
     x_displacement = (frame_info['TEMPLATE_MATCH_ORIGIN_X'] - min_template_origin_x)*float(microns_per_pixel)
     x_displacement *= float(output_conversion_factor)
@@ -315,7 +321,6 @@ def inputImageSubRegion(
   sub_region_padding: Tuple[int, int]
 ) -> Tuple[np.ndarray, Tuple[int, int]]:
   ''' '''
-
   sub_region_origin_x, sub_region_origin_y = sub_region_origin
   if sub_region_origin_x is None or sub_region_origin_y is None:
     return input_image, (0,0)
@@ -381,16 +386,16 @@ def templateFromInputROI(
         # reset the video to where it was initially before we return
         video_to_search.set(cv.CAP_PROP_POS_FRAMES, initial_frame_pos)      
         # return the selected roi
-        return roi
+        return contrastAdjusted(cv.cvtColor(roi, cv.COLOR_BGR2GRAY)).astype(np.float32)
 
     # track the template
-    frame_adjusted = contrastAdjusted(cv.cvtColor(frame, cv.COLOR_BGR2GRAY)).astype(np.uint8)
+    frame_adjusted = contrastAdjusted(cv.cvtColor(frame, cv.COLOR_BGR2GRAY)).astype(np.float32)
     match_results = cv.matchTemplate(frame_adjusted, template_to_find, cv.TM_CCOEFF)
     _, match_measure, _, match_coordinates = cv.minMaxLoc(match_results)
     if match_measure > best_match_measure:
       best_match_measure = match_measure
       best_match_coordinates = match_coordinates
-      best_match_frame = frame
+      best_match_frame = frame_adjusted
 
   # reset the video to where it was initially
   video_to_search.set(cv.CAP_PROP_POS_FRAMES, initial_frame_pos)
@@ -477,13 +482,13 @@ def rescaled(intensity: float, intensity_min: float, intensity_range: float, new
 
 
 def matchResults(
-  input_image_to_search: np.ndarray,
+  image_to_search: np.ndarray,
   template_to_match: np.ndarray,
   sub_pixel_search_increment: float=None,
   sub_pixel_refinement_radius: int=None
 ) -> Tuple[float, List[float]]:
   '''
-    Computes the coordinates of the best match between the input image and template.
+    Computes the coordinates of the best match between the input image and template_to_match.
     Accuracy is +/-1 pixel if sub_pixel_search_increment is None or >= 1.0.
     Accuracy is +/-sub_pixel_search_increment if |sub_pixel_search_increment| < 1.0 and not None.
   '''
@@ -492,21 +497,14 @@ def matchResults(
     print('WARNING. Passing sub_pixel_search_increment >= 1.0 to bestMatch() is pointless. Ignoring.')
     sub_pixel_search_increment = None
   
-  input_image = contrastAdjusted(cv.cvtColor(input_image_to_search, cv.COLOR_BGR2GRAY)).astype(np.uint8)
-  template = contrastAdjusted(cv.cvtColor(template_to_match, cv.COLOR_BGR2GRAY)).astype(np.uint8)
-
-  # find the best match for template in input_image_to_search
-  match_results = cv.matchTemplate(input_image, template, cv.TM_CCOEFF)
+  # find the best match for template_to_match in image_to_search
+  match_results = cv.matchTemplate(image_to_search, template_to_match, cv.TM_CCOEFF)
   _, match_measure, _, match_coordinates = cv.minMaxLoc(match_results)  # opencv returns in x, y order
 
   if sub_pixel_search_increment is None:
     return (match_measure, match_coordinates)
-  # else
-  #   refine the results with a sub pixel search
 
-  # convert images to appropriate types for sub pixel match step
-  input_image = cv.cvtColor(input_image_to_search, cv.COLOR_BGR2GRAY).astype(np.float32)
-  template = cv.cvtColor(template_to_match, cv.COLOR_BGR2GRAY).astype(np.float32)
+  # refine the results with a sub pixel search
 
   if sub_pixel_refinement_radius is None:
     sub_pixel_search_radius = 1
@@ -519,23 +517,23 @@ def matchResults(
     0
   )
   sub_region_y_end = min(
-    match_coordinates_origin_y + template.shape[0] + sub_pixel_search_radius, 
-    input_image.shape[0]
+    match_coordinates_origin_y + template_to_match.shape[0] + sub_pixel_search_radius, 
+    image_to_search.shape[0]
   )
   sub_region_x_start = max(
     match_coordinates_origin_x - sub_pixel_search_radius,
     0
   )
   sub_region_x_end = min(
-    match_coordinates_origin_x + template.shape[1] + sub_pixel_search_radius,
-    input_image.shape[1]
+    match_coordinates_origin_x + template_to_match.shape[1] + sub_pixel_search_radius,
+    image_to_search.shape[1]
   )
   match_measure, match_sub_coordinates = bestSubPixelMatch(
-    input_image_to_search=input_image[
+    image_to_search=image_to_search[
       sub_region_y_start:sub_region_y_end, 
       sub_region_x_start:sub_region_x_end
     ],
-    template_to_match=template,
+    template_to_match=template_to_match,
     search_increment=sub_pixel_search_increment
   )
 
@@ -547,14 +545,14 @@ def matchResults(
 
 
 def bestSubPixelMatch(
-  input_image_to_search: np.ndarray,
-  template_to_match: np.ndarray,  # must be .astype(np.float64)
+  image_to_search: np.ndarray,
+  template_to_match: np.ndarray,
   search_increment: float
 ) -> Tuple[float, List[float]]:
     '''
-      Computes the coordinates of the best sub pixel match between the input image and template.
+      Computes the coordinates of the best sub pixel match between the input image and template_to_match.
     '''
-    input_dim_y, input_dim_x = input_image_to_search.shape
+    input_dim_y, input_dim_x = image_to_search.shape
     template_dim_y, template_dim_x = template_to_match.shape
     search_length_y = input_dim_y - template_dim_y
     search_length_x = input_dim_x - template_dim_x
@@ -567,7 +565,7 @@ def bestSubPixelMatch(
         sub_region_end_y = sub_region_start_y + template_dim_y + 1
         sub_region_start_x = math.floor(x_origin)
         sub_region_end_x = sub_region_start_x + template_dim_x + 1        
-        sub_image_to_shift = input_image_to_search[
+        sub_image_to_shift = image_to_search[
           sub_region_start_y:sub_region_end_y,
           sub_region_start_x:sub_region_end_x,
         ]
