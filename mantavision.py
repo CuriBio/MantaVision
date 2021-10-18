@@ -9,6 +9,7 @@ import json
 import numbers
 import pathlib
 import time
+from typing import Tuple, List, Dict
 import zipfile
 import openpyxl # pip install --user openpyxl
 from cv2 import cv2 as cv  # pip install --user opencv-python
@@ -19,7 +20,7 @@ from video2jpgs import video_to_jpgs
 from track_template import trackTemplate
 
 
-def runTrackTemplate(config: {}):
+def runTrackTemplate(config: Dict):
   track_templates_start_time = time.time()
   dirs, args = verifiedInputs(config)
    

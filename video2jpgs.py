@@ -2,7 +2,7 @@ import argparse
 import os
 import sys
 from cv2 import cv2 as cv # pip install --user opencv-python
-from track_template import contrastAdjusted, gammaAdjusted, rescaled
+from track_template import intensityAdjusted, rescaled
 
 
 def video_to_jpgs(
@@ -58,7 +58,7 @@ def video_to_jpgs(
     frame_file_name = frame_base_name + "_frame_" + str(frame_number_to_write).zfill(zero_padding_length) + "." + image_extension
     frame_path = os.path.join(output_dir_path, frame_file_name)
     if enhance_contrast:
-      frame = contrastAdjusted(frame) 
+      frame = intensityAdjusted(frame) 
     cv.imwrite(frame_path, frame)
   else: # write out all the frames
     frame_number = 0
@@ -68,7 +68,7 @@ def video_to_jpgs(
       frame_path = os.path.join(output_dir_path, frame_file_name)
       # auto_contrast_msg = ''
       if enhance_contrast:
-        frame = contrastAdjusted(frame) 
+        frame = intensityAdjusted(frame) 
       cv.imwrite(frame_path, frame)
       frame_returned, frame = video_stream.read()
       frame_number += 1

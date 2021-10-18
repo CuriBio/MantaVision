@@ -33,6 +33,7 @@ from fractions import Fraction
 
 # TODO: we could try adding in rotation of the template +/- some small range of angles for each position per frame.
 
+  
 def trackTemplate(
   input_video_path: str,
   template_guide_image_path: str,
@@ -80,26 +81,26 @@ def trackTemplate(
   frame_width  = int(input_video_stream.get(cv.CAP_PROP_FRAME_WIDTH))
   frame_height = int(input_video_stream.get(cv.CAP_PROP_FRAME_HEIGHT))
   frames_per_second = input_video_stream.get(cv.CAP_PROP_FPS)
-    
+
   # open the template image
   if user_roi_selection:
-    template = None
+    template_raw = None
   else:
-    template = cv.imread(template_guide_image_path)
-    if template is None:
+    template_raw = intensityAdjusted(cv.cvtColor(cv.imread(template_guide_image_path), cv.COLOR_BGR2GRAY))
+    if template_raw is None:
       error_msg = "ERROR. The path provided for template does not point to an image file. Nothing has been tracked."
       return (error_msg, [{}], frames_per_second, None, -1)
-    template = cv.cvtColor(template, cv.COLOR_BGR2GRAY)
   if guide_match_search_seconds is None:
     max_frames_to_check = None
   else:
     max_frames_to_check = int(math.ceil(frames_per_second*float(guide_match_search_seconds)))
-  template = templateFromInputROI(
+  template_raw = templateFromInputROI(
     input_video_stream,
-    template,
+    template_raw,
     max_frames_to_check,
     user_roi_selection=user_roi_selection
   )
+  template = intensityAdjusted(cv.cvtColor(template_raw, cv.COLOR_BGR2GRAY))
   template_height = template.shape[0]
   template_width = template.shape[1]
 
@@ -164,9 +165,7 @@ def trackTemplate(
       sub_region_origin=(best_match_origin_x, best_match_origin_y),
       sub_region_padding=sub_region_padding
     )
-    input_image_sub_region_to_search = contrastAdjusted(
-      cv.cvtColor(input_image_sub_region_to_search, cv.COLOR_BGR2GRAY)
-    ).astype(np.float32)
+    input_image_sub_region_to_search = intensityAdjusted(cv.cvtColor(input_image_sub_region_to_search, cv.COLOR_BGR2GRAY))
     match_measure, match_coordinates = matchResults(
       image_to_search=input_image_sub_region_to_search,
       template_to_match=template,
@@ -263,7 +262,7 @@ def trackTemplate(
     min_frame_numbers=min_frame_numbers
   )
  
-  return ((warning_msg, error_msg), displacement_adjusted_results, frames_per_second, template, min_frame_number)
+  return ((warning_msg, error_msg), displacement_adjusted_results, frames_per_second, template_raw, min_frame_number)
 
 
 def displacementAdjustedResults(
@@ -386,16 +385,16 @@ def templateFromInputROI(
         # reset the video to where it was initially before we return
         video_to_search.set(cv.CAP_PROP_POS_FRAMES, initial_frame_pos)      
         # return the selected roi
-        return contrastAdjusted(cv.cvtColor(roi, cv.COLOR_BGR2GRAY)).astype(np.float32)
+        return roi
 
     # track the template
-    frame_adjusted = contrastAdjusted(cv.cvtColor(frame, cv.COLOR_BGR2GRAY)).astype(np.float32)
+    frame_adjusted = intensityAdjusted(cv.cvtColor(frame, cv.COLOR_BGR2GRAY))
     match_results = cv.matchTemplate(frame_adjusted, template_to_find, cv.TM_CCOEFF)
     _, match_measure, _, match_coordinates = cv.minMaxLoc(match_results)
     if match_measure > best_match_measure:
       best_match_measure = match_measure
       best_match_coordinates = match_coordinates
-      best_match_frame = frame_adjusted
+      best_match_frame = frame
 
   # reset the video to where it was initially
   video_to_search.set(cv.CAP_PROP_POS_FRAMES, initial_frame_pos)
@@ -446,20 +445,32 @@ def userDrawnROI(input_image: np.ndarray) -> np.ndarray:
   ]
 
 
-def contrastAdjusted(image_to_adjust: np.ndarray):
+# TODO: need a switch that performs gamma adjustment or some other contrast adjustment
+#       and then add the switch to adjust contrast, gamma, or nothing etc.
+def intensityAdjusted(
+  image_to_adjust: np.ndarray,
+  adjust_with_gamma: bool=True
+) -> np.ndarray:
   '''
   Performs an automatic adjustment of the input intensity range to enhance contrast.
   
   Args:
-    image_to_adjust: the image to adjust the contrast of. 
+    image_to_adjust:    a gray scale image to adjust the intensity of. 
+    adjust_with_gamma:  use gamma rescaling to adjust intensity.
+  
+  Returns:
+    float32 version of input image with intensity adjusted
   '''
+
+  if not adjust_with_gamma:
+    return image_to_adjust.astype(np.float32)
+
   image_stddev = np.std(image_to_adjust)
   gamma_value = 1.0/np.sqrt(np.log2(image_stddev))
   gamma_adjusted_image = gammaAdjusted(
     intensity=image_to_adjust,
     gamma=gamma_value
   )
-
   gamma_adjusted_image_min: float = np.min(gamma_adjusted_image)
   gamma_adjusted_image_max: float = np.max(gamma_adjusted_image)
   gamma_adjusted_image_range: float = gamma_adjusted_image_max - gamma_adjusted_image_min
@@ -468,12 +479,11 @@ def contrastAdjusted(image_to_adjust: np.ndarray):
     intensity_min=gamma_adjusted_image_min,
     intensity_range=gamma_adjusted_image_range,
     new_scale=255.0
-  ).astype(np.uint8)
-
+  ).astype(np.float32)
   return final_adjusted_image
 
 
-def gammaAdjusted(intensity: float, gamma: float, intensity_range: float=255.0) -> float:
+def gammaAdjusted(intensity: float, gamma: float) -> float:
   return intensity**gamma
 
 

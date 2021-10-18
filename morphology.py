@@ -4,16 +4,49 @@
 import numpy as np
 from cv2 import cv2 as cv # pip install --user opencv-python
 from typing import Tuple, List, Dict
-from track_template import bestMatch
+from track_template import matchResults
 from mantavision import getFilePathViaGUI
 from skimage import filters as skimagefilters
-from track_template import contrastAdjusted
+from track_template import intensityAdjusted
 from numpy.polynomial.polynomial import polyfit, Polynomial
 
 from matplotlib import pyplot as plt
 
 
+# TODO: what we need is some form of background subtraction?
+#       if we can remove the post section and it's rings?
+#       or at least account for it.
+#       but again the problem is, the images aren't consistent 
+#       so how to do we know when those rings are there and 
+#       how strong they are and how much to "remove" etc.???
+
+# TODO: we could walk out along the outer edges from the vertical centreline and
+#       if the next pixels edge is "continuous" with the current pixel
+#       i.e. within +/- 1 or max 2 pixels, it's allowed otherwise we leave it empty
+#       so we really need to be checking that the current pixels is within x_diff * (+/- tolerance) 
+#       but the problem is that this isn't really any different from doing a poly fit of order 2
+#       and using that as the guide, because if the edges get messed up at the point where the curve
+#       starts bending, our polyfit won't pick that up and we'll just get a straight line
+
+
 # TODO:
+# do a polynomial fit with 1, 2, 3, or 4 segments, and degree 2, 3, or 4.
+# then for each edge pixel, compute the abs difference between the detected edge position
+# and the position in the polyfit. we then remove any pixels with an edge position tha tis
+# > x% away for the polyfit position at that pixel (where x% is determined by the height/dims
+# of the image and converted to a specific pixel amount. should probably also have some default
+# min and max pixels.). So then, we go and fill back in each of the removed pixels by:
+# - searching left and right of the end points that are still there, picking 
+#   a small number of pixels on either side (2-5 i guess) and fitting a poly to that and
+#   filling in the missing pixels.
+# - the same as above start at the left end point and for every missing pixel, 
+#   only search in the direction of whichever end point we are closest to, 
+#   and only use pixels on that side to fit a poly. we probably want to use the specific
+#   position in the curve to decide where to search from i.e. if we're really close to the 
+#   left then search left and extend right, if we're left but close to the middle, maybe
+#   use the middle section right hand side and extend left. if the gap is not very big, 
+#   then perhaps use both left and right. the sections shouldn't be too wide. maybe
+#   only 1/10 the entire length of the horizontal midline length.
 
 # - when doing multiple images, if we manually select ROIs, we use the same templates for all images
 
@@ -22,13 +55,6 @@ from matplotlib import pyplot as plt
 #   and then use another set of templates that have hard edges on the right of the magnet
 #   and left of the fixed post that we use to refine those locations edges to compute the
 #   length measurement end points.
-
-# figure out a way to deal with images that have crap images i.e. tissue not being connected
-
-# - compute a measure of waviness. need to compute the edge
-# then fit splines to those edges and compute some measure of 
-# squared error from the actual edges to the spline
-
 
 
 def roiInfoFromTemplates(
@@ -47,8 +73,8 @@ def roiInfoFromTemplates(
       print(f'ERROR. Could not open the template image pointed to by the path provided: {template_image_path}. Exiting.')
       return None
 
-    _, match_coordinates = bestMatch(
-      input_image_to_search=search_image,
+    _, match_coordinates = matchResults(
+      image_to_search=search_image,
       template_to_match=template_image,
       sub_pixel_search_increment=sub_pixel_search_increment,
       sub_pixel_refinement_radius=sub_pixel_refinement_radius
@@ -126,6 +152,17 @@ def morphologyMetrics(
     print(f'ERROR. Could not open the search image pointed to by the path provided: {search_image_path}. Exiting.')
     return None
 
+  # search_image_gray = cv.cvtColor(search_image, cv.COLOR_BGR2RGB).astype(np.uint8)
+  # metrics = {
+  #   'distance_between_rois': 1,
+  #   'midpoint_thickness': 1,
+  #   'left_end_point_thickness': 1,
+  #   'right_end_point_thickness': 1,
+  #   'area_between_rois': 1 
+  # }
+  # return meanShiftSegmentation(search_image), metrics
+
+
   if template_image_paths == 'draw':
     rois_info = roiInfoFromUserDrawings(search_image)
   else:
@@ -154,35 +191,75 @@ def morphologyMetrics(
   distance_between_rois = microns_per_pixel*pixel_distance_between_rois
 
   search_image_gray = cv.cvtColor(search_image, cv.COLOR_BGR2GRAY)
-  search_image_gray = contrastAdjusted(search_image_gray) 
+  search_image_gray = intensityAdjusted(search_image_gray) 
 
-  # compute an estimate of the 'area' of the object of interest
-  # first find the points we think area at the upper/lower edges  
+  # find the points we think are at the upper/lower edges  
   points_to_find_edges_at = np.asarray(range(left_distance_marker_x, right_distance_marker_x))
   points_to_fit_poly_at = np.asarray(range(pixel_distance_between_rois))  
   upper_edge_points = np.empty(pixel_distance_between_rois)
   lower_edge_points = np.empty(pixel_distance_between_rois)
-  # TODO: remove edge_points and just use the upper and lower edge_points np arrays
-  edge_points = []
+
+  # TODO: 
+  # compute a measure of variance for the gradmag and if there is too much variance..., or
+  # take the two estimated peaks and if they're not significantly larger (10+ times) 
+  # than 98/99% of all the other points...
+  # then we know we have crap edges and we can compute the  
+  # cumulative sum of the gradmag moving average, 
+  # chop off the top and bottom approx 50-100 pixels (possibly make it a parameter?) 
+  # and then fit an "S" shaped poly
+  #   _
+  # _/
+  #
+  # so fit a logistic style function?
+  # then we can use the fitted parameters to "draw" lines at the 
+  # bottom and top horizontal sections and middle slope section
+  # and then work out where the horizontal sections intersect with the sloped section
+  # and those become the points where the "edges" are
+
+  show_plots = False
   for index, point_to_find_edges_at in enumerate(points_to_find_edges_at):
-    edge_point = outerEdges(search_image_gray[:, point_to_find_edges_at])    
-    edge_points.append(edge_point)
+    # if point_to_find_edges_at >= 700 and point_to_find_edges_at <= 730:
+    #   show_plots = True
+    # else:
+    #   show_plots = False
+    edge_point = outerEdges(search_image_gray[:, point_to_find_edges_at], show_plots=show_plots)    
     upper_edge_points[index] = edge_point['upper_edge_pos']
     lower_edge_points[index] = edge_point['lower_edge_pos']
+ 
+  # # fit curves to those upper/lower "edge points" because it can be very noisy
+  # # compute a single polyfit
+  # polyfit_deg = 4
+  # upper_edge_points_poly = Polynomial.fit(points_to_fit_poly_at, upper_edge_points, polyfit_deg)
+  # upper_edge_points_from_poly = upper_edge_points_poly(points_to_fit_poly_at)
+  # lower_edge_points_poly = Polynomial.fit(points_to_fit_poly_at, lower_edge_points, polyfit_deg)
+  # lower_edge_points_from_poly = lower_edge_points_poly(points_to_fit_poly_at)
 
-  # TODO: maybe try to limit the extreme points by computing the median and x percentiles
-  #       and then pulling in anything above the x percentile
+  # # compute a piecewise smooth fit 
+  # polyfit_deg = 4
+  # num_sub_regions = 8
+  # split_upper_edge_points = np.array_split(upper_edge_points, num_sub_regions)
+  # split_lower_edge_points = np.array_split(lower_edge_points, num_sub_regions)
+  # for split_num in range(num_sub_regions):
+  #   sub_region_upper_edge_points = split_upper_edge_points[split_num]
+  #   upper_edge_sub_region_range = np.asarray(range(len(sub_region_upper_edge_points)))
+  #   upper_edge_points_poly = Polynomial.fit(
+  #     upper_edge_sub_region_range,
+  #     sub_region_upper_edge_points, 
+  #     polyfit_deg
+  #   )
+  #   split_upper_edge_points[split_num] = upper_edge_points_poly(upper_edge_sub_region_range)
+  #   sub_region_lower_edge_points = split_lower_edge_points[split_num]
+  #   lower_edge_sub_region_range = np.asarray(range(len(sub_region_lower_edge_points)))
+  #   lower_edge_points_poly = Polynomial.fit(
+  #     lower_edge_sub_region_range,
+  #     sub_region_lower_edge_points, 
+  #     polyfit_deg
+  #   )
+  #   split_lower_edge_points[split_num] = lower_edge_points_poly(lower_edge_sub_region_range)
+  # upper_edge_points = np.concatenate(split_upper_edge_points, axis=0)
+  # lower_edge_points = np.concatenate(split_lower_edge_points, axis=0)
 
-  # then fit curves to those upper/lower "edge points" because it can be very noisy
-  polyfit_deg = 4
-  upper_edge_points_polyfit = polyfit(points_to_fit_poly_at, upper_edge_points, polyfit_deg)
-  upper_edge_points_poly = Polynomial(upper_edge_points_polyfit)
-  upper_edge_points = upper_edge_points_poly(points_to_fit_poly_at)
-  lower_edge_points_polyfit = polyfit(points_to_fit_poly_at, lower_edge_points, polyfit_deg)
-  lower_edge_points_poly = Polynomial(lower_edge_points_polyfit)
-  lower_edge_points = lower_edge_points_poly(points_to_fit_poly_at)
-  
-  # now compute the actual area between the fitted curves
+  # compute the area between the fitted curves
   edge_point_diffs = lower_edge_points - upper_edge_points
   area_between_rois = microns_per_pixel * np.sum(edge_point_diffs)
 
@@ -232,16 +309,16 @@ def morphologyMetrics(
 
   # draw the upper and lower edges of object
   edge_contour_colour_bgr = (0, 0, 255)
-  lower_edge_points_to_draw = np.dstack((points_to_find_edges_at.astype(np.int32), lower_edge_points.astype(np.int32)))[0]
-  lower_edge_points_to_draw = lower_edge_points_to_draw.reshape((-1, 1, 2))
-  cv.polylines(
-    results_image,
-    pts=[lower_edge_points_to_draw],
-    isClosed=False,    
-    color=edge_contour_colour_bgr,
-    thickness=3,
-    lineType=cv.LINE_AA
-  )
+  # lower_edge_points_to_draw = np.dstack((points_to_find_edges_at.astype(np.int32), lower_edge_points.astype(np.int32)))[0]
+  # lower_edge_points_to_draw = lower_edge_points_to_draw.reshape((-1, 1, 2))
+  # cv.polylines(
+  #   results_image,
+  #   pts=[lower_edge_points_to_draw],
+  #   isClosed=False,    
+  #   color=edge_contour_colour_bgr,
+  #   thickness=3,
+  #   lineType=cv.LINE_AA
+  # )
   upper_edge_points_to_draw = np.dstack((points_to_find_edges_at.astype(np.int32), upper_edge_points.astype(np.int32)))[0]
   upper_edge_points_to_draw = upper_edge_points_to_draw.reshape((-1, 1, 2))
   cv.polylines(
@@ -291,7 +368,7 @@ def morphologyMetrics(
   return results_image, metrics 
 
 
-def outerEdges(input_array: np.ndarray, show_plots: bool=False) -> int:
+def outerEdges(input_array: np.ndarray, show_plots: bool=True) -> int:
   '''
   Presumes there are two main edges on the outside of a
   horizontally aligned "tube/rectangle" like structure
@@ -324,12 +401,17 @@ def outerEdges(input_array: np.ndarray, show_plots: bool=False) -> int:
   )
 
   if show_plots:
-    plt.plot(input_array_gradmag_ma, label='Gradient Magnitude of vertical line at midpoint', color = 'g')
-    plt.show()
-
-    # gradient_cumulative_sum = np.cumsum(input_array_gradient)
-    # plt.plot(gradient_cumulative_sum, label='Cummulative Distribution of Gradient', color = 'b')
+    # plt.plot(input_array_gradmag_ma, label='Gradient Magnitude of vertical line at midpoint', color = 'r')
     # plt.show()
+    
+    gradient_cumulative_sum = np.cumsum(input_array_gradmag)
+    gradient_cumulative_sum_ma = np.convolve(
+      gradient_cumulative_sum,
+      np.ones(len_of_average)/len_of_average,
+      mode='valid'
+    )
+    plt.plot(gradient_cumulative_sum_ma, label='Cummulative Distribution of Gradient', color = 'g')
+    plt.show()
 
   # find what we presume is the edge (one of two) with the highest gradmag intensity
   max_intensity_pos = np.argmax(input_array_gradmag_ma)
