@@ -4,3 +4,5 @@
 opencv-python
 openpyxl
 av
+nd2[legacy]
+numpy
