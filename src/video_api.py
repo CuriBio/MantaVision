@@ -112,6 +112,9 @@ class VideoReader:
     def close(self):
         return self.reader.close()
 
+    def videoFormat(self):
+        return self.reader.videoFormat()
+
 
 class AVReader():
     ''' Video reader interface using pyav for mp4, avi, mov etc (anything other than ND2)'''
@@ -184,6 +187,9 @@ class AVReader():
         if self.container is not None:
             self.container.close()
         self.container = None
+
+    def videoFormat(self):
+        return self.current_frame.format.name 
 
     def frameWidth(self) -> int:
         return int(self.video_stream.codec_context.width)

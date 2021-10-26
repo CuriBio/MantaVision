@@ -106,7 +106,6 @@ def trackTemplate(
   template_width = template.shape[1]
 
   # open an output (writable) video stream if required
-  output_video_path = None
   if output_video_path is not None:
     output_video_bitrate = input_video_stream.bitRate()
     output_video_fps = input_video_stream.avgFPS()
@@ -223,8 +222,13 @@ def trackTemplate(
         lineType=cv.LINE_AA
       )
 
-      output_video_frame = av.VideoFrame.from_ndarray(frame, format='rgb24')
-      output_video_frame.pts = original_time_stamp
+      output_video_frame = av.VideoFrame.from_ndarray(
+        frame, 
+        format=input_video_stream.videoFormat()
+      )      
+      # output_video_frame = av.VideoFrame.from_ndarray(frame, format='rgb24')
+      # output_video_frame = av.VideoFrame.from_ndarray(frame)
+      output_video_frame.pts = input_video_stream.pts()
       for output_video_packet in output_video_stream.encode(output_video_frame):
         output_video_container.mux(output_video_packet)
 
