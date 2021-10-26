@@ -81,7 +81,7 @@ def trackTemplate(
     return (error_msg, [{}], frames_per_second, None, -1)
   frame_width  = int(input_video_stream.frameWidth())
   frame_height = int(input_video_stream.frameHeight())
-  frames_per_second = input_video_stream.framesPerSecond()
+  frames_per_second = input_video_stream.avgFPS()
 
   # open the template image
   if user_roi_selection:
@@ -95,13 +95,13 @@ def trackTemplate(
     max_frames_to_check = None
   else:
     max_frames_to_check = int(math.ceil(frames_per_second*float(guide_match_search_seconds)))
-  template_raw = templateFromInputROI(
+  template_raw, template_gray = templateFromInputROI(
     input_video_stream,
     template_raw,
     max_frames_to_check,
     user_roi_selection=user_roi_selection
   )
-  template = intensityAdjusted(cv.cvtColor(template_raw, cv.COLOR_BGR2GRAY))
+  template = intensityAdjusted(template_gray)
   template_height = template.shape[0]
   template_width = template.shape[1]
 
@@ -110,6 +110,7 @@ def trackTemplate(
   if output_video_path is not None:
     output_video_bitrate = input_video_stream.bitRate()
     output_video_fps = input_video_stream.avgFPS()
+    output_time_base = input_video_stream.timeBase()  # Fraction(1, 1000)  # milliseconds
     if input_video_stream.codecName() == 'rawvideo':
       # mp4 doesn't support rawvideo and neither do a lot of players
       output_video_codec = 'h264'
@@ -119,7 +120,7 @@ def trackTemplate(
       output_video_pix_fmt = input_video_stream.pixFMT()
     output_video_container = av.open(output_video_path, mode='w')
     output_video_stream = output_video_container.add_stream(output_video_codec, rate=str(round(output_video_fps, 2)))
-    output_video_stream.codec_context.time_base = Fraction(1, 1000)  # milliseconds
+    output_video_stream.codec_context.time_base = output_time_base
     output_video_stream.bit_rate = output_video_bitrate # can be small i.e. 2**20 & very still very viewable
     output_video_stream.pix_fmt = output_video_pix_fmt  # use 'yuv420p' if this ever fails 
     output_video_stream.height = frame_height
@@ -141,9 +142,10 @@ def trackTemplate(
   best_match_origin_y = None
   match_points = []
 
-  frame_number = 0
-  frame_returned, raw_frame = input_video_stream.read()
-  while frame_returned:
+  while input_video_stream.next():
+    raw_frame = input_video_stream.frame()    
+    frame_number = input_video_stream.framePosition()
+
     # crop out a smaller sub region to search if required
     if max_movement_per_frame is None:
       sub_region_padding = None
@@ -152,12 +154,12 @@ def trackTemplate(
         math.ceil(max_movement_per_frame[0]/microns_per_pixel), math.ceil(max_movement_per_frame[1]/microns_per_pixel)
       )
     input_image_sub_region_to_search, input_image_sub_region_origin = inputImageSubRegion(
-      input_image=raw_frame,
+      input_image=input_video_stream.frameGray(),
       sub_region_base_shape=(template_width, template_height),
       sub_region_origin=(best_match_origin_x, best_match_origin_y),
       sub_region_padding=sub_region_padding
     )
-    input_image_sub_region_to_search = intensityAdjusted(cv.cvtColor(input_image_sub_region_to_search, cv.COLOR_BGR2GRAY))
+    input_image_sub_region_to_search = intensityAdjusted(input_image_sub_region_to_search)
     match_measure, match_coordinates = matchResults(
       image_to_search=input_image_sub_region_to_search,
       template_to_match=template,
@@ -169,12 +171,9 @@ def trackTemplate(
     best_match_origin_y = match_coordinates[1] + input_image_sub_region_origin[1]
 
     original_time_stamp = input_video_stream.timeStamp()
-    print(f'original_time_stamp: {original_time_stamp}')
-    milliseconds_per_second = 1000.0
-    time_stamp_in_seconds = original_time_stamp/milliseconds_per_second
+    time_stamp_in_seconds = original_time_stamp
     tracking_results.append({
       'FRAME_NUMBER': frame_number,
-      'FRAME_TIME': frame_number/frames_per_second,
       'TIME_STAMP': time_stamp_in_seconds,
       'MATCH_MEASURE': match_measure,
       'Y_DISPLACEMENT': 0,
@@ -228,14 +227,6 @@ def trackTemplate(
       output_video_frame.pts = original_time_stamp
       for output_video_packet in output_video_stream.encode(output_video_frame):
         output_video_container.mux(output_video_packet)
-
-    frame_returned, raw_frame = input_video_stream.read()
-    frame_number += 1
-
-  if frame_number != number_of_frames:
-    warning_msg = '\nWARNING.\n'
-    warning_msg += ' Number of expected frames ' + str(number_of_frames)
-    warning_msg += ' does not match actual number of frames ' + str(frame_number) + '.\n'
 
   if output_video_stream is not None:
     # flush any remaining data in the output stream
@@ -351,7 +342,7 @@ def templateFromInputROI(
   template_to_find,
   max_frames_to_check: int,
   user_roi_selection: bool=False,
-) -> np.ndarray:
+) -> Tuple[np.ndarray]:
   '''
   '''
   initial_frame_pos = video_to_search.framePosition()
@@ -361,14 +352,15 @@ def templateFromInputROI(
   best_match_measure = 0.0
   best_match_coordinates = None
   best_match_frame = None
+  best_match_frame_gray = None
   number_of_frames = video_to_search.numFrames()
   if max_frames_to_check is None:
     number_of_frames_to_check = number_of_frames
   else:
     number_of_frames_to_check = min(number_of_frames, max_frames_to_check)
   for _ in range(number_of_frames_to_check):
-    frame_returned, frame = video_to_search.read()
-    if not frame_returned:
+    frame = video_to_search.frame()
+    if frame is None:
       error_msg = "Error. No Frame returned during video capture in templateFromInputROI function. Exiting."
       raise RuntimeError(error_msg)
 
@@ -383,16 +375,22 @@ def templateFromInputROI(
         # reset the video to where it was initially before we return
         video_to_search.setFramePosition(initial_frame_pos)      
         # return the selected roi
-        return roi
+        return (
+          frame[roi['y_start']:roi['y_end'], roi['x_start']:roi['x_end']],
+          video_to_search.frameGray()[roi['y_start']:roi['y_end'], roi['x_start']:roi['x_end']],
+        )
 
     # track the template
-    frame_adjusted = intensityAdjusted(cv.cvtColor(frame, cv.COLOR_BGR2GRAY))
+    frame_adjusted = intensityAdjusted(video_to_search.frameGray())
     match_results = cv.matchTemplate(frame_adjusted, template_to_find, cv.TM_CCOEFF)
     _, match_measure, _, match_coordinates = cv.minMaxLoc(match_results)
     if match_measure > best_match_measure:
       best_match_measure = match_measure
       best_match_coordinates = match_coordinates
       best_match_frame = frame
+      best_match_frame_gray = video_to_search.frameGray()
+
+    video_to_search.next()
 
   # reset the video to where it was initially
   video_to_search.setFramePosition(initial_frame_pos)
@@ -408,10 +406,11 @@ def templateFromInputROI(
   new_template_start_y = best_match_coordinates[1]
   new_template_end_y = new_template_start_y + template_height
   new_template = best_match_frame[new_template_start_y:new_template_end_y, new_template_start_x:new_template_end_x]
-  return new_template
+  new_template_gray = best_match_frame_gray[new_template_start_y:new_template_end_y, new_template_start_x:new_template_end_x]
+  return (new_template, new_template_gray)
 
 
-def userDrawnROI(input_image: np.ndarray) -> np.ndarray:
+def userDrawnROI(input_image: np.ndarray) -> Dict:
   '''
   Show the user a window with an image they can draw a ROI on.
   Args:
@@ -437,10 +436,12 @@ def userDrawnROI(input_image: np.ndarray) -> np.ndarray:
   if y_end - y_start <= 0:
     return None
 
-  return input_image[
-    y_start:y_end,
-    x_start:x_end,    
-  ]
+  return {
+    'y_start':  y_start,
+    'y_end':    y_end,
+    'x_start':  x_start,
+    'x_end':    x_end,
+  }
 
 
 # TODO: need a switch that performs gamma adjustment or some other contrast adjustment

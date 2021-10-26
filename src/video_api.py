@@ -3,7 +3,6 @@ from fractions import Fraction
 import av
 import nd2
 import numpy as np
-from cv2 import cv2 as cv
 from typing import Dict, List, Tuple
 
 
@@ -27,40 +26,31 @@ from typing import Dict, List, Tuple
 # TODO: remove this VideoAPI class since we'll only have av and nd2Reader libs
 #       and therefore the only choice is, 
 #       if .nd2 is in the filename, use nd2Reader api, otherewise, use PyAv api
-class VideoAPI:
-    def __inti__(self):
+
+
+class VideoReader:
+    ''' Unified interface for reading videos of various formats ND2, mp4/avi ... '''
+    def __init__(self, video_path: str, reader_api: str=None):
+        self.video_path = video_path
+        self.reader = self._set_reader(reader_api)
+
+    def _apiFromPath(self) -> str:
         self.format_apis = [
             {'format': 'avi', 'api': 'av'}, 
             {'format': 'mp4', 'api': 'av'}, 
             {'format': 'nd2', 'api': 'nd2'}
         ]
-    @property
-    def av(self) -> str:
-        return 'av'
-    @property        
-    def nd2(self) -> str:
-        return 'nd2'
-    def fromPath(self, video_path: str) -> str:
         for video_format_api in self.format_apis:
-            if '.' + video_format_api['format'] in video_path:
+            if '.' + video_format_api['format'] in self.video_path:
                 return video_format_api['api']
         return None
 
-
-class VideoReader:
-    ''' Unified interface for reading videos of various formats ND2, mp4/avi ... '''
-    def __init__(self, video_path: str, reader_api: VideoAPI=None):
-        self.video_path = video_path
-        self.reader = self._set_reader(reader_api)
-
-    def _set_reader(self, reader_api: VideoAPI):
+    def _set_reader(self, reader_api: str):
         if reader_api is None:
-            reader_api = VideoAPI.fromPath(self.video_path)
-        if reader_api == 'av':
-            return AVReader(self.video_path)
+            reader_api = self._apiFromPath()
         if reader_api == 'nd2':
             return ND2Reader(self.video_path)
-        return OpenCVReader(self.video_path)
+        return AVReader(self.video_path)
 
     def isOpened(self) -> bool:
         return self.reader.isOpened()
@@ -70,6 +60,9 @@ class VideoReader:
 
     def frame(self) -> np.ndarray:
         return self.reader.frame()
+
+    def frameGray(self) -> np.ndarray:
+        return self.reader.frameGray()
 
     def next(self) -> bool:
         return self.reader.next()
@@ -101,6 +94,9 @@ class VideoReader:
     def pts(self) -> float:
         return self.reader.pts()
 
+    def timeBase(self) -> Fraction:
+        return self.reader.timeBase()
+
     def codecName(self):
         return self.reader.codecName()
 
@@ -120,7 +116,7 @@ class VideoReader:
 class AVReader():
     ''' Video reader interface using pyav for mp4, avi, mov etc (anything other than ND2)'''
     def __init__(self, video_path: str, return_grayscale: bool=True):
-        self.format = 'grey' if return_grayscale else None
+        self.format = 'gray' if return_grayscale else None
         self.video_path = video_path
         self.container = av.open(self.video_path)
 
@@ -130,23 +126,28 @@ class AVReader():
                 
         self.video_frames = self.container.decode()
         self.current_frame = None
-        self.frame_num = 0
+        self.frame_num = -1
         self.next()  # get the first frame
 
-    def next(self):
+    def next(self) -> bool:
         if self.frame_num < self.num_frames - 2:
             self.current_frame = next(self.video_frames)
             self.frame_num += 1
+            return True
         else:
             self.current_frame = None
             self.frame_num = self.num_frames
+            return False
 
     def reset(self):
         self.container.seek(0)
-        self.frame_num = 0
+        self.frame_num = -1
         self.next()
 
     def frame(self) -> np.ndarray:
+        return self.current_frame.to_ndarray()
+
+    def frameGray(self) -> np.ndarray:
         return self.current_frame.to_ndarray(format=self.format)
 
     def timeStamp(self) -> float:
@@ -161,9 +162,6 @@ class AVReader():
     def duration(self) -> float:
         self.duration = float(self.video_stream.duration * self.timeBase())
 
-    def avgFPS(self):
-        return float(self.video_stream.average_rate)
-
     def codecName(self):
         return self.video_stream.codec_context.name
 
@@ -176,11 +174,16 @@ class AVReader():
     def isOpened(self) -> bool:
         return self.video_stream is not None and self.container is not None
 
-    def release(self):
-        self.video_stream.release()
+    # def release(self):
+    #     self.video_stream.release()
+    #     self.video_frames = None
 
     def close(self):
-        self.container.close()
+        # self.release()
+        self.video_frames = None
+        if self.container is not None:
+            self.container.close()
+        self.container = None
 
     def frameWidth(self) -> int:
         return int(self.video_stream.codec_context.width)
@@ -190,6 +193,9 @@ class AVReader():
 
     def framesPerSecond(self) -> float:
         return float(self.video_stream.guessed_rate)
+
+    def avgFPS(self):
+        return float(self.video_stream.average_rate)
 
     def numFrames(self) -> int:
         return self.num_frames
