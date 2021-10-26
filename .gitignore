@@ -9,4 +9,8 @@ __pycache__
 magnet/
 test_data/morphology/
 TODO
+*.mp4
+*.avi
+*.mov
+*.nd2
 

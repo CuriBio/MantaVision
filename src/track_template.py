@@ -5,7 +5,7 @@ from scipy.ndimage import shift
 import math
 import pathlib
 from cv2 import cv2 as cv # pip install --user opencv-python
-from video_reader import VideoReader
+from video_api import VideoReader
 from typing import Tuple, List, Dict
 import sys
 import av
@@ -106,6 +106,7 @@ def trackTemplate(
   template_width = template.shape[1]
 
   # open an output (writable) video stream if required
+  output_video_path = None
   if output_video_path is not None:
     output_video_bitrate = input_video_stream.bitRate()
     output_video_fps = input_video_stream.avgFPS()
@@ -143,7 +144,6 @@ def trackTemplate(
   frame_number = 0
   frame_returned, raw_frame = input_video_stream.read()
   while frame_returned:
-    print(f'processing frame number: {frame_number}')
     # crop out a smaller sub region to search if required
     if max_movement_per_frame is None:
       sub_region_padding = None
@@ -158,7 +158,6 @@ def trackTemplate(
       sub_region_padding=sub_region_padding
     )
     input_image_sub_region_to_search = intensityAdjusted(cv.cvtColor(input_image_sub_region_to_search, cv.COLOR_BGR2GRAY))
-    print('running match results')
     match_measure, match_coordinates = matchResults(
       image_to_search=input_image_sub_region_to_search,
       template_to_match=template,
@@ -170,6 +169,7 @@ def trackTemplate(
     best_match_origin_y = match_coordinates[1] + input_image_sub_region_origin[1]
 
     original_time_stamp = input_video_stream.timeStamp()
+    print(f'original_time_stamp: {original_time_stamp}')
     milliseconds_per_second = 1000.0
     time_stamp_in_seconds = original_time_stamp/milliseconds_per_second
     tracking_results.append({
@@ -199,7 +199,6 @@ def trackTemplate(
       max_x_origin = (best_match_origin_x, best_match_origin_y)
 
     # draw a grid over the region in the frame where the template matched
-    print('drawing roi match results on the output video')
     if output_video_stream is not None:
       frame = raw_frame
 
@@ -238,19 +237,21 @@ def trackTemplate(
     warning_msg += ' Number of expected frames ' + str(number_of_frames)
     warning_msg += ' does not match actual number of frames ' + str(frame_number) + '.\n'
 
-  print('closing the output video stream')
   if output_video_stream is not None:
     # flush any remaining data in the output stream
     for output_video_packet in output_video_stream.encode():
-      output_video_container.mux(output_video_packet)   
+      # might need to add a try catch block around this
+      # and then just print a diagnostic print if it barfs
+      try:
+        output_video_container.mux(output_video_packet)
+      except:
+        print('Warning. an error occurred while closing the output stream. the output may be corrupt.')   
     output_video_container.close()
-  input_video_stream.release()
-  print('video stream closed')
+  input_video_stream.close()
 
   extreme_points = [min_x_origin, min_y_origin, max_x_origin, max_y_origin]
   min_frame_numbers = (min_x_frame, min_y_frame)
   # adjust match displacements so they're relative to the match closest to the origin
-  print('Adjusting the displacement results')
   displacement_adjusted_results, min_frame_number = displacementAdjustedResults(
     results_to_adjust=tracking_results,
     microns_per_pixel=microns_per_pixel,
@@ -258,7 +259,7 @@ def trackTemplate(
     extreme_points=extreme_points,
     min_frame_numbers=min_frame_numbers
   )
-  print('match processing completed')
+ 
   return ((warning_msg, error_msg), displacement_adjusted_results, frames_per_second, template_raw, min_frame_number)
 
 
@@ -535,7 +536,6 @@ def matchResults(
     match_coordinates_origin_x + template_to_match.shape[1] + sub_pixel_search_radius,
     image_to_search.shape[1]
   )
-  print('peforming sub pixel match step')
   match_measure, match_sub_coordinates = bestSubPixelMatch(
     image_to_search=image_to_search[
       sub_region_y_start:sub_region_y_end, 

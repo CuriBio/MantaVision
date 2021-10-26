@@ -1,8 +1,9 @@
 
 # required packages # 
 
-opencv-python
-openpyxl
-av
-nd2[legacy]
 numpy
+opencv-python
+av
+nd2reader
+openpyxl
+
