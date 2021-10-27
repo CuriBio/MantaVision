@@ -1,9 +1,9 @@
  
-from fractions import Fraction
-import av
-import nd2
-import numpy as np
 from typing import Dict, List, Tuple
+from fractions import Fraction
+import numpy as np
+import av
+from nd2reader import ND2Reader
 
 
 # TODO: add a var to the VideoReader constructor called duplicate
@@ -34,8 +34,8 @@ class VideoReader:
         if reader_api is None:
             reader_api = self._apiFromPath()
         if reader_api == 'nd2':
-            return ND2Reader(self.video_path)
-        return AVReader(self.video_path)
+            return ND2VideoReader(self.video_path)
+        return PYAVReader(self.video_path)
 
     def isOpened(self) -> bool:
         return self.reader.isOpened()
@@ -104,7 +104,7 @@ class VideoReader:
         return self.reader.videoFormat()
 
 
-class AVReader():
+class PYAVReader():
     ''' Video reader interface using pyav for mp4, avi, mov etc (anything other than ND2)'''
     def __init__(self, video_path: str):
         self.video_path = video_path
@@ -206,66 +206,120 @@ class AVReader():
         return True
 
 
-# TODO: figure out if the format of these ND2 files is [z, y, x, [b, g, r]] or
-#       [z, T, y, x, [b,g,r]] or perhaps [z, T, [b,g,r], y, x]
-# perhaps the T isn't there for some videos? or perhaps it's always there
-# if it is there then we need to account for this when accessing the array obviously
-# same with the RGB,  
-
-class ND2Reader():
+# TODO: figure out if the format of these ND2 files is 
+#       [z, y, x, T, b[, g, r]] or [T, z, y, x, b[, g, r]] etc
+class ND2VideoReader():
     ''' Video reader interface using nd2 for ND2 files: https://github.com/tlambert03/nd2 '''
     def __init__(self, video_path: str):
         self.video_path = video_path
-        self.nd2 = nd2.ND2File(self.video_path)
-        self.num_frames = int(self.nd2.sizes['T'])
-        self.num_channels = int(self.nd2.sizes['C'])
-        self.height = int(self.nd2.sizes['Y'])
-        self.width = int(self.nd2.sizes['X'])
-        self.is_rgb = self.nd2.is_rgb
-        if self.is_rgb:
-            self.num_colours = int(self.nd2.sizes['S'])
+        self.nd2 = ND2Reader(self.video_path)
+
+        if 'C' in self.nd2.sizes:
+            num_data_channels = int(self.nd2.sizes['c'])
         else:
-            self.num_colours = 0
-        self.avg_fps = 1
-        self.codec_name = 'rawvideo'
-        self.pix_fmt = 'yuv420p'
-        self.bitrate = 1  # bits per frame * frames_per_second ?
-        
-        self.frame_position = 0
-        self.video_stream = self.nd2.to_xarray(delayed=True)
+            num_data_channels = 0
+        if num_data_channels != num_data_channels:
+            error_message = 'ERROR. Data Channels is not 1. Unsupported format.'
+            raise TypeError(error_message)
 
-    def avgFPS(self):
-        return self.avg_fps
+        if 'S' in self.nd2.sizes:
+            num_colours = int(self.nd2.sizes['s'])
+            if num_colours == 3:
+                self.is_rgb = True
+            else:
+                error_message = 'ERROR. Colour channels is not 0 or 3. Unsupported format.'
+                raise TypeError(error_message)
+        else:
+            self.is_rgb = False
+        self.rgb_conversion = self._rgb_converter()
 
-    def codecName(self):
-        return self.codec_name
+        self.num_frames = int(self.nd2.sizes['t'])      
+        self.height = int(self.nd2.sizes['y'])
+        self.width = int(self.nd2.sizes['x'])
 
-    def pixelFormat(self):
-        return self.pix_fmt
+        self.time_base = Fraction(1,1000)  # appears to always be 1/1000 for nd2 files?
+        self.time_steps = self.nd2.timesteps*float(self.time_base)  
+        self.duration = float(self.time_steps[-1] - self.time_steps[0])
+        self.avg_fps = float(self.num_frames)/self.duration
 
-    def bitRate(self):
-        return self.bitrate
+        self.frame_num = -1
 
-    def isOpened(self) -> bool:
-        return not self.video_stream.closed()
+    def _rgb_converter(self, type: str='eye') -> np.ndarray:
+            if type =='eye':
+                return np.asarray([0.2989, 0.5870, 0.1140])
+            if type =='sensor':
+                np.asarray([0.25, 0.5, 0.25])
+            else:
+                np.asarray([1.0, 1.0, 1.0])/3.0
 
-    def release(self):
-        self.video_stream.close()
-
-    def setFramePosition(self, frame_position: int) -> bool:
-        if frame_position >= 0 and frame_position < self.num_frames:
-            self.frame_position = frame_position
+    def next(self) -> bool:
+        if self.frame_num < self.num_frames - 1:
+            self.frame_num += 1
             return True
         else:
+            self.frame_num = self.num_frames
             return False
 
-    def read(self, next=True) -> Tuple[bool, np.ndarray]:
-        if self.frame_position < self.num_frames:
-            current_frame = self.video_stream[self.frame_position, :]
-            self.frame_position += 1
-            return (True, current_frame)
-        else:            
-            return (False, None)
+    def initialiseStream(self):
+        self.frame_num = 0
+
+    def frame(self) -> np.ndarray:
+        return self.nd2[self.frame_num]
+
+    def frameRGB(self) -> np.ndarray:
+        if self.is_rgb:
+            return self.nd2[self.frame_num]
+        else:
+            frame_min = np.min(self.nd2[self.frame_num])
+            frame_max = np.max(self.nd2[self.frame_num])
+            frame_range = frame_max - frame_min
+            frame_as_uint8 = rescaledToUint8(self.nd2[self.frame_num], frame_min, frame_range)
+            return np.stack((frame_as_uint8, frame_as_uint8, frame_as_uint8), axis=-1)
+
+    def frameGray(self) -> np.ndarray:
+        if self.is_rgb:
+            return np.dot(self.nd2[self.frame_num][...,:3], self.rgb_conversion)        
+        else:
+            return self.nd2[self.frame_num]
+
+    def timeStamp(self) -> float:
+        return self.time_steps[self.frame_num]
+
+    def pts(self) -> int:
+        return self.time_steps[self.frame_num]/float(self.time_base)
+
+    def timeBase(self) -> Fraction:
+        return self.time_base
+
+    def duration(self) -> float:
+        return self.duration
+
+    def codecName(self):
+        # we just return a fixed value for cases where 
+        # the user wants to copy the input stream metadata        
+        # return 'h264'
+        return 'rawvideo'
+
+    def pixelFormat(self):
+        # we just return a fixed value for cases where 
+        # the user wants to copy the input stream metadata
+        return 'rgb24'
+        # return 'yuv420p'
+
+    def bitRate(self) -> float:
+        # TODO: Figure out if this actually works since it's a hack
+        #       i have no idea if itemsize of an nd2 frame
+        #       returns the actual num bytes per array element
+        return self.nd2[0].itemsize * 8 * self.width * self.height * self.avg_fps
+
+    def isOpened(self) -> bool:
+        return self.nd2 is not None
+
+    def close(self):
+        self.nd2.close()
+
+    def videoFormat(self):
+        return 'avi'
 
     def frameWidth(self) -> int:
         return self.width
@@ -274,77 +328,22 @@ class ND2Reader():
         return self.height
 
     def framesPerSecond(self) -> float:
-        return 1  # TODO
-
-    def numFrames(self) -> int:
-        return self.num_frames
-
-    def framePosition(self) -> int:
-        return self.frame_position
-
-    def timeStamp(self) -> int:
-        return 0  # TODO
-
-
-
-class OpenCVReader():
-    ''' Video reader interface using opencv for mp4, avi (currently anything other than ND2)'''
-    def __init__(self, video_path: str):
-        self.video_path = video_path
-        self.video_stream = cv.VideoCapture(self.video_path)
-        self.num_frames = int(self.video_stream.get(cv.CAP_PROP_FRAME_COUNT))
-        # meta data
-        input_video_conainer = av.open(self.video_path)
-        self.duration = input_video_conainer.duration
-        self.time_base = input_video_conainer.streams.video[0].time_base
-        self.avg_fps_fraction = input_video_conainer.streams.video[0].average_rate
-        self.codec_name = input_video_conainer.streams.video[0].codec_context.name
-        self.pix_fmt = input_video_conainer.streams.video[0].pix_fmt
-        self.bitrate = input_video_conainer.streams.video[0].bit_rate
-        input_video_conainer.close()
+        return self.nd2.frame_rate()
 
     def avgFPS(self):
-        return float(self.avg_fps_fraction)
-
-    def codecName(self):
-        return self.codec_name
-
-    def pixelFormat(self):
-        return self.pix_fmt
-
-    def bitRate(self):
-        return self.bitrate
-
-    def isOpened(self) -> bool:
-        return self.video_stream.isOpened()
-
-    def release(self):
-        self.video_stream.release()
-
-    def setFramePosition(self, frame_position: int) -> bool:
-        if frame_position >= 0 and frame_position < self.num_frames:
-            self.video_stream.set(cv.CAP_PROP_POS_FRAMES, frame_position)
-            return True
-        else:
-            return False
-
-    def read(self) -> Tuple[bool, np.ndarray]:
-        return self.video_stream.read()
-
-    def frameWidth(self) -> int:
-        return int(self.video_stream.get(cv.CAP_PROP_FRAME_WIDTH))
-
-    def frameHeight(self) -> int:
-        return int(self.video_stream.get(cv.CAP_PROP_FRAME_HEIGHT))
-
-    def framesPerSecond(self) -> float:
-        return self.video_stream.get(cv.CAP_PROP_FPS)
+        return self.avg_fps
 
     def numFrames(self) -> int:
         return self.num_frames
 
     def framePosition(self) -> int:
-        return self.video_stream.get(cv.CAP_PROP_POS_FRAMES)
+        return self.frame_num
 
-    def timeStamp(self) -> int:
-        return self.video_stream.get(cv.CAP_PROP_POS_MSEC)
+    def setFramePosition(self, frame_position: int) -> bool:
+        if frame_position < 0 or frame_position >= self.num_frames:
+            return False
+        self.frame_num = frame_position
+        return True
+
+def rescaledToUint8(intensity, intensity_min, intensity_range) -> np.uint8:
+    return np.uint8(255.0*(intensity - intensity_min)/intensity_range)

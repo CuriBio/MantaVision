@@ -195,7 +195,7 @@ def verifiedInputs(config: {}) -> (str, [{}]):
     sys.exit(1)
   
   template_guide_image_path = config['template_guide_image_path']
-  supported_file_extensions = ['.mp4', '.avi']
+  supported_file_extensions = ['.mp4', '.avi', '.mov', '.nd2']
   base_dir, video_files = contentsOfDir(dir_path=config['input_video_path'], search_terms=supported_file_extensions)
   
   unique_name = "results_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -308,7 +308,10 @@ def verifiedInputs(config: {}) -> (str, [{}]):
     output_json_path = os.path.join(results_json_dir_path, file_name + '-results.json')
     path_to_excel_results = os.path.join(results_xlsx_dir_path, file_name + '-reslts.xlsx')
     if input_file_extension in supported_file_extensions:
-      output_file_extension = input_file_extension
+      if input_file_extension == '.nd2':
+        output_file_extension = '.avi'
+      else:
+        output_file_extension = input_file_extension
     else:
       output_file_extension = '.mp4'  # TODO: we should probably just barf here for unsupported formats
     output_video_path = os.path.join(results_video_dir_path, file_name + '-results' + output_file_extension)
