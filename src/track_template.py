@@ -85,19 +85,19 @@ def trackTemplate(
 
   # open the template image
   if user_roi_selection:
-    template_raw = None
+    template_as_guide = None
   else:
-    template_raw = intensityAdjusted(cv.cvtColor(cv.imread(template_guide_image_path), cv.COLOR_BGR2GRAY))
-    if template_raw is None:
+    template_as_guide = intensityAdjusted(cv.cvtColor(cv.imread(template_guide_image_path), cv.COLOR_BGR2GRAY))
+    if template_as_guide is None:
       error_msg = "ERROR. The path provided for template does not point to an image file. Nothing has been tracked."
       return (error_msg, [{}], frames_per_second, None, -1)
   if guide_match_search_seconds is None:
     max_frames_to_check = None
   else:
     max_frames_to_check = int(math.ceil(frames_per_second*float(guide_match_search_seconds)))
-  template_raw, template_gray = templateFromInputROI(
+  template_rgb, template_gray = templateFromInputROI(
     input_video_stream,
-    template_raw,
+    template_as_guide,
     max_frames_to_check,
     user_roi_selection=user_roi_selection
   )
@@ -116,7 +116,7 @@ def trackTemplate(
       output_video_pix_fmt = 'yuv420p'
     else:
       output_video_codec = input_video_stream.codecName()  # just use 'h264' if this ever fails
-      output_video_pix_fmt = input_video_stream.pixFMT()
+      output_video_pix_fmt = input_video_stream.pixelFormat()
     output_video_container = av.open(output_video_path, mode='w')
     output_video_stream = output_video_container.add_stream(output_video_codec, rate=str(round(output_video_fps, 2)))
     output_video_stream.codec_context.time_base = output_time_base
@@ -136,15 +136,11 @@ def trackTemplate(
   min_y_frame = 0
 
   tracking_results = [] # will be a list of dicts
-  number_of_frames = input_video_stream.numFrames()
   best_match_origin_x = None
   best_match_origin_y = None
   match_points = []
 
   while input_video_stream.next():
-    raw_frame = input_video_stream.frame()    
-    frame_number = input_video_stream.framePosition()
-
     # crop out a smaller sub region to search if required
     if max_movement_per_frame is None:
       sub_region_padding = None
@@ -165,12 +161,12 @@ def trackTemplate(
       sub_pixel_search_increment=sub_pixel_search_increment,
       sub_pixel_refinement_radius=sub_pixel_refinement_radius
     )
-
     best_match_origin_x = match_coordinates[0] + input_image_sub_region_origin[0]
     best_match_origin_y = match_coordinates[1] + input_image_sub_region_origin[1]
 
     original_time_stamp = input_video_stream.timeStamp()
     time_stamp_in_seconds = original_time_stamp
+    frame_number = input_video_stream.framePosition()
     tracking_results.append({
       'FRAME_NUMBER': frame_number,
       'TIME_STAMP': time_stamp_in_seconds,
@@ -198,7 +194,7 @@ def trackTemplate(
 
     # draw a grid over the region in the frame where the template matched
     if output_video_stream is not None:
-      frame = raw_frame
+      frame = input_video_stream.frameRGB()
 
       # opencv drawing functions require integer coordinates
       # so we convert them to the nearest pixel
@@ -222,12 +218,7 @@ def trackTemplate(
         lineType=cv.LINE_AA
       )
 
-      output_video_frame = av.VideoFrame.from_ndarray(
-        frame, 
-        format=input_video_stream.videoFormat()
-      )      
-      # output_video_frame = av.VideoFrame.from_ndarray(frame, format='rgb24')
-      # output_video_frame = av.VideoFrame.from_ndarray(frame)
+      output_video_frame = av.VideoFrame.from_ndarray(frame, format='rgb24')
       output_video_frame.pts = input_video_stream.pts()
       for output_video_packet in output_video_stream.encode(output_video_frame):
         output_video_container.mux(output_video_packet)
@@ -255,7 +246,7 @@ def trackTemplate(
     min_frame_numbers=min_frame_numbers
   )
  
-  return ((warning_msg, error_msg), displacement_adjusted_results, frames_per_second, template_raw, min_frame_number)
+  return ((warning_msg, error_msg), displacement_adjusted_results, frames_per_second, template_rgb, min_frame_number)
 
 
 def displacementAdjustedResults(
@@ -349,6 +340,7 @@ def templateFromInputROI(
 ) -> Tuple[np.ndarray]:
   '''
   '''
+
   initial_frame_pos = video_to_search.framePosition()
   if initial_frame_pos != 0:
     video_to_search.setFramePosition(0)
@@ -363,7 +355,7 @@ def templateFromInputROI(
   else:
     number_of_frames_to_check = min(number_of_frames, max_frames_to_check)
   for _ in range(number_of_frames_to_check):
-    frame = video_to_search.frame()
+    frame = video_to_search.frameRGB()
     if frame is None:
       error_msg = "Error. No Frame returned during video capture in templateFromInputROI function. Exiting."
       raise RuntimeError(error_msg)
@@ -464,7 +456,6 @@ def intensityAdjusted(
   Returns:
     float32 version of input image with intensity adjusted
   '''
-
   if not adjust_with_gamma:
     return image_to_adjust.astype(np.float32)
 

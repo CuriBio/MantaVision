@@ -6,26 +6,11 @@ import numpy as np
 from typing import Dict, List, Tuple
 
 
-# TODO: add a readAsGrey() method that performs the conversion to gray scale
-# TODO: change the name of read and readAsGray to nextFrame() and nextFrameGray()
-# TODO: might want a nicer way to iterate too, so perhaps we can have nextFrame() which can return None
-#       if there's no more frames, or nextFrame() only fetches the frame into a 
-#       var in the object and returns True if there was a next frame and false otherwise,
-#       and then the user needs to call frame() or frameGrey() to get the current frame  
-#       
-# TODO: add methods to get all the metadata we use, bitRate, codec etc
-#       and get the pts, dts, time etc so we can 
-
 # TODO: add a var to the VideoReader constructor called duplicate
 #       that takes a VideoReader object and copies all it's settings 
 #       to make the new VideoReader object.
 
 # TODO: add a new a class VideoWriter (only using PyAv) because theres no api to write nd2 files anyway.
-
-
-# TODO: remove this VideoAPI class since we'll only have av and nd2Reader libs
-#       and therefore the only choice is, 
-#       if .nd2 is in the filename, use nd2Reader api, otherewise, use PyAv api
 
 
 class VideoReader:
@@ -64,6 +49,9 @@ class VideoReader:
     def frameGray(self) -> np.ndarray:
         return self.reader.frameGray()
 
+    def frameRGB(self) -> np.ndarray:
+        return self.reader.frameRGB()
+
     def next(self) -> bool:
         return self.reader.next()
 
@@ -100,14 +88,14 @@ class VideoReader:
     def codecName(self):
         return self.reader.codecName()
 
-    def pixFMT(self):
-        return self.reader.pixFMT()
+    def pixelFormat(self):
+        return self.reader.pixelFormat()
 
     def bitRate(self):
         return self.reader.bitRate()
 
-    def reset(self):
-        return self.reader.reset()
+    def initialiseStream(self):
+        return self.reader.initialiseStream()
 
     def close(self):
         return self.reader.close()
@@ -118,22 +106,18 @@ class VideoReader:
 
 class AVReader():
     ''' Video reader interface using pyav for mp4, avi, mov etc (anything other than ND2)'''
-    def __init__(self, video_path: str, return_grayscale: bool=True):
-        self.format = 'gray' if return_grayscale else None
+    def __init__(self, video_path: str):
         self.video_path = video_path
         self.container = av.open(self.video_path)
-
         self.video_stream = self.container.streams.video[0]
-        self.video_stream.thread_type = 'AUTO'  # go faster according to docs
         self.num_frames = self.video_stream.frames
-                
-        self.video_frames = self.container.decode()
+        self.video_frames = self.container.decode(video=0)
         self.current_frame = None
         self.frame_num = -1
-        self.next()  # get the first frame
+        self.initialiseStream()
 
     def next(self) -> bool:
-        if self.frame_num < self.num_frames - 2:
+        if self.frame_num < self.num_frames - 1:
             self.current_frame = next(self.video_frames)
             self.frame_num += 1
             return True
@@ -142,7 +126,7 @@ class AVReader():
             self.frame_num = self.num_frames
             return False
 
-    def reset(self):
+    def initialiseStream(self):
         self.container.seek(0)
         self.frame_num = -1
         self.next()
@@ -150,8 +134,11 @@ class AVReader():
     def frame(self) -> np.ndarray:
         return self.current_frame.to_ndarray()
 
+    def frameRGB(self) -> np.ndarray:
+        return self.current_frame.to_ndarray(format='rgb24')
+
     def frameGray(self) -> np.ndarray:
-        return self.current_frame.to_ndarray(format=self.format)
+        return self.current_frame.to_ndarray(format='gray')
 
     def timeStamp(self) -> float:
         return self.current_frame.time
@@ -168,7 +155,7 @@ class AVReader():
     def codecName(self):
         return self.video_stream.codec_context.name
 
-    def pixFMT(self):
+    def pixelFormat(self):
         return self.video_stream.pix_fmt
 
     def bitRate(self):
@@ -213,11 +200,10 @@ class AVReader():
         if frame_position < 0 or frame_position >= self.num_frames:
             return False
         if frame_position < self.frame_num:
-            self.reset()
+            self.initialiseStream()
         while self.frame_num < frame_position:
             self.next()
         return True
-
 
 
 # TODO: figure out if the format of these ND2 files is [z, y, x, [b, g, r]] or
@@ -254,7 +240,7 @@ class ND2Reader():
     def codecName(self):
         return self.codec_name
 
-    def pixFMT(self):
+    def pixelFormat(self):
         return self.pix_fmt
 
     def bitRate(self):
@@ -323,7 +309,7 @@ class OpenCVReader():
     def codecName(self):
         return self.codec_name
 
-    def pixFMT(self):
+    def pixelFormat(self):
         return self.pix_fmt
 
     def bitRate(self):
