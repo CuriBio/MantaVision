@@ -217,7 +217,7 @@ def trackTemplate(
       )
 
       output_video_frame = av.VideoFrame.from_ndarray(frame, format='rgb24')
-      output_video_frame.pts = input_video_stream.pts()
+      output_video_frame.pts = input_video_stream.frameVideoPTS()
       for output_video_packet in output_video_stream.encode(output_video_frame):
         output_video_container.mux(output_video_packet)
 
@@ -233,9 +233,9 @@ def trackTemplate(
     output_video_container.close()
   input_video_stream.close()
 
-  extreme_points = [min_x_origin, min_y_origin, max_x_origin, max_y_origin]
-  min_frame_numbers = (min_x_frame, min_y_frame)
   # adjust match displacements so they're relative to the match closest to the origin
+  min_frame_numbers = (min_x_frame, min_y_frame)
+  extreme_points = [min_x_origin, min_y_origin, max_x_origin, max_y_origin]
   displacement_adjusted_results, min_frame_number = displacementAdjustedResults(
     results_to_adjust=tracking_results,
     microns_per_pixel=microns_per_pixel,

@@ -4,6 +4,7 @@
 numpy
 opencv-python
 av
-nd2reader
+nd2
+nd2[legacy]
 openpyxl
 

@@ -2,9 +2,8 @@
 from typing import Dict, List, Tuple
 from fractions import Fraction
 import numpy as np
-import av
-# from nd2reader import ND2Reader
 import nd2
+import av
 
 # TODO: add a var to the VideoReader constructor called duplicate
 #       that takes a VideoReader object and copies all it's settings 
@@ -88,8 +87,11 @@ class VideoReader:
     def duration(self) -> float:
         return self.reader.duration()
 
-    def pts(self) -> float:
-        return self.reader.pts()
+    def framePTS(self) -> float:
+        return self.reader.framePTS()
+
+    def frameVideoPTS(self) -> float:
+        return self.reader.frameVideoPTS()
 
     def timeBase(self) -> Fraction:
         return self.reader.timeBase()
@@ -158,7 +160,14 @@ class PYAVReader():
     def timeStamp(self) -> float:
         return self.current_frame.time
 
-    def pts(self) -> int:
+    def framePTS(self) -> int:
+        return self.current_frame.pts
+
+    # TODO: record the first PTS so we can subtract it. 
+    # TODO: adjust duration etc so everything is relative to 0
+    #       because video doesn't like the non zero starts
+
+    def frameVideoPTS(self) -> int:
         return self.current_frame.pts
 
     def timeBase(self) -> Fraction:
@@ -248,7 +257,7 @@ class ND2VideoReader():
 
         self.time_base = Fraction(1,1000)  # is always milliseconds for nd2 files
         self.time_steps = self.timeStamps()
-        self.duration = float(self.time_steps[-1] - self.time_steps[0])
+        self.duration = float(self.time_steps[-1])
         self.avg_fps = float(self.num_frames)/self.duration
 
         self.frame_num = -1
@@ -292,22 +301,24 @@ class ND2VideoReader():
         if self.is_rgb:
             return rgbToGray(self.nd2_frames[self.frame_num].to_numpy(), self.rgb_conversion)
         else:
-            # TODO: if the output videos doin't always work
-            #       it could be because of the intensity range
-            #       so we might need to check if the range is > uint8 and rescale
             return self.nd2_frames[self.frame_num].to_numpy()
 
-    def pts(self, frame_num: int=None) -> int:
+    def framePTS(self, frame_num: int=None) -> int:
         if frame_num is None:
             frame_num = self.frame_num
         _chs = self.nd2_file._rdr._frame_metadata(frame_num).get('channels')
         time_stamp = _chs[0]['time']['relativeTimeMs']
         return time_stamp
 
-    def timeStamp(self, frame_num: int=None) -> float:
+    def frameVideoPTS(self, frame_num: int=None) -> int:
         if frame_num is None:
             frame_num = self.frame_num        
-        return self.pts(frame_num)*self.time_base
+        return self.framePTS(frame_num) - self.framePTS(0)
+
+    def timeStamp(self, frame_num: int=None) -> float:
+        if frame_num is None:
+            frame_num = self.frame_num
+        return self.frameVideoPTS(frame_num)*self.time_base
 
     def timeStamps(self):
         time_stamps = []
@@ -324,13 +335,12 @@ class ND2VideoReader():
     def codecName(self):
         # we just return a fixed value for cases where 
         # the user wants to copy the input stream metadata
-        return 'rawvideo'
+        return 'rawvideo'  # 'h264'
 
     def pixelFormat(self):
         # we just return a fixed value for cases where 
         # the user wants to copy the input stream metadata
-        # return 'rgb24'
-        return 'yuv420p'
+        return 'rgb24'  # 'yuv420p'
 
     def bitRate(self, for_rgb: bool=True) -> float:
         ''' estimated kpbs '''
@@ -411,150 +421,3 @@ def rgbToGray(array_to_convert: np.ndarray, rgb_conversion: np.ndarray) -> np.nd
 def grayToRGB(array_to_convert: np.ndarray) -> np.ndarray:
     frame_as_uint8 = asUINT8(array_to_convert)
     return np.stack((frame_as_uint8, frame_as_uint8, frame_as_uint8), axis=-1)    
-
-
-# class ND2VideoReader():
-#     ''' Video reader interface using nd2reader for ND2 files '''
-#     def __init__(self, video_path: str):
-#         self.video_path = video_path
-#         self.nd2 = ND2Reader(self.video_path)
-
-#         if 'c' in self.nd2.sizes:
-#             num_data_channels = int(self.nd2.sizes['c'])
-#         else:
-#             num_data_channels = 0
-#         if num_data_channels > 1:
-#             error_message = 'ERROR. Data Channels is not 1. Unsupported format.'
-#             raise TypeError(error_message)
-
-#         if 's' in self.nd2.sizes:
-#             num_colours = int(self.nd2.sizes['s'])
-#             if num_colours == 3:
-#                 self.is_rgb = True
-#             else:
-#                 error_message = 'ERROR. Colour channels is not 0 or 3. Unsupported format.'
-#                 raise TypeError(error_message)
-#         else:
-#             self.is_rgb = False
-#         self.rgb_conversion = self._rgb_converter()
-
-#         self.num_frames = int(self.nd2.sizes['t'])      
-#         self.height = int(self.nd2.sizes['y'])
-#         self.width = int(self.nd2.sizes['x'])
-
-#         self.time_base = Fraction(1,1000)  # appears to always be 1/1000 for nd2 files?
-#         self.time_steps = self.nd2.timesteps*float(self.time_base)  
-#         self.duration = float(self.time_steps[-1] - self.time_steps[0])
-#         self.avg_fps = float(self.num_frames)/self.duration
-
-#         self.frame_num = -1
-
-#     def _rgb_converter(self, type: str='eye') -> np.ndarray:
-#             if type =='eye':
-#                 return np.asarray([0.2989, 0.5870, 0.1140])
-#             if type =='sensor':
-#                 np.asarray([0.25, 0.5, 0.25])
-#             else:
-#                 np.asarray([1.0, 1.0, 1.0])/3.0
-
-#     def next(self) -> bool:
-#         if self.frame_num < self.num_frames - 1:
-#             self.frame_num += 1
-#             return True
-#         else:
-#             self.frame_num = self.num_frames
-#             return False
-
-#     def initialiseStream(self):
-#         self.frame_num = 0
-
-#     def frame(self) -> np.ndarray:
-#         return self.nd2[self.frame_num]
-
-#     def frameRGB(self) -> np.ndarray:
-#         if self.is_rgb:
-#             return self.nd2[self.frame_num]
-#         else:
-#             frame_min = np.min(self.nd2[self.frame_num])
-#             frame_max = np.max(self.nd2[self.frame_num])
-#             frame_range = frame_max - frame_min
-#             frame_as_uint8 = rescaledToUint8(self.nd2[self.frame_num], frame_min, frame_range)
-#             return np.stack((frame_as_uint8, frame_as_uint8, frame_as_uint8), axis=-1)
-
-#     def frameGray(self) -> np.ndarray:
-#         if self.is_rgb:
-#             return np.dot(self.nd2[self.frame_num][...,:3], self.rgb_conversion)        
-#         else:
-#             return self.nd2[self.frame_num]
-
-#     def timeStamp(self) -> float:
-#         return self.time_steps[self.frame_num]
-
-#     def pts(self) -> int:
-#         return self.time_steps[self.frame_num]/float(self.time_base)
-
-#     def timeBase(self) -> Fraction:
-#         return self.time_base
-
-#     def duration(self) -> float:
-#         return self.duration
-
-#     def codecName(self):
-#         # we just return a fixed value for cases where 
-#         # the user wants to copy the input stream metadata
-#         return 'rawvideo'
-
-#     def pixelFormat(self):
-#         # we just return a fixed value for cases where 
-#         # the user wants to copy the input stream metadata
-#         return 'rgb24'
-
-#     def bitRate(self, for_rgb: bool=True) -> float:
-#         ''' estimated kpbs '''
-#         # TODO: Figure out if this actually works since it's a hack
-#         #       i have no idea if itemsize of an nd2 frame
-#         #       returns the actual num bytes per array element
-#         if for_rgb:
-#             bytes_per_pixel = 3
-#         else:
-#             bytes_per_pixel = self.nd2[0].itemsize
-#         bits_per_pixel = bytes_per_pixel * 8
-#         pixels_per_frame = self.width * self.height
-#         bits_per_frame = float(bits_per_pixel * pixels_per_frame)
-#         kilobits_per_frame = bits_per_frame / 1024.0
-#         max_kbps = float(2**16)
-#         kbps = kilobits_per_frame * self.avg_fps
-#         return min(kbps, max_kbps)
-
-#     def isOpened(self) -> bool:
-#         return self.nd2 is not None
-
-#     def close(self):
-#         self.nd2.close()
-
-#     def videoFormat(self):
-#         return 'avi'
-
-#     def frameWidth(self) -> int:
-#         return self.width
-
-#     def frameHeight(self) -> int:
-#         return self.height
-
-#     def framesPerSecond(self) -> float:
-#         return self.nd2.frame_rate()
-
-#     def avgFPS(self):
-#         return self.avg_fps
-
-#     def numFrames(self) -> int:
-#         return self.num_frames
-
-#     def framePosition(self) -> int:
-#         return self.frame_num
-
-#     def setFramePosition(self, frame_position: int) -> bool:
-#         if frame_position < 0 or frame_position >= self.num_frames:
-#             return False
-#         self.frame_num = frame_position
-#         return True
