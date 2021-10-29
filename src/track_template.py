@@ -111,12 +111,17 @@ def trackTemplate(
     output_video_fps = input_video_stream.avgFPS()
     output_time_base = input_video_stream.timeBase()
     output_video_codec = input_video_stream.codecName() # just use 'h264' if this ever fails
-    if input_video_stream.codecName() == 'rawvideo':
-      output_video_pix_fmt = 'yuv420p'
-    else:
-      output_video_pix_fmt = input_video_stream.pixelFormat()
+    # if input_video_stream.codecName() == 'rawvideo':
+    #   output_video_pix_fmt = 'yuv420p'
+    # else:
+    #   output_video_pix_fmt = input_video_stream.pixelFormat()
+    output_video_pix_fmt = input_video_stream.pixelFormat()    
     output_video_container = av.open(output_video_path, mode='w')
-    output_video_stream = output_video_container.add_stream(output_video_codec, rate=str(round(output_video_fps, 2)))
+    output_video_stream = output_video_container.add_stream(
+      output_video_codec,
+      rate=str(round(output_video_fps, 2))
+      # TODO: figure out what other things we can pass to this to make it better quality
+    )
     output_video_stream.codec_context.time_base = output_time_base
     output_video_stream.bit_rate = output_video_bitrate # can be small i.e. 2**20 & very still very viewable
     output_video_stream.pix_fmt = output_video_pix_fmt
@@ -216,16 +221,28 @@ def trackTemplate(
         lineType=cv.LINE_AA
       )
 
+      # TODO: I'm clearly doing something stupid with writing frames
+      #       I think I need pass back the dts for each frame or packet
+      #       and write that instead
+      # TODO: turns out, avi doesn't do variable frame rates so,
+      #       what it does is make the duration of each frame tiny (hence the 1000 frame rate reported)
+      #       and add in a variable number of blank frames (previos frame gets repeated)
+      #       to fill out the variable duration of each "real" frame
+      #       this is why we were getting so many frames created when converting to avi
+      # TODO: figure out how to improve the quality of the mp4's we create.
       output_video_frame = av.VideoFrame.from_ndarray(frame, format='rgb24')
       output_video_frame.pts = input_video_stream.frameVideoPTS()
-      for output_video_packet in output_video_stream.encode(output_video_frame):
+      # for output_video_packet in output_video_stream.encode(output_video_frame):
+      #   output_video_container.mux(output_video_packet)
+      output_video_packet = output_video_stream.encode(output_video_frame)
+      if output_video_packet:
         output_video_container.mux(output_video_packet)
 
   if output_video_stream is not None:
     # flush any remaining data in the output stream
     for output_video_packet in output_video_stream.encode():
-      # might need to add a try catch block around this
-      # and then just print a diagnostic print if it barfs
+      if output_video_packet.dts is None:
+        continue
       try:
         output_video_container.mux(output_video_packet)
       except:

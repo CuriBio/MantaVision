@@ -16,7 +16,7 @@ from cv2 import cv2 as cv  # pip install --user opencv-python
 from datetime import datetime
 from tkinter import Tk as tk
 from tkinter.filedialog import askopenfilename, askdirectory
-from video2jpgs import video_to_jpgs
+from video2jpgs import video2image
 from track_template import trackTemplate
 
 
@@ -83,15 +83,21 @@ def runTrackTemplate(config: Dict):
 
     # write out the results video as frames
     os.mkdir(input_args['output_video_frames_dir_path'])
-    video_to_jpgs(input_args['output_video_path'], input_args['output_video_frames_dir_path'])
+    video2image(
+      input_video_path=input_args['output_video_path'],
+      output_dir_path=input_args['output_video_frames_dir_path'],
+      enhance_contrast=False,
+      image_extension='jpg'  # don't need high quality images for this
+    )
 
     # write out the frame with the min movement position
     os.mkdir(input_args['output_video_min_frame_dir_path'])
-    video_to_jpgs(
+    video2image(
       input_video_path=input_args['input_video_path'],
       output_dir_path=input_args['output_video_min_frame_dir_path'],
       enhance_contrast=False,
-      frame_number_to_write=min_frame_number
+      frame_number_to_write=min_frame_number,
+      image_extension='tiff'
     )
 
     # write the results as xlsx
@@ -131,7 +137,7 @@ def runTrackTemplate(config: Dict):
   print(f'\nActual tracking time for {num_videos_processed} videos: {round(total_tracking_time, 2)}s ({round(per_video_tracking_time, 2)}s per video)')
 
 
-def verifiedInputs(config: {}) -> (str, [{}]):
+def verifiedInputs(config: Dict) -> Tuple[str, List[Dict]]:
   '''
   '''
   error_msgs = []
@@ -309,13 +315,13 @@ def verifiedInputs(config: {}) -> (str, [{}]):
     path_to_excel_results = os.path.join(results_xlsx_dir_path, file_name + '-reslts.xlsx')
     if input_file_extension in supported_file_extensions:
       if input_file_extension == '.nd2':
-        output_file_extension = '.avi'
+        output_file_extension = '.mkv'
       else:
         output_file_extension = input_file_extension
     else:
-      output_file_extension = '.mp4'  # TODO: we should probably just barf here for unsupported formats
+      output_file_extension = '.mp4'  # may as well try to open the input file and hope pyav supports it
     output_video_path = os.path.join(results_video_dir_path, file_name + '-results' + output_file_extension)
-    results_template_filename = os.path.join(results_template_dir_path, file_name + '-template.jpg')
+    results_template_filename = os.path.join(results_template_dir_path, file_name + '-template.tiff')
 
     configs.append({
       'input_video_path': input_video_path,
@@ -368,7 +374,7 @@ def getFilePathViaGUI(window_title: str='') -> str:
   ) 
 
 
-def contentsOfDir(dir_path: str, search_terms: [str]) -> ([str], [('str', 'str')]):
+def contentsOfDir(dir_path: str, search_terms: List[str]) -> Tuple[List[str], List[Tuple['str']]]:
   if os.path.isdir(dir_path):
     base_dir = dir_path
     for search_term in search_terms:
@@ -389,7 +395,7 @@ def contentsOfDir(dir_path: str, search_terms: [str]) -> ([str], [('str', 'str')
 
 
 def resultsToCSV(
-  tracking_results: [{}],
+  tracking_results: List[Dict],
   path_to_template_file: str,
   path_to_output_file,
   frames_per_second: float,
@@ -428,7 +434,7 @@ def resultsToCSV(
   workbook.save(filename=path_to_output_file)
 
 
-def config_from_json(json_config_path) -> (str, [{}]):
+def config_from_json(json_config_path) -> Tuple[str, List[Dict]]:
   json_file = open(json_config_path)
   config = json.load(json_file)
   return config

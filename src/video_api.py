@@ -128,14 +128,12 @@ class PYAVReader():
         self.initialiseStream()
 
     def next(self) -> bool:
-        if self.frame_num < self.num_frames - 1:
-            self.current_frame = next(self.video_frames)
-            self.frame_num += 1
-            return True
-        else:
-            self.current_frame = None
-            self.frame_num = self.num_frames
+        return_this_at_end_of_frames = None
+        self.current_frame = next(self.video_frames, return_this_at_end_of_frames)
+        if self.current_frame is None:
             return False
+        self.frame_num += 1
+        return True
 
     def initialiseStream(self):
         self.container.seek(0)
@@ -190,10 +188,12 @@ class PYAVReader():
         return self.video_stream is not None and self.container is not None
 
     def close(self):
-        self.video_frames = None
+        if self.video_frames is not None:
+            self.video_frames.close()
+            self.video_frames = None
         if self.container is not None:
             self.container.close()
-        self.container = None
+            self.container = None
 
     def videoFormat(self):
         return self.current_frame.format.name 
@@ -208,7 +208,7 @@ class PYAVReader():
         return self.frameWidth()
 
     def frameVideoHeight(self) -> int:
-        return self.frameHeight
+        return self.frameHeight()
 
     def framesPerSecond(self) -> float:
         return float(self.video_stream.guessed_rate)
@@ -333,14 +333,14 @@ class ND2VideoReader():
         return self.duration
 
     def codecName(self):
-        # we just return a fixed value for cases where 
+        # we just return a fixed value for cases where
         # the user wants to copy the input stream metadata
-        return 'rawvideo'  # 'h264'
+        return 'ffv1'  #'h264'  # 'rawvideo'
 
     def pixelFormat(self):
         # we just return a fixed value for cases where 
         # the user wants to copy the input stream metadata
-        return 'rgb24'  # 'yuv420p'
+        return 'yuv420p'  #  'rgb24'
 
     def bitRate(self, for_rgb: bool=True) -> float:
         ''' estimated kpbs '''
@@ -348,7 +348,8 @@ class ND2VideoReader():
         pixels_per_frame = self.width * self.height
         bits_per_frame = float(bits_per_pixel * pixels_per_frame)
         kilobits_per_frame = bits_per_frame / 1024.0
-        max_kbps = float(2**16)
+        # max_kbps = float(2**16)
+        max_kbps = float(2**32 - 1)
         kbps = kilobits_per_frame * self.avg_fps
         return min(kbps, max_kbps)
 
@@ -359,7 +360,7 @@ class ND2VideoReader():
         self.nd2_file.close()
 
     def videoFormat(self):
-        return 'avi'
+        return 'mkv'
 
     def frameWidth(self) -> int:
         return self.width
