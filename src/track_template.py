@@ -109,21 +109,19 @@ def trackTemplate(
   if output_video_path is not None:
     output_video_bitrate = input_video_stream.bitRate()
     output_video_fps = input_video_stream.avgFPS()
-    output_time_base = input_video_stream.timeBase()  # Fraction(1, 1000)  # milliseconds
+    output_time_base = input_video_stream.timeBase()
+    output_video_codec = input_video_stream.codecName() # just use 'h264' if this ever fails
     if input_video_stream.codecName() == 'rawvideo':
-      # mp4 doesn't support rawvideo and neither do a lot of players
-      output_video_codec = 'h264'
       output_video_pix_fmt = 'yuv420p'
     else:
-      output_video_codec = input_video_stream.codecName()  # just use 'h264' if this ever fails
       output_video_pix_fmt = input_video_stream.pixelFormat()
     output_video_container = av.open(output_video_path, mode='w')
     output_video_stream = output_video_container.add_stream(output_video_codec, rate=str(round(output_video_fps, 2)))
     output_video_stream.codec_context.time_base = output_time_base
     output_video_stream.bit_rate = output_video_bitrate # can be small i.e. 2**20 & very still very viewable
-    output_video_stream.pix_fmt = output_video_pix_fmt  # use 'yuv420p' if this ever fails 
-    output_video_stream.height = frame_height
-    output_video_stream.width = frame_width
+    output_video_stream.pix_fmt = output_video_pix_fmt
+    output_video_stream.height = input_video_stream.frameVideoHeight()
+    output_video_stream.width = input_video_stream.frameVideoWidth()
   else:
     output_video_stream = None
 
@@ -194,7 +192,7 @@ def trackTemplate(
 
     # draw a grid over the region in the frame where the template matched
     if output_video_stream is not None:
-      frame = input_video_stream.frameRGB()
+      frame = input_video_stream.frameVideoRGB()
 
       # opencv drawing functions require integer coordinates
       # so we convert them to the nearest pixel

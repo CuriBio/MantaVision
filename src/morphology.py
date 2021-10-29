@@ -309,16 +309,16 @@ def morphologyMetrics(
 
   # draw the upper and lower edges of object
   edge_contour_colour_bgr = (0, 0, 255)
-  # lower_edge_points_to_draw = np.dstack((points_to_find_edges_at.astype(np.int32), lower_edge_points.astype(np.int32)))[0]
-  # lower_edge_points_to_draw = lower_edge_points_to_draw.reshape((-1, 1, 2))
-  # cv.polylines(
-  #   results_image,
-  #   pts=[lower_edge_points_to_draw],
-  #   isClosed=False,    
-  #   color=edge_contour_colour_bgr,
-  #   thickness=3,
-  #   lineType=cv.LINE_AA
-  # )
+  lower_edge_points_to_draw = np.dstack((points_to_find_edges_at.astype(np.int32), lower_edge_points.astype(np.int32)))[0]
+  lower_edge_points_to_draw = lower_edge_points_to_draw.reshape((-1, 1, 2))
+  cv.polylines(
+    results_image,
+    pts=[lower_edge_points_to_draw],
+    isClosed=False,    
+    color=edge_contour_colour_bgr,
+    thickness=3,
+    lineType=cv.LINE_AA
+  )
   upper_edge_points_to_draw = np.dstack((points_to_find_edges_at.astype(np.int32), upper_edge_points.astype(np.int32)))[0]
   upper_edge_points_to_draw = upper_edge_points_to_draw.reshape((-1, 1, 2))
   cv.polylines(
