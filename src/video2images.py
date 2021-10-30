@@ -6,7 +6,7 @@ from video_api import VideoReader
 from track_template import intensityAdjusted
 
 
-def video2image(
+def video2images(
   input_video_path: str=None,
   output_dir_path: str=None,
   enhance_contrast: bool=False,

@@ -15,7 +15,7 @@ from cv2 import cv2 as cv  # pip install --user opencv-python
 from datetime import datetime
 from tkinter import Tk as tk
 from tkinter.filedialog import askopenfilename, askdirectory
-from video2jpgs import video2image
+from video2images import video2images
 from track_template import trackTemplate
 
 
@@ -82,7 +82,7 @@ def runTrackTemplate(config: Dict):
 
     # write out the results video as frames
     os.mkdir(input_args['output_video_frames_dir_path'])
-    video2image(
+    video2images(
       input_video_path=input_args['output_video_path'],
       output_dir_path=input_args['output_video_frames_dir_path'],
       enhance_contrast=False,
@@ -91,7 +91,7 @@ def runTrackTemplate(config: Dict):
 
     # write out the frame with the min movement position
     os.mkdir(input_args['output_video_min_frame_dir_path'])
-    video2image(
+    video2images(
       input_video_path=input_args['input_video_path'],
       output_dir_path=input_args['output_video_min_frame_dir_path'],
       enhance_contrast=False,

@@ -5,7 +5,7 @@ from scipy.ndimage import shift
 import math
 import pathlib
 from cv2 import cv2 as cv # pip install --user opencv-python
-from video_api import VideoReader
+from video_api import VideoReader, VideoWriter
 from typing import Tuple, List, Dict
 import sys
 import av
@@ -107,36 +107,16 @@ def trackTemplate(
 
   # open an output (writable) video stream if required
   if output_video_path is not None:
-    output_video_bitrate = input_video_stream.bitRate()
-    output_video_fps = input_video_stream.avgFPS()
-    output_time_base = input_video_stream.timeBase()
-
-    # # copy input parameters  
-    # output_video_pix_fmt = input_video_stream.pixelFormat()
-    # output_video_codec = input_video_stream.codecName()    
-    output_video_pix_fmt = 'yuv444p'  # 'yuv420p'
-    if '.mp4' in output_video_path:
-      output_video_codec = 'libx264'
-    else: # other formats like '.mkv', '.avi', '.mov' etc
-      output_video_codec = 'ffv1'  # using 'rawvideo' produces massive files (up to 8x larger) and only slightly faster (max 10%)
-
-    output_video_container = av.open(output_video_path, mode='w')
-    output_video_stream = output_video_container.add_stream(
-      output_video_codec,
-      rate=str(round(output_video_fps, 2))
+    video_writer = VideoWriter(
+      path=output_video_path,
+      width=input_video_stream.frameVideoWidth(),
+      height=input_video_stream.frameVideoHeight(), 
+      time_base=input_video_stream.timeBase(),
+      fps=input_video_stream.avgFPS(),
+      bitrate=input_video_stream.bitRate()
     )
-    ## options for mp4 with libx264
-    # https://trac.ffmpeg.org/wiki/Encode/H.264#crf for details on these options
-    output_video_stream.options['crf'] = '0'  # do not compress 0 - 51 (0 is losslwess, 51 is terrible quality)
-    output_video_stream.options['preset'] = 'ultrafast'  # , superfast, veryfast, faster, fast, medium, slow, slower, veryslow, and placebo.
-    output_video_stream.options['tune'] = 'film'  # 'animation' 'grain' 'sillimage' 'fastdecode' 'zerolatency'
-    output_video_stream.codec_context.time_base = output_time_base
-    output_video_stream.bit_rate = output_video_bitrate # can be small i.e. 2**20 & very still very viewable
-    output_video_stream.pix_fmt = output_video_pix_fmt
-    output_video_stream.height = input_video_stream.frameVideoHeight()
-    output_video_stream.width = input_video_stream.frameVideoWidth()
   else:
-    output_video_stream = None
+    video_writer = None
 
   # track the template in the video stream
   min_x_origin = (frame_width, frame_height)
@@ -204,7 +184,7 @@ def trackTemplate(
       max_x_origin = (best_match_origin_x, best_match_origin_y)
 
     # draw a grid over the region in the frame where the template matched
-    if output_video_stream is not None:
+    if video_writer is not None:
       frame = input_video_stream.frameVideoRGB()
 
       # opencv drawing functions require integer coordinates
@@ -228,34 +208,10 @@ def trackTemplate(
         thickness=1,
         lineType=cv.LINE_AA
       )
+      video_writer.writeFrame(frame, input_video_stream.frameVideoPTS())
 
-      # TODO: I'm clearly doing something stupid with writing frames
-      #       I think I need pass back the dts for each frame or packet
-      #       and write that instead
-      # TODO: turns out, avi doesn't do variable frame rates so,
-      #       what it does is make the duration of each frame tiny (hence the 1000 frame rate reported)
-      #       and add in a variable number of blank frames (previos frame gets repeated)
-      #       to fill out the variable duration of each "real" frame
-      #       this is why we were getting so many frames created when converting to avi
-      # TODO: figure out how to improve the quality of the mp4's we create.
-      output_video_frame = av.VideoFrame.from_ndarray(frame, format='rgb24')
-      output_video_frame.pts = input_video_stream.frameVideoPTS()
-      # for output_video_packet in output_video_stream.encode(output_video_frame):
-      #   output_video_container.mux(output_video_packet)
-      output_video_packet = output_video_stream.encode(output_video_frame)
-      if output_video_packet:
-        output_video_container.mux(output_video_packet)
-
-  if output_video_stream is not None:
-    # flush any remaining data in the output stream
-    for output_video_packet in output_video_stream.encode():
-      if output_video_packet.dts is None:
-        continue
-      try:
-        output_video_container.mux(output_video_packet)
-      except:
-        print('Warning. an error occurred while closing the output stream. the output may be corrupt.')   
-    output_video_container.close()
+  if video_writer is not None:
+    video_writer.close()
   input_video_stream.close()
 
   # adjust match displacements so they're relative to the match closest to the origin

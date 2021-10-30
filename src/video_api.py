@@ -1,4 +1,5 @@
  
+from os import error
 from typing import Dict, List, Tuple
 from fractions import Fraction
 import numpy as np
@@ -6,7 +7,86 @@ import nd2
 import av
 
 
-# TODO: add a new a class VideoWriter (only using PyAv) because theres no api to write nd2 files anyway.
+class VideoWriter:
+    ''' Unified interface for writing videos'''
+    def __init__(
+        self,
+        path: str,
+        width: int,
+        height: int,
+        time_base: Fraction,        
+        fps: float,
+        bitrate: float,
+        codec: str=None,
+        pixel_format: str=None
+    ):
+        self.path = path
+        self.width = width
+        self.height = height
+        self.fps = fps
+        self.bitrate = bitrate
+        self.codec = codec
+        self.pixel_format = pixel_format
+        self.time_base = time_base
+
+        if self.width % 2 != 0:
+            error_message = 'ERROR in constructing VideoWriter object.'
+            error_message += '\nDimensions of a video are required to be a multple of 2.'
+            error_message += '\nThe requested width of ' + str(self.width) + ' is not a multiple of 2'
+            raise ValueError(error_message)
+        if self.height % 2 != 0:
+            error_message = 'ERROR in constructing VideoWriter object.'
+            error_message += '\nDimensions of a video are required to be a multple of 2.'
+            error_message += '\nThe requested height of ' + str(self.height) + ' is not a multiple of 2'
+            raise ValueError(error_message)
+
+        if self.pixel_format is None:
+            self.pixel_format = 'yuv444p'  # 'yuv420p'
+
+        if self.codec is None:
+            if '.mp4' in self.path:
+                self.codec = 'libx264'
+            else: # other formats like '.mkv', '.avi', '.mov' etc
+                self.codec = 'ffv1'  
+                # 'rawvideo' produces files up to 8x larger & is only slightly faster (max 10%)
+
+        if self.time_base is None:
+            self.time_base = Fraction(1/1000)
+
+        self.container = av.open(self.path, mode='w')
+        self.video_stream = self.container.add_stream(
+            self.codec,
+            rate=str(round(self.fps, 2))  # NOTE: this must be a str (not a float) and can't be too long 
+        )
+        # set some options for libx264 videos see https://trac.ffmpeg.org/wiki/Encode/H.264#crf for details
+        if self.codec == 'libx264':
+            self.video_stream.options['crf'] = '0'  # lowest compression i.e. psuedo lossless
+            self.video_stream.options['preset'] = 'ultrafast'
+            self.video_stream.options['tune'] = 'film'
+
+        self.video_stream.codec_context.time_base = self.time_base
+        self.video_stream.bit_rate = self.bitrate # can be small i.e. 2**20 & very still very viewable
+        self.video_stream.pix_fmt = self.pixel_format
+        self.video_stream.height = self.height
+        self.video_stream.width = self.width
+
+    def writeFrame(self, frame_to_write: np.ndarray, frame_pts: float):
+        video_frame = av.VideoFrame.from_ndarray(frame_to_write, format='rgb24')
+        video_frame.pts = frame_pts
+        video_packet = self.video_stream.encode(video_frame)
+        if video_packet:
+            self.container.mux(video_packet)
+
+    def close(self):
+        # flush any remaining data in the output stream
+        for video_packet in self.video_stream.encode():
+            if video_packet.dts is None:
+                continue
+            try:
+                self.container.mux(video_packet)
+            except:
+                print('Warning. an error occurred while closing the output stream. the output may be corrupt.')   
+        self.container.close()
 
 
 class VideoReader:
@@ -138,6 +218,7 @@ class PYAVReader():
         return self.current_frame.to_ndarray()
 
     def frameRGB(self) -> np.ndarray:
+        # print(f'format type: {self.current_frame.format.name}')
         return self.current_frame.to_ndarray(format='rgb24')
 
     def frameVideoRGB(self) -> np.ndarray:
