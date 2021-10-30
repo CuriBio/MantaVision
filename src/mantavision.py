@@ -312,10 +312,7 @@ def verifiedInputs(config: Dict) -> Tuple[str, List[Dict]]:
     output_video_min_frame_dir_path = os.path.join(output_video_frames_dir_path, 'min_frame')
     output_json_path = os.path.join(results_json_dir_path, file_name + '-results.json')
     path_to_excel_results = os.path.join(results_xlsx_dir_path, file_name + '-reslts.xlsx')
-    if input_file_extension == '.mp4':
-      output_file_extension = '.mp4'
-    else:
-      output_file_extension = '.mkv'
+    output_file_extension = '.mp4'
     output_video_path = os.path.join(results_video_dir_path, file_name + '-results' + output_file_extension)
     results_template_filename = os.path.join(results_template_dir_path, file_name + '-template.tiff')
 

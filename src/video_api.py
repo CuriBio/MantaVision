@@ -41,14 +41,13 @@ class VideoWriter:
             raise ValueError(error_message)
 
         if self.pixel_format is None:
-            self.pixel_format = 'yuv444p'  # 'yuv420p'
+            self.pixel_format = 'yuv420p'  # 'yuv444p'
 
         if self.codec is None:
-            if '.mp4' in self.path:
+            if '.mkv' in self.path:
+                self.codec = 'ffv1'
+            else:
                 self.codec = 'libx264'
-            else: # other formats like '.mkv', '.avi', '.mov' etc
-                self.codec = 'ffv1'  
-                # 'rawvideo' produces files up to 8x larger & is only slightly faster (max 10%)
 
         if self.time_base is None:
             self.time_base = Fraction(1/1000)
