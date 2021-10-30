@@ -5,9 +5,6 @@ import numpy as np
 import nd2
 import av
 
-# TODO: add a var to the VideoReader constructor called duplicate
-#       that takes a VideoReader object and copies all it's settings 
-#       to make the new VideoReader object.
 
 # TODO: add a new a class VideoWriter (only using PyAv) because theres no api to write nd2 files anyway.
 
@@ -111,9 +108,6 @@ class VideoReader:
     def close(self):
         return self.reader.close()
 
-    def videoFormat(self):
-        return self.reader.videoFormat()
-
 
 class PYAVReader():
     ''' Video reader interface using pyav for mp4, avi, mov etc (anything other than ND2)'''
@@ -194,9 +188,6 @@ class PYAVReader():
         if self.container is not None:
             self.container.close()
             self.container = None
-
-    def videoFormat(self):
-        return self.current_frame.format.name 
 
     def frameWidth(self) -> int:
         return int(self.video_stream.codec_context.width)
@@ -335,12 +326,12 @@ class ND2VideoReader():
     def codecName(self):
         # we just return a fixed value for cases where
         # the user wants to copy the input stream metadata
-        return 'ffv1'  #'h264'  # 'rawvideo'
+        return 'ffv1'  # 'libx264'  # 'rawvideo'
 
     def pixelFormat(self):
         # we just return a fixed value for cases where 
         # the user wants to copy the input stream metadata
-        return 'yuv420p'  #  'rgb24'
+        return 'yuv444p'  # 'yuv420p'  # 'rgb24'
 
     def bitRate(self, for_rgb: bool=True) -> float:
         ''' estimated kpbs '''
@@ -359,9 +350,6 @@ class ND2VideoReader():
     def close(self):
         self.nd2_file.close()
 
-    def videoFormat(self):
-        return 'mkv'
-
     def frameWidth(self) -> int:
         return self.width
 
@@ -369,11 +357,13 @@ class ND2VideoReader():
         return self.height
 
     def frameVideoWidth(self) -> int:
-        ''' adjust to be multiple of 2 because we'll do this for frameVideoRGB'''
+        ''' report a width that is increased if necessary to be multiple of 2 because 
+            frameVideoRGB increases the width if necessary to be a multiple of 2 '''
         return self.width + (self.width % 2)
 
     def frameVideoHeight(self) -> int:
-        ''' adjust to be multiple of 2 because we'll do this for frameVideoRGB'''        
+        ''' report a height that is increased if necessary to be multiple of 2 because 
+            frameVideoRGB increases the height if necessary to be a multiple of 2 '''
         return self.height + (self.height % 2)
 
     def framesPerSecond(self) -> float:  # TODO:

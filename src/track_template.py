@@ -110,18 +110,26 @@ def trackTemplate(
     output_video_bitrate = input_video_stream.bitRate()
     output_video_fps = input_video_stream.avgFPS()
     output_time_base = input_video_stream.timeBase()
-    output_video_codec = input_video_stream.codecName() # just use 'h264' if this ever fails
-    # if input_video_stream.codecName() == 'rawvideo':
-    #   output_video_pix_fmt = 'yuv420p'
-    # else:
-    #   output_video_pix_fmt = input_video_stream.pixelFormat()
-    output_video_pix_fmt = input_video_stream.pixelFormat()    
+
+    # # copy input parameters  
+    # output_video_pix_fmt = input_video_stream.pixelFormat()
+    # output_video_codec = input_video_stream.codecName()    
+    output_video_pix_fmt = 'yuv444p'  # 'yuv420p'
+    if '.mp4' in output_video_path:
+      output_video_codec = 'libx264'
+    else: # other formats like '.mkv', '.avi', '.mov' etc
+      output_video_codec = 'ffv1'  # using 'rawvideo' produces massive files (up to 8x larger) and only slightly faster (max 10%)
+
     output_video_container = av.open(output_video_path, mode='w')
     output_video_stream = output_video_container.add_stream(
       output_video_codec,
       rate=str(round(output_video_fps, 2))
-      # TODO: figure out what other things we can pass to this to make it better quality
     )
+    ## options for mp4 with libx264
+    # https://trac.ffmpeg.org/wiki/Encode/H.264#crf for details on these options
+    output_video_stream.options['crf'] = '0'  # do not compress 0 - 51 (0 is losslwess, 51 is terrible quality)
+    output_video_stream.options['preset'] = 'ultrafast'  # , superfast, veryfast, faster, fast, medium, slow, slower, veryslow, and placebo.
+    output_video_stream.options['tune'] = 'film'  # 'animation' 'grain' 'sillimage' 'fastdecode' 'zerolatency'
     output_video_stream.codec_context.time_base = output_time_base
     output_video_stream.bit_rate = output_video_bitrate # can be small i.e. 2**20 & very still very viewable
     output_video_stream.pix_fmt = output_video_pix_fmt
