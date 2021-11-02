@@ -44,7 +44,7 @@ def runTrackTemplate(config: Dict):
   os.mkdir(dirs['results_json_dir_path'])
   os.mkdir(dirs['results_xlsx_dir_path'])
   os.mkdir(dirs['results_video_dir_path'])
-  os.mkdir(dirs['results_template_dir_path'])  
+  os.mkdir(dirs['results_template_dir_path'])
   os.mkdir(dirs['results_video_frames_dir_path'])
 
   # run the tracking routine on each input video
@@ -80,15 +80,8 @@ def runTrackTemplate(config: Dict):
     # write the template used for tracking to the results dir
     cv.imwrite(input_args['results_template_filename'], template)
 
-    # write out the results video as frames
+    # create dirs for frame related output
     os.mkdir(input_args['output_video_frames_dir_path'])
-    video2images(
-      input_video_path=input_args['output_video_path'],
-      output_dir_path=input_args['output_video_frames_dir_path'],
-      enhance_contrast=False,
-      image_extension='jpg'  # don't need high quality images for this
-    )
-
     # write out the frame with the min movement position
     os.mkdir(input_args['output_video_min_frame_dir_path'])
     video2images(
@@ -98,6 +91,15 @@ def runTrackTemplate(config: Dict):
       frame_number_to_write=min_frame_number,
       image_extension='tiff'
     )
+
+    # write out the results video as frames if requested
+    if input_args['output_frames']:
+      video2images(
+        input_video_path=input_args['output_video_path'],
+        output_dir_path=input_args['output_video_frames_dir_path'],
+        enhance_contrast=False,
+        image_extension='jpg'  # don't need high quality images for this
+      )
 
     # write the results as xlsx
     resultsToCSV(
@@ -258,7 +260,12 @@ def verifiedInputs(config: Dict) -> Tuple[str, List[Dict]]:
     max_pixel_movement_per_frame = None
   else:
     max_pixel_movement_per_frame = (config['max_pixel_movement_per_frame'], config['max_pixel_movement_per_frame'])
-          
+  
+  if 'output_frames' not in config:
+    output_frames = False
+  else:
+    output_frames = config['output_frames']
+  
   # set all the values needed to run template matching on each input video
   configs = []
   for file_name, input_file_extension in video_files:
@@ -333,6 +340,7 @@ def verifiedInputs(config: Dict) -> Tuple[str, List[Dict]]:
       'sub_pixel_search_increment': sub_pixel_search_increment,
       'sub_pixel_refinement_radius': sub_pixel_refinement_radius,
       'max_pixel_movement_per_frame': max_pixel_movement_per_frame,
+      'output_frames': output_frames,
       'well_name': well_name,
       'date_stamp': date_stamp,
     })
