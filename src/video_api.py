@@ -41,7 +41,7 @@ class VideoWriter:
             raise ValueError(error_message)
 
         if self.pixel_format is None:
-            self.pixel_format = 'yuv420p'  # 'yuv444p'
+            self.pixel_format = 'yuv444p' # 'yuv420p'  # 
 
         if self.codec is None:
             if '.mkv' in self.path:

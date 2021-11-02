@@ -12,6 +12,9 @@ import av
 from fractions import Fraction
 
 
+# TODO: make outputting the frames an option that is off by default but can be requested. should then make the 
+#       min frame written out to the same directory as the video
+
 # TODO: parallelise the computation of matching for each frame. i.e. if we have 10 processors, split up the search space into
 #       10 disjoint regions and have each thread process those regions independently then combine results
 #       to find the min among them.
