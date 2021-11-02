@@ -7,10 +7,14 @@ import pathlib
 from cv2 import cv2 as cv # pip install --user opencv-python
 from video_api import VideoReader, VideoWriter
 from typing import Tuple, List, Dict
-import sys
-import av
-from fractions import Fraction
 
+
+# TODO: add a parameter for lossless compression with mp4 videos otherwise default for crf is 1
+# TODO: add version number to src code and output json, spread sheets etc
+# TODO: output a csv with the raw x and y positions (NOT shifted to the minimum)
+# TODO: create script to analyse the calcium experiment data, pick the peaks and troughs.
+# TODO: improve automation of morphology i.e. multiple templates for main posts and then inner edges of magnet
+# TODO: improve edge detection of morphology
 
 # TODO: parallelise the computation of matching for each frame. i.e. if we have 10 processors, split up the search space into
 #       10 disjoint regions and have each thread process those regions independently then combine results

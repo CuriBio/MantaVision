@@ -41,7 +41,7 @@ class VideoWriter:
             raise ValueError(error_message)
 
         if self.pixel_format is None:
-            self.pixel_format = 'yuv420p'  # 'yuv444p'
+            self.pixel_format = 'yuv420p'  # 'yuv444p' #
 
         if self.codec is None:
             if '.mkv' in self.path:
@@ -59,7 +59,7 @@ class VideoWriter:
         )
         # set some options for libx264 videos see https://trac.ffmpeg.org/wiki/Encode/H.264#crf for details
         if self.codec == 'libx264':
-            self.video_stream.options['crf'] = '0'  # lowest compression i.e. psuedo lossless
+            self.video_stream.options['crf'] = '1'  # higher is more lossy compression, 0 is psuedo lossless             
             self.video_stream.options['preset'] = 'ultrafast'
             self.video_stream.options['tune'] = 'film'
 
@@ -406,12 +406,12 @@ class ND2VideoReader():
     def codecName(self):
         # we just return a fixed value for cases where
         # the user wants to copy the input stream metadata
-        return 'ffv1'  # 'libx264'  # 'rawvideo'
+        return 'libx264'  # 'ffv1'  # 'rawvideo'
 
     def pixelFormat(self):
         # we just return a fixed value for cases where 
         # the user wants to copy the input stream metadata
-        return 'yuv444p'  # 'yuv420p'  # 'rgb24'
+        return 'yuv420p'  # 'yuv444p'  # 'rgb24'
 
     def bitRate(self, for_rgb: bool=True) -> float:
         ''' estimated kpbs '''
