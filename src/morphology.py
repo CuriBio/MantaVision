@@ -68,11 +68,13 @@ def roiInfoFromTemplates(
   '''
   rois = []
   for template_image_path in template_image_paths:
+    
     template_image = cv.imread(template_image_path)
     if template_image is None:
       print(f'ERROR. Could not open the template image pointed to by the path provided: {template_image_path}. Exiting.')
       return None
-
+    template_image = cv.cvtColor(template_image, cv.COLOR_BGR2GRAY)
+    template_image = intensityAdjusted(template_image)
     _, match_coordinates = matchResults(
       image_to_search=search_image,
       template_to_match=template_image,
@@ -151,6 +153,8 @@ def morphologyMetrics(
   if search_image is None:
     print(f'ERROR. Could not open the search image pointed to by the path provided: {search_image_path}. Exiting.')
     return None
+  search_image_gray = cv.cvtColor(search_image, cv.COLOR_BGR2GRAY)
+  search_image_gray = intensityAdjusted(search_image_gray) 
 
   # search_image_gray = cv.cvtColor(search_image, cv.COLOR_BGR2RGB).astype(np.uint8)
   # metrics = {
@@ -162,16 +166,16 @@ def morphologyMetrics(
   # }
   # return meanShiftSegmentation(search_image), metrics
 
-
   if template_image_paths == 'draw':
     rois_info = roiInfoFromUserDrawings(search_image)
   else:
     if template_image_paths is None or template_image_paths == 'select':
-      template_1_image_path = getFilePathViaGUI('template to find path')  
-      template_2_image_path = getFilePathViaGUI('template to find path')  
-      template_image_paths = [template_1_image_path, template_2_image_path],
+      template_1_image_path = getFilePathViaGUI('left template to find path')  
+      template_2_image_path = getFilePathViaGUI('right template to find path')
+      template_image_paths = [template_1_image_path, template_2_image_path]
+
     rois_info = roiInfoFromTemplates(
-      search_image=search_image,
+      search_image=search_image_gray,
       template_image_paths=template_image_paths,
       sub_pixel_search_increment=None,
       sub_pixel_refinement_radius=None  
@@ -189,9 +193,6 @@ def morphologyMetrics(
   right_distance_marker_x = right_roi['ORIGIN_X']
   pixel_distance_between_rois = right_distance_marker_x - left_distance_marker_x
   distance_between_rois = microns_per_pixel*pixel_distance_between_rois
-
-  search_image_gray = cv.cvtColor(search_image, cv.COLOR_BGR2GRAY)
-  search_image_gray = intensityAdjusted(search_image_gray) 
 
   # find the points we think are at the upper/lower edges  
   points_to_find_edges_at = np.asarray(range(left_distance_marker_x, right_distance_marker_x))
