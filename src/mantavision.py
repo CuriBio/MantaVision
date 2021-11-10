@@ -420,18 +420,20 @@ def resultsToCSV(
   sheet['E7'] = 'NA'  # microscope name
 
   # set the time and post displacement fields
+  template_heading_row = 1
   template_start_row = 2
   time_column = 'A'
   displacement_column = 'B'
+  x_pos_column = 'C'
+  y_pos_column = 'D'
   num_rows_to_write = len(tracking_results)
   for results_row in range(num_rows_to_write):
       tracking_result = tracking_results[results_row]
-      time_stamp = float(tracking_result['TIME_STAMP'])
-      post_displacement = float(tracking_result['XY_DISPLACEMENT'])
-      sheet_row = results_row + template_start_row
-      sheet[time_column + str(sheet_row)] = time_stamp
-      sheet[displacement_column + str(sheet_row)] = post_displacement
-
+      sheet_row = str(results_row + template_start_row)
+      sheet[time_column + sheet_row] = float(tracking_result['TIME_STAMP'])
+      sheet[displacement_column + sheet_row] = float(tracking_result['XY_DISPLACEMENT'])
+      sheet[x_pos_column + sheet_row] = float(tracking_result['TEMPLATE_MATCH_ORIGIN_X'])
+      sheet[y_pos_column + sheet_row] = float(tracking_result['TEMPLATE_MATCH_ORIGIN_Y'])
   workbook.save(filename=path_to_output_file)
 
 
