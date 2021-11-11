@@ -420,7 +420,6 @@ def resultsToCSV(
   sheet['E7'] = 'NA'  # microscope name
 
   # set the time and post displacement fields
-  template_heading_row = 1
   template_start_row = 2
   time_column = 'A'
   displacement_column = 'B'

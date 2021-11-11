@@ -1,11 +1,15 @@
 #! /usr/bin/env python
 
 
+import os
+import glob
+import shutil
+import openpyxl
 import numpy as np
-from cv2 import cv2 as cv # pip install --user opencv-python
+from cv2 import cv2 as cv
 from typing import Tuple, List, Dict
 from track_template import matchResults
-from mantavision import getFilePathViaGUI
+from mantavision import getFilePathViaGUI, getDirPathViaGUI
 from skimage import filters as skimagefilters
 from track_template import intensityAdjusted
 from numpy.polynomial.polynomial import polyfit, Polynomial
@@ -154,17 +158,7 @@ def morphologyMetrics(
     print(f'ERROR. Could not open the search image pointed to by the path provided: {search_image_path}. Exiting.')
     return None
   search_image_gray = cv.cvtColor(search_image, cv.COLOR_BGR2GRAY)
-  search_image_gray = intensityAdjusted(search_image_gray) 
-
-  # search_image_gray = cv.cvtColor(search_image, cv.COLOR_BGR2RGB).astype(np.uint8)
-  # metrics = {
-  #   'distance_between_rois': 1,
-  #   'midpoint_thickness': 1,
-  #   'left_end_point_thickness': 1,
-  #   'right_end_point_thickness': 1,
-  #   'area_between_rois': 1 
-  # }
-  # return meanShiftSegmentation(search_image), metrics
+  search_image_gray_adjusted = intensityAdjusted(search_image_gray) 
 
   if template_image_paths == 'draw':
     rois_info = roiInfoFromUserDrawings(search_image)
@@ -175,7 +169,7 @@ def morphologyMetrics(
       template_image_paths = [template_1_image_path, template_2_image_path]
 
     rois_info = roiInfoFromTemplates(
-      search_image=search_image_gray,
+      search_image=search_image_gray_adjusted,
       template_image_paths=template_image_paths,
       sub_pixel_search_increment=None,
       sub_pixel_refinement_radius=None  
@@ -309,27 +303,27 @@ def morphologyMetrics(
   )
 
   # draw the upper and lower edges of object
-  edge_contour_colour_bgr = (0, 0, 255)
-  lower_edge_points_to_draw = np.dstack((points_to_find_edges_at.astype(np.int32), lower_edge_points.astype(np.int32)))[0]
-  lower_edge_points_to_draw = lower_edge_points_to_draw.reshape((-1, 1, 2))
-  cv.polylines(
-    results_image,
-    pts=[lower_edge_points_to_draw],
-    isClosed=False,    
-    color=edge_contour_colour_bgr,
-    thickness=3,
-    lineType=cv.LINE_AA
-  )
-  upper_edge_points_to_draw = np.dstack((points_to_find_edges_at.astype(np.int32), upper_edge_points.astype(np.int32)))[0]
-  upper_edge_points_to_draw = upper_edge_points_to_draw.reshape((-1, 1, 2))
-  cv.polylines(
-    results_image,
-    pts=[upper_edge_points_to_draw],
-    isClosed=False,
-    color=edge_contour_colour_bgr,
-    thickness=3,
-    lineType=cv.LINE_AA
-  )
+  edge_contour_colour_bgr = (0, 0, 128)
+  lower_edge_points_to_draw = zip(points_to_find_edges_at.astype(np.int32), lower_edge_points.astype(np.int32))
+  for x_pos, y_pos in lower_edge_points_to_draw:
+    cv.circle(
+      results_image,
+      center=(x_pos, y_pos),
+      radius=2,    
+      color=edge_contour_colour_bgr,
+      thickness=3,
+      lineType=cv.LINE_AA
+    )
+  upper_edge_points_to_draw = zip(points_to_find_edges_at.astype(np.int32), upper_edge_points.astype(np.int32))
+  for x_pos, y_pos in upper_edge_points_to_draw:
+    cv.circle(
+      results_image,
+      center=(x_pos, y_pos),
+      radius=2,    
+      color=edge_contour_colour_bgr,
+      thickness=3,
+      lineType=cv.LINE_AA
+    )
 
   # draw the left ROI inner edge object vertical thickness line
   edge_width_lines_colour_bgr = (0, 255, 0)
@@ -483,6 +477,64 @@ def outerEdges(input_array: np.ndarray, show_plots: bool=True) -> int:
       'lower_edge_pos': lower_edge_pos,
       'upper_edge_pos': upper_edge_pos,
   }
+
+
+def contentsOfDir(dir_path: str, search_terms: List[str], search_extension_only: bool=True) -> Tuple[List[str], List[Tuple[str]]]:
+  if dir_path == 'select':
+    dir_path = getDirPathViaGUI('select directory with files to analyze')
+
+  all_files_found = []  
+  if os.path.isdir(dir_path):
+    base_dir = dir_path
+    for search_term in search_terms:
+      glob_search_term = '*' + search_term
+      if not search_extension_only:
+        glob_search_term += '*'
+      files_found = glob.glob(os.path.join(dir_path, glob_search_term))
+      if len(files_found) > 0:
+        all_files_found.extend(files_found)
+  else:
+    # presume it's actually a single file path
+    base_dir = os.path.dirname(dir_path)
+    all_files_found = [dir_path]
+  if len(all_files_found) < 1:
+    return None, None
+
+  files = []
+  for file_path in all_files_found:
+      file_name, file_extension = os.path.splitext(os.path.basename(file_path))
+      files.append((file_name, file_extension))
+  return base_dir, files
+
+
+def resultsToCSV(
+  analysis_results: List[Dict],
+  path_to_output_file
+):    
+
+  workbook = openpyxl.Workbook()
+  sheet = workbook.active
+
+  heading_row = 1
+  sheet['A' + str(heading_row)] = 'File'
+  sheet['B' + str(heading_row)] = 'Horizontal Length'
+  sheet['C' + str(heading_row)] = 'Left Edge Length'
+  sheet['D' + str(heading_row)] = 'Mid Point Length'
+  sheet['E' + str(heading_row)] = 'Right Edge Length'
+  sheet['F' + str(heading_row)] = 'Area'
+
+  data_row = heading_row + 1
+  num_rows_to_write = len(analysis_results)
+  for results_row in range(num_rows_to_write):
+      metrics = analysis_results[results_row]
+      sheet_row = str(results_row + data_row)
+      sheet['A' + sheet_row] = metrics['file']
+      sheet['B' + sheet_row] = float(metrics['horizontal_length'])
+      sheet['C' + sheet_row] = float(metrics['left_edge_vertical_length'])
+      sheet['D' + sheet_row] = float(metrics['mid_point_vertical_length'])
+      sheet['E' + sheet_row] = float(metrics['right_edge_vertical_length'])
+      sheet['F' + sheet_row] = float(metrics['tissue_area'])
+  workbook.save(filename=path_to_output_file)
 
 
 if __name__ == '__main__':
