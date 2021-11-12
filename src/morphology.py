@@ -145,7 +145,7 @@ def morphologyMetrics(
   sub_pixel_search_increment: float = None,
   sub_pixel_refinement_radius: float = None,
   microns_per_pixel: float=None,
-  background_is_white: bool=True
+  use_midline_background: bool=True
 ):
 
   if microns_per_pixel is None:
@@ -183,8 +183,12 @@ def morphologyMetrics(
     right_roi = roi_to_swap
   # TODO: deal with more than 2 roi's being drawn??? maybe not.
 
-  left_distance_marker_x = left_roi['ORIGIN_X'] + left_roi['WIDTH']
   right_distance_marker_x = right_roi['ORIGIN_X']
+  left_distance_marker_x = left_roi['ORIGIN_X'] + left_roi['WIDTH']
+  if left_distance_marker_x >= right_distance_marker_x:
+    # there was a problem and just so as not to kill the process
+    # we separate the rois to allow things to keep working
+    left_distance_marker_x = right_distance_marker_x - 1
   pixel_distance_between_rois = right_distance_marker_x - left_distance_marker_x
   distance_between_rois = microns_per_pixel*pixel_distance_between_rois
 
@@ -259,6 +263,15 @@ def morphologyMetrics(
   area_between_rois = microns_per_pixel * np.sum(edge_point_diffs)
 
   # find distance between edges at the midpoint
+  # TODO: if use_midline_background is True
+  #       then we collect a small sample of pixel intensities in the gray scale image
+  #       at the top and/or bottom of the image in some small region either side of
+  #       the midline, we then say that anything that is NOT in the range of the backgroun
+  #       is the tissue and we compute the centreline width with those pixels
+  #       we could then walk outward from that and just the tissue/background boundary
+  #       and we reach the inside roi edges
+
+
   half_pixel_distance_between_rois = round(pixel_distance_between_rois/2)
   midpoint_upper_edge_position = lower_edge_points[half_pixel_distance_between_rois]
   midpoint_thickness = microns_per_pixel*(
