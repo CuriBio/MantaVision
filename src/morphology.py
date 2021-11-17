@@ -3,6 +3,7 @@
 
 import os
 import glob
+from datetime import datetime
 import shutil
 import openpyxl
 import numpy as np
@@ -13,9 +14,13 @@ from mantavision import getFilePathViaGUI, getDirPathViaGUI
 from skimage import filters as skimagefilters
 from track_template import intensityAdjusted
 from numpy.polynomial.polynomial import polyfit, Polynomial
+from mantavision import getDirPathViaGUI, getFilePathViaGUI
 
 from matplotlib import pyplot as plt
 
+
+# TODO: add an option that allows only drawing one roi for the first image and then using that
+#       as a template for all other images.
 
 # TODO: what we need is some form of background subtraction?
 #       if we can remove the post section and it's rings?
@@ -139,7 +144,77 @@ def roiInfoFromUserDrawings(input_image: np.ndarray) -> List[Dict]:
   return rois
 
 
-def morphologyMetrics(
+def computeMorphologyMetrics(
+  search_image_path: str=None,
+  template_image_paths: List[str]=None,
+  sub_pixel_search_increment: float = None,
+  sub_pixel_refinement_radius: float = None,
+  microns_per_pixel: float=None,
+  use_midline_background: bool=True,
+  write_result_images: bool=False,
+  display_result_images: bool=True
+):
+
+  if search_image_path == 'select_file':
+    search_image_path = getFilePathViaGUI('Select File To Analyize')
+  elif search_image_path == 'select_dir':
+    search_image_path = getDirPathViaGUI('Select Directory With Images To Analyze')
+  base_dir, test_files = contentsOfDir(dir_path=search_image_path, search_terms=['.tif', '.tiff', '.jpg', '.png'])
+  results_dir_name = unique_name = "results_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+  results_dir = os.path.join(base_dir, results_dir_name)
+  os.mkdir(results_dir)
+  if write_result_images:
+    results_image_dir = os.path.join(results_dir, 'result_images')
+    os.mkdir(results_image_dir)
+
+  all_metrics = []
+  image_analyzed_id = 0
+  for file_name, file_extension in test_files:
+      file_to_analyze = os.path.join(base_dir, file_name + file_extension)
+      results_image, metrics = morphologyMetricsForImage(
+          search_image_path=file_to_analyze,
+          template_image_paths=template_image_paths,
+          sub_pixel_search_increment=sub_pixel_search_increment,
+          sub_pixel_refinement_radius=sub_pixel_refinement_radius,
+          microns_per_pixel=microns_per_pixel
+      )
+      all_metrics.append(
+          {
+              'file': file_to_analyze,
+              'horizontal_length': round(metrics['distance_between_rois'], 2),
+              'left_edge_vertical_length': round(metrics['left_end_point_thickness'], 2),
+              'mid_point_vertical_length': round(metrics['midpoint_thickness'], 2),
+              'right_edge_vertical_length': round(metrics['right_end_point_thickness'], 2),
+              'tissue_area': round(metrics['area_between_rois'], 2)
+          }        
+      )
+
+      # write the results image to file if requested
+      if write_result_images:
+        analyzed_file_results_image_name = file_name + '_results.jpg'
+        analyzed_file_results_image_path = os.path.join(results_image_dir, analyzed_file_results_image_name)
+        cv.imwrite(analyzed_file_results_image_path, results_image)
+
+      # display the metrics and results image here
+      if display_result_images:
+        print(f'image no: {image_analyzed_id} - {file_to_analyze}')
+        print(f"horizontal inner distance between rois: {round(metrics['distance_between_rois'], 2)} (microns)")
+        print(f"vertical thickness at inner edge of left ROI : {round(metrics['left_end_point_thickness'], 2)} (microns)")
+        print(f"vertical thickness at midpoint between rois: {round(metrics['midpoint_thickness'], 2)} (microns)")
+        print(f"vertical thickness at inner edge of right ROI : {round(metrics['right_end_point_thickness'], 2)} (microns)")
+        print(f"area between rois: {round(metrics['area_between_rois'], 2)} (microns)")
+        plt.imshow(cv.cvtColor(results_image, cv.COLOR_BGR2RGB))
+        plt.show()
+        print()
+
+      image_analyzed_id += 1
+
+  results_xlsx_name = 'results.xlsx'
+  results_xlsx_path = os.path.join(results_dir, results_xlsx_name)
+  resultsToCSV(all_metrics, results_xlsx_path)
+
+
+def morphologyMetricsForImage(
   search_image_path: str=None,
   template_image_paths: List[str]=None,
   sub_pixel_search_increment: float = None,
