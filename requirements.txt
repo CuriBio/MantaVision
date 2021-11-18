@@ -6,5 +6,6 @@ opencv-python
 av
 nd2
 nd2[legacy]
+xarray
 openpyxl
 

@@ -1,17 +1,26 @@
 #! /usr/bin/env python
 
 
+import os
+import glob
+from datetime import datetime
+import shutil
+import openpyxl
 import numpy as np
-from cv2 import cv2 as cv # pip install --user opencv-python
+from cv2 import cv2 as cv
 from typing import Tuple, List, Dict
 from track_template import matchResults
-from mantavision import getFilePathViaGUI
+from mantavision import getFilePathViaGUI, getDirPathViaGUI
 from skimage import filters as skimagefilters
 from track_template import intensityAdjusted
 from numpy.polynomial.polynomial import polyfit, Polynomial
+from mantavision import getDirPathViaGUI, getFilePathViaGUI
 
 from matplotlib import pyplot as plt
 
+
+# TODO: add an option that allows only drawing one roi for the first image and then using that
+#       as a template for all other images.
 
 # TODO: what we need is some form of background subtraction?
 #       if we can remove the post section and it's rings?
@@ -62,13 +71,13 @@ def roiInfoFromTemplates(
   template_image_paths: List[str],
   sub_pixel_search_increment: float=None,
   sub_pixel_refinement_radius: float=None
-) -> List[Dict]:
+) -> Dict:
   ''' Finds the best match ROI for templates within search_image,
       and passes back the location information for all ROIs found.
   '''
-  rois = []
+  rois = {}
+  num_rois = 0
   for template_image_path in template_image_paths:
-    
     template_image = cv.imread(template_image_path)
     if template_image is None:
       print(f'ERROR. Could not open the template image pointed to by the path provided: {template_image_path}. Exiting.')
@@ -84,18 +93,27 @@ def roiInfoFromTemplates(
     roi_origin_x, roi_origin_y = match_coordinates
     roi_height = template_image.shape[0]
     roi_width = template_image.shape[1]  
-    roi_info = {
+    roi_parameters = {
       'ORIGIN_X': roi_origin_x,
       'ORIGIN_Y': roi_origin_y,
       'WIDTH':  roi_width,
       'HEIGHT': roi_height
     }
-    rois.append(roi_info)
+    rois[num_rois] = roi_parameters
+    num_rois += 1
 
-  return rois
+  # return a ordered and labelled set or ROI's
+  roi_info = {}
+  if rois[0]['ORIGIN_X'] < rois[1]['ORIGIN_X']:
+    roi_info['left'] = rois[0]
+    roi_info['right'] = rois[1]
+  else:
+    roi_info['left'] = rois[1]
+    roi_info['right'] = rois[0]
+  return roi_info
 
 
-def roiInfoFromUserDrawings(input_image: np.ndarray) -> List[Dict]:
+def roiInfoFromUserDrawings(input_image: np.ndarray) -> Dict:
   '''
   Show the user a window with an image they can draw a ROI on.
   Args:
@@ -113,7 +131,8 @@ def roiInfoFromUserDrawings(input_image: np.ndarray) -> List[Dict]:
   cv.destroyAllWindows()
   print()
 
-  rois = []
+  rois = {}
+  num_rois = 0
   for roi_selection in roi_selections:
     x_start = roi_selection[0]
     x_end = x_start + roi_selection[2]
@@ -124,73 +143,172 @@ def roiInfoFromUserDrawings(input_image: np.ndarray) -> List[Dict]:
     if y_end - y_start <= 0:
       return None
 
-    roi_info = {
+    roi_parameters = {
       'ORIGIN_X': roi_selection[0],
       'ORIGIN_Y': roi_selection[1],
       'WIDTH':  roi_selection[2],
       'HEIGHT': roi_selection[3]
     }
-    rois.append(roi_info)
+    rois[num_rois] = roi_parameters
+    num_rois += 1
 
-  return rois
+  # return a ordered and labelled set or ROI's
+  roi_info = {}
+  if rois[0]['ORIGIN_X'] < rois[1]['ORIGIN_X']:
+    roi_info['left'] = rois[0]
+    roi_info['right'] = rois[1]
+  else:
+    roi_info['left'] = rois[1]
+    roi_info['right'] = rois[0]
+  return roi_info
 
 
-def morphologyMetrics(
+def computeMorphologyMetrics(
   search_image_path: str=None,
   template_image_paths: List[str]=None,
   sub_pixel_search_increment: float = None,
   sub_pixel_refinement_radius: float = None,
   microns_per_pixel: float=None,
-  background_is_white: bool=True
+  use_midline_background: bool=True,
+  write_result_images: bool=False,
+  display_result_images: bool=True
+):
+
+  if search_image_path.lower() == 'select_file':
+    search_image_path = getFilePathViaGUI('Select File To Analyize')
+  elif search_image_path.lower() == 'select_dir':
+    search_image_path = getDirPathViaGUI('Select Directory With Images To Analyze')
+  base_dir, test_files = contentsOfDir(dir_path=search_image_path, search_terms=['.tif', '.tiff', '.jpg', '.png'])
+  results_dir_name = "results_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+  results_dir = os.path.join(base_dir, results_dir_name)
+  os.mkdir(results_dir)
+  if write_result_images:
+    results_image_dir = os.path.join(results_dir, 'result_images')
+    os.mkdir(results_image_dir)
+
+  if isinstance(template_image_paths, str):
+    template_image_paths = [template_image_paths]    
+  if template_image_paths[0].lower() == 'select_files':
+    left_template_image_path = getFilePathViaGUI('Select Left ROI Template File')    
+    right_template_image_path = getFilePathViaGUI('Select Right ROI Template File')
+    template_image_paths = [left_template_image_path, right_template_image_path]
+  elif template_image_paths[0].lower() == 'draw_rois_once':
+    drawn_roi_templates_dir = os.path.join(results_dir, 'drawn_template_images')
+    os.mkdir(drawn_roi_templates_dir)
+    file_name, file_extension = test_files[0]  # NOTE: this could be a selected file too
+    search_image_for_template = cv.imread(os.path.join(base_dir, file_name + file_extension))
+    rois_info = roiInfoFromUserDrawings(search_image_for_template)
+    left_roi = rois_info['left']
+    left_template_image = search_image_for_template[
+      left_roi['ORIGIN_Y'] : left_roi['ORIGIN_Y'] + left_roi['HEIGHT'],
+      left_roi['ORIGIN_X'] : left_roi['ORIGIN_X'] + left_roi['WIDTH']
+    ]
+    left_template_image_path = os.path.join(drawn_roi_templates_dir, 'template_image_1.tif')
+    cv.imwrite(left_template_image_path, left_template_image)
+    right_roi = rois_info['right']
+    right_template_image = search_image_for_template[
+      right_roi['ORIGIN_Y'] : right_roi['ORIGIN_Y'] + right_roi['HEIGHT'],
+      right_roi['ORIGIN_X'] : right_roi['ORIGIN_X'] + right_roi['WIDTH']
+    ]
+    right_template_image_path = os.path.join(drawn_roi_templates_dir, 'template_image_2.tif')
+    cv.imwrite(right_template_image_path, right_template_image)
+    template_image_paths = [left_template_image_path, right_template_image_path]
+
+  all_metrics = []
+  image_analyzed_id = 0
+  for file_name, file_extension in test_files:
+      file_to_analyze = os.path.join(base_dir, file_name + file_extension)
+      results_image, metrics = morphologyMetricsForImage(
+        search_image_path=file_to_analyze,
+        template_image_paths=template_image_paths,
+        sub_pixel_search_increment=sub_pixel_search_increment,
+        sub_pixel_refinement_radius=sub_pixel_refinement_radius,
+        microns_per_pixel=microns_per_pixel
+      )
+      all_metrics.append(
+        {
+          'file': file_to_analyze,
+          'horizontal_length': round(metrics['distance_between_rois'], 2),
+          'left_edge_vertical_length': round(metrics['left_end_point_thickness'], 2),
+          'mid_point_vertical_length': round(metrics['midpoint_thickness'], 2),
+          'right_edge_vertical_length': round(metrics['right_end_point_thickness'], 2),
+          'tissue_area': round(metrics['area_between_rois'], 2)
+        }        
+      )
+
+      # write the results image to file if requested
+      if write_result_images:
+        analyzed_file_results_image_name = file_name + '_results.jpg'
+        analyzed_file_results_image_path = os.path.join(results_image_dir, analyzed_file_results_image_name)
+        cv.imwrite(analyzed_file_results_image_path, results_image)
+
+      # display the metrics and results image here if requested
+      if display_result_images:
+        print(f'image no: {image_analyzed_id} - {file_to_analyze}')
+        print(f"horizontal inner distance between rois: {round(metrics['distance_between_rois'], 2)} (microns)")
+        print(f"vertical thickness at inner edge of left ROI : {round(metrics['left_end_point_thickness'], 2)} (microns)")
+        print(f"vertical thickness at midpoint between rois: {round(metrics['midpoint_thickness'], 2)} (microns)")
+        print(f"vertical thickness at inner edge of right ROI : {round(metrics['right_end_point_thickness'], 2)} (microns)")
+        print(f"area between rois: {round(metrics['area_between_rois'], 2)} (microns)")
+        plt.imshow(cv.cvtColor(results_image, cv.COLOR_BGR2RGB))
+        plt.show()
+        print()
+
+      image_analyzed_id += 1
+
+  results_xlsx_name = 'results.xlsx'
+  results_xlsx_path = os.path.join(results_dir, results_xlsx_name)
+  resultsToCSV(all_metrics, results_xlsx_path)
+
+
+def morphologyMetricsForImage(
+  search_image_path: str=None,
+  template_image_paths: List[str]=None,
+  sub_pixel_search_increment: float = None,
+  sub_pixel_refinement_radius: float = None,
+  microns_per_pixel: float=None,
+  use_midline_background: bool=True
 ):
 
   if microns_per_pixel is None:
     microns_per_pixel = 1.0
 
-  if search_image_path is None or search_image_path.lower() == 'select':
+  if search_image_path is None or search_image_path.lower() == 'select_file':
     search_image_path = getFilePathViaGUI('image to search path')
   search_image = cv.imread(search_image_path)
   if search_image is None:
     print(f'ERROR. Could not open the search image pointed to by the path provided: {search_image_path}. Exiting.')
     return None
   search_image_gray = cv.cvtColor(search_image, cv.COLOR_BGR2GRAY)
-  search_image_gray = intensityAdjusted(search_image_gray) 
+  search_image_gray_adjusted = intensityAdjusted(search_image_gray) 
 
-  # search_image_gray = cv.cvtColor(search_image, cv.COLOR_BGR2RGB).astype(np.uint8)
-  # metrics = {
-  #   'distance_between_rois': 1,
-  #   'midpoint_thickness': 1,
-  #   'left_end_point_thickness': 1,
-  #   'right_end_point_thickness': 1,
-  #   'area_between_rois': 1 
-  # }
-  # return meanShiftSegmentation(search_image), metrics
-
-  if template_image_paths == 'draw':
+  if isinstance(template_image_paths, str):
+    template_image_paths = [template_image_paths]
+  if template_image_paths[0].lower() == 'draw_rois':
     rois_info = roiInfoFromUserDrawings(search_image)
   else:
-    if template_image_paths is None or template_image_paths == 'select':
+    if template_image_paths[0].lower() == 'select_files':
       template_1_image_path = getFilePathViaGUI('left template to find path')  
       template_2_image_path = getFilePathViaGUI('right template to find path')
       template_image_paths = [template_1_image_path, template_2_image_path]
 
     rois_info = roiInfoFromTemplates(
-      search_image=search_image_gray,
+      search_image=search_image_gray_adjusted,
       template_image_paths=template_image_paths,
       sub_pixel_search_increment=None,
       sub_pixel_refinement_radius=None  
     )
   
-  left_roi = rois_info.pop()
-  right_roi = rois_info.pop()
-  if right_roi['ORIGIN_X'] < left_roi['ORIGIN_X']:
-    roi_to_swap = left_roi
-    left_roi = right_roi
-    right_roi = roi_to_swap
+  left_roi = rois_info['left']
+  right_roi = rois_info['right']
   # TODO: deal with more than 2 roi's being drawn??? maybe not.
 
-  left_distance_marker_x = left_roi['ORIGIN_X'] + left_roi['WIDTH']
   right_distance_marker_x = right_roi['ORIGIN_X']
+  left_distance_marker_x = left_roi['ORIGIN_X'] + left_roi['WIDTH']
+  if left_distance_marker_x >= right_distance_marker_x:
+    # there was a problem and just so as not to kill the process
+    # we separate the rois to allow things to keep working
+    left_distance_marker_x = right_distance_marker_x - 1
   pixel_distance_between_rois = right_distance_marker_x - left_distance_marker_x
   distance_between_rois = microns_per_pixel*pixel_distance_between_rois
 
@@ -265,6 +383,15 @@ def morphologyMetrics(
   area_between_rois = microns_per_pixel * np.sum(edge_point_diffs)
 
   # find distance between edges at the midpoint
+  # TODO: if use_midline_background is True
+  #       then we collect a small sample of pixel intensities in the gray scale image
+  #       at the top and/or bottom of the image in some small region either side of
+  #       the midline, we then say that anything that is NOT in the range of the backgroun
+  #       is the tissue and we compute the centreline width with those pixels
+  #       we could then walk outward from that and just the tissue/background boundary
+  #       and we reach the inside roi edges
+
+
   half_pixel_distance_between_rois = round(pixel_distance_between_rois/2)
   midpoint_upper_edge_position = lower_edge_points[half_pixel_distance_between_rois]
   midpoint_thickness = microns_per_pixel*(
@@ -309,27 +436,27 @@ def morphologyMetrics(
   )
 
   # draw the upper and lower edges of object
-  edge_contour_colour_bgr = (0, 0, 255)
-  lower_edge_points_to_draw = np.dstack((points_to_find_edges_at.astype(np.int32), lower_edge_points.astype(np.int32)))[0]
-  lower_edge_points_to_draw = lower_edge_points_to_draw.reshape((-1, 1, 2))
-  cv.polylines(
-    results_image,
-    pts=[lower_edge_points_to_draw],
-    isClosed=False,    
-    color=edge_contour_colour_bgr,
-    thickness=3,
-    lineType=cv.LINE_AA
-  )
-  upper_edge_points_to_draw = np.dstack((points_to_find_edges_at.astype(np.int32), upper_edge_points.astype(np.int32)))[0]
-  upper_edge_points_to_draw = upper_edge_points_to_draw.reshape((-1, 1, 2))
-  cv.polylines(
-    results_image,
-    pts=[upper_edge_points_to_draw],
-    isClosed=False,
-    color=edge_contour_colour_bgr,
-    thickness=3,
-    lineType=cv.LINE_AA
-  )
+  edge_contour_colour_bgr = (0, 0, 128)
+  lower_edge_points_to_draw = zip(points_to_find_edges_at.astype(np.int32), lower_edge_points.astype(np.int32))
+  for x_pos, y_pos in lower_edge_points_to_draw:
+    cv.circle(
+      results_image,
+      center=(x_pos, y_pos),
+      radius=2,    
+      color=edge_contour_colour_bgr,
+      thickness=3,
+      lineType=cv.LINE_AA
+    )
+  upper_edge_points_to_draw = zip(points_to_find_edges_at.astype(np.int32), upper_edge_points.astype(np.int32))
+  for x_pos, y_pos in upper_edge_points_to_draw:
+    cv.circle(
+      results_image,
+      center=(x_pos, y_pos),
+      radius=2,    
+      color=edge_contour_colour_bgr,
+      thickness=3,
+      lineType=cv.LINE_AA
+    )
 
   # draw the left ROI inner edge object vertical thickness line
   edge_width_lines_colour_bgr = (0, 255, 0)
@@ -483,6 +610,64 @@ def outerEdges(input_array: np.ndarray, show_plots: bool=True) -> int:
       'lower_edge_pos': lower_edge_pos,
       'upper_edge_pos': upper_edge_pos,
   }
+
+
+def contentsOfDir(dir_path: str, search_terms: List[str], search_extension_only: bool=True) -> Tuple[List[str], List[Tuple[str]]]:
+  if dir_path == 'select':
+    dir_path = getDirPathViaGUI('select directory with files to analyze')
+
+  all_files_found = []  
+  if os.path.isdir(dir_path):
+    base_dir = dir_path
+    for search_term in search_terms:
+      glob_search_term = '*' + search_term
+      if not search_extension_only:
+        glob_search_term += '*'
+      files_found = glob.glob(os.path.join(dir_path, glob_search_term))
+      if len(files_found) > 0:
+        all_files_found.extend(files_found)
+  else:
+    # presume it's actually a single file path
+    base_dir = os.path.dirname(dir_path)
+    all_files_found = [dir_path]
+  if len(all_files_found) < 1:
+    return None, None
+
+  files = []
+  for file_path in all_files_found:
+      file_name, file_extension = os.path.splitext(os.path.basename(file_path))
+      files.append((file_name, file_extension))
+  return base_dir, files
+
+
+def resultsToCSV(
+  analysis_results: List[Dict],
+  path_to_output_file
+):    
+
+  workbook = openpyxl.Workbook()
+  sheet = workbook.active
+
+  heading_row = 1
+  sheet['A' + str(heading_row)] = 'File'
+  sheet['B' + str(heading_row)] = 'Horizontal Length'
+  sheet['C' + str(heading_row)] = 'Left Edge Length'
+  sheet['D' + str(heading_row)] = 'Mid Point Length'
+  sheet['E' + str(heading_row)] = 'Right Edge Length'
+  sheet['F' + str(heading_row)] = 'Area'
+
+  data_row = heading_row + 1
+  num_rows_to_write = len(analysis_results)
+  for results_row in range(num_rows_to_write):
+      metrics = analysis_results[results_row]
+      sheet_row = str(results_row + data_row)
+      sheet['A' + sheet_row] = metrics['file']
+      sheet['B' + sheet_row] = float(metrics['horizontal_length'])
+      sheet['C' + sheet_row] = float(metrics['left_edge_vertical_length'])
+      sheet['D' + sheet_row] = float(metrics['mid_point_vertical_length'])
+      sheet['E' + sheet_row] = float(metrics['right_edge_vertical_length'])
+      sheet['F' + sheet_row] = float(metrics['tissue_area'])
+  workbook.save(filename=path_to_output_file)
 
 
 if __name__ == '__main__':
