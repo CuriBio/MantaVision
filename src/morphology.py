@@ -71,13 +71,13 @@ def roiInfoFromTemplates(
   template_image_paths: List[str],
   sub_pixel_search_increment: float=None,
   sub_pixel_refinement_radius: float=None
-) -> List[Dict]:
+) -> Dict:
   ''' Finds the best match ROI for templates within search_image,
       and passes back the location information for all ROIs found.
   '''
-  rois = []
+  rois = {}
+  num_rois = 0
   for template_image_path in template_image_paths:
-    
     template_image = cv.imread(template_image_path)
     if template_image is None:
       print(f'ERROR. Could not open the template image pointed to by the path provided: {template_image_path}. Exiting.')
@@ -93,18 +93,27 @@ def roiInfoFromTemplates(
     roi_origin_x, roi_origin_y = match_coordinates
     roi_height = template_image.shape[0]
     roi_width = template_image.shape[1]  
-    roi_info = {
+    roi_parameters = {
       'ORIGIN_X': roi_origin_x,
       'ORIGIN_Y': roi_origin_y,
       'WIDTH':  roi_width,
       'HEIGHT': roi_height
     }
-    rois.append(roi_info)
+    rois[num_rois] = roi_parameters
+    num_rois += 1
 
-  return rois
+  # return a ordered and labelled set or ROI's
+  roi_info = {}
+  if rois[0]['ORIGIN_X'] < rois[1]['ORIGIN_X']:
+    roi_info['left'] = rois[0]
+    roi_info['right'] = rois[1]
+  else:
+    roi_info['left'] = rois[1]
+    roi_info['right'] = rois[0]
+  return roi_info
 
 
-def roiInfoFromUserDrawings(input_image: np.ndarray) -> List[Dict]:
+def roiInfoFromUserDrawings(input_image: np.ndarray) -> Dict:
   '''
   Show the user a window with an image they can draw a ROI on.
   Args:
@@ -122,7 +131,8 @@ def roiInfoFromUserDrawings(input_image: np.ndarray) -> List[Dict]:
   cv.destroyAllWindows()
   print()
 
-  rois = []
+  rois = {}
+  num_rois = 0
   for roi_selection in roi_selections:
     x_start = roi_selection[0]
     x_end = x_start + roi_selection[2]
@@ -133,15 +143,24 @@ def roiInfoFromUserDrawings(input_image: np.ndarray) -> List[Dict]:
     if y_end - y_start <= 0:
       return None
 
-    roi_info = {
+    roi_parameters = {
       'ORIGIN_X': roi_selection[0],
       'ORIGIN_Y': roi_selection[1],
       'WIDTH':  roi_selection[2],
       'HEIGHT': roi_selection[3]
     }
-    rois.append(roi_info)
+    rois[num_rois] = roi_parameters
+    num_rois += 1
 
-  return rois
+  # return a ordered and labelled set or ROI's
+  roi_info = {}
+  if rois[0]['ORIGIN_X'] < rois[1]['ORIGIN_X']:
+    roi_info['left'] = rois[0]
+    roi_info['right'] = rois[1]
+  else:
+    roi_info['left'] = rois[1]
+    roi_info['right'] = rois[0]
+  return roi_info
 
 
 def computeMorphologyMetrics(
@@ -155,38 +174,66 @@ def computeMorphologyMetrics(
   display_result_images: bool=True
 ):
 
-  if search_image_path == 'select_file':
+  if search_image_path.lower() == 'select_file':
     search_image_path = getFilePathViaGUI('Select File To Analyize')
-  elif search_image_path == 'select_dir':
+  elif search_image_path.lower() == 'select_dir':
     search_image_path = getDirPathViaGUI('Select Directory With Images To Analyze')
   base_dir, test_files = contentsOfDir(dir_path=search_image_path, search_terms=['.tif', '.tiff', '.jpg', '.png'])
-  results_dir_name = unique_name = "results_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+  results_dir_name = "results_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
   results_dir = os.path.join(base_dir, results_dir_name)
   os.mkdir(results_dir)
   if write_result_images:
     results_image_dir = os.path.join(results_dir, 'result_images')
     os.mkdir(results_image_dir)
 
+  if isinstance(template_image_paths, str):
+    template_image_paths = [template_image_paths]    
+  if template_image_paths[0].lower() == 'select_files':
+    left_template_image_path = getFilePathViaGUI('Select Left ROI Template File')    
+    right_template_image_path = getFilePathViaGUI('Select Right ROI Template File')
+    template_image_paths = [left_template_image_path, right_template_image_path]
+  elif template_image_paths[0].lower() == 'draw_rois_once':
+    drawn_roi_templates_dir = os.path.join(results_dir, 'drawn_template_images')
+    os.mkdir(drawn_roi_templates_dir)
+    file_name, file_extension = test_files[0]  # NOTE: this could be a selected file too
+    search_image_for_template = cv.imread(os.path.join(base_dir, file_name + file_extension))
+    rois_info = roiInfoFromUserDrawings(search_image_for_template)
+    left_roi = rois_info['left']
+    left_template_image = search_image_for_template[
+      left_roi['ORIGIN_Y'] : left_roi['ORIGIN_Y'] + left_roi['HEIGHT'],
+      left_roi['ORIGIN_X'] : left_roi['ORIGIN_X'] + left_roi['WIDTH']
+    ]
+    left_template_image_path = os.path.join(drawn_roi_templates_dir, 'template_image_1.tif')
+    cv.imwrite(left_template_image_path, left_template_image)
+    right_roi = rois_info['right']
+    right_template_image = search_image_for_template[
+      right_roi['ORIGIN_Y'] : right_roi['ORIGIN_Y'] + right_roi['HEIGHT'],
+      right_roi['ORIGIN_X'] : right_roi['ORIGIN_X'] + right_roi['WIDTH']
+    ]
+    right_template_image_path = os.path.join(drawn_roi_templates_dir, 'template_image_2.tif')
+    cv.imwrite(right_template_image_path, right_template_image)
+    template_image_paths = [left_template_image_path, right_template_image_path]
+
   all_metrics = []
   image_analyzed_id = 0
   for file_name, file_extension in test_files:
       file_to_analyze = os.path.join(base_dir, file_name + file_extension)
       results_image, metrics = morphologyMetricsForImage(
-          search_image_path=file_to_analyze,
-          template_image_paths=template_image_paths,
-          sub_pixel_search_increment=sub_pixel_search_increment,
-          sub_pixel_refinement_radius=sub_pixel_refinement_radius,
-          microns_per_pixel=microns_per_pixel
+        search_image_path=file_to_analyze,
+        template_image_paths=template_image_paths,
+        sub_pixel_search_increment=sub_pixel_search_increment,
+        sub_pixel_refinement_radius=sub_pixel_refinement_radius,
+        microns_per_pixel=microns_per_pixel
       )
       all_metrics.append(
-          {
-              'file': file_to_analyze,
-              'horizontal_length': round(metrics['distance_between_rois'], 2),
-              'left_edge_vertical_length': round(metrics['left_end_point_thickness'], 2),
-              'mid_point_vertical_length': round(metrics['midpoint_thickness'], 2),
-              'right_edge_vertical_length': round(metrics['right_end_point_thickness'], 2),
-              'tissue_area': round(metrics['area_between_rois'], 2)
-          }        
+        {
+          'file': file_to_analyze,
+          'horizontal_length': round(metrics['distance_between_rois'], 2),
+          'left_edge_vertical_length': round(metrics['left_end_point_thickness'], 2),
+          'mid_point_vertical_length': round(metrics['midpoint_thickness'], 2),
+          'right_edge_vertical_length': round(metrics['right_end_point_thickness'], 2),
+          'tissue_area': round(metrics['area_between_rois'], 2)
+        }        
       )
 
       # write the results image to file if requested
@@ -195,7 +242,7 @@ def computeMorphologyMetrics(
         analyzed_file_results_image_path = os.path.join(results_image_dir, analyzed_file_results_image_name)
         cv.imwrite(analyzed_file_results_image_path, results_image)
 
-      # display the metrics and results image here
+      # display the metrics and results image here if requested
       if display_result_images:
         print(f'image no: {image_analyzed_id} - {file_to_analyze}')
         print(f"horizontal inner distance between rois: {round(metrics['distance_between_rois'], 2)} (microns)")
@@ -226,7 +273,7 @@ def morphologyMetricsForImage(
   if microns_per_pixel is None:
     microns_per_pixel = 1.0
 
-  if search_image_path is None or search_image_path.lower() == 'select':
+  if search_image_path is None or search_image_path.lower() == 'select_file':
     search_image_path = getFilePathViaGUI('image to search path')
   search_image = cv.imread(search_image_path)
   if search_image is None:
@@ -235,10 +282,12 @@ def morphologyMetricsForImage(
   search_image_gray = cv.cvtColor(search_image, cv.COLOR_BGR2GRAY)
   search_image_gray_adjusted = intensityAdjusted(search_image_gray) 
 
-  if template_image_paths == 'draw':
+  if isinstance(template_image_paths, str):
+    template_image_paths = [template_image_paths]
+  if template_image_paths[0].lower() == 'draw_rois':
     rois_info = roiInfoFromUserDrawings(search_image)
   else:
-    if template_image_paths is None or template_image_paths == 'select':
+    if template_image_paths[0].lower() == 'select_files':
       template_1_image_path = getFilePathViaGUI('left template to find path')  
       template_2_image_path = getFilePathViaGUI('right template to find path')
       template_image_paths = [template_1_image_path, template_2_image_path]
@@ -250,12 +299,8 @@ def morphologyMetricsForImage(
       sub_pixel_refinement_radius=None  
     )
   
-  left_roi = rois_info.pop()
-  right_roi = rois_info.pop()
-  if right_roi['ORIGIN_X'] < left_roi['ORIGIN_X']:
-    roi_to_swap = left_roi
-    left_roi = right_roi
-    right_roi = roi_to_swap
+  left_roi = rois_info['left']
+  right_roi = rois_info['right']
   # TODO: deal with more than 2 roi's being drawn??? maybe not.
 
   right_distance_marker_x = right_roi['ORIGIN_X']
