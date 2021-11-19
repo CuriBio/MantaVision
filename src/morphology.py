@@ -19,9 +19,6 @@ from mantavision import getDirPathViaGUI, getFilePathViaGUI
 from matplotlib import pyplot as plt
 
 
-# TODO: add an option that allows only drawing one roi for the first image and then using that
-#       as a template for all other images.
-
 # TODO: what we need is some form of background subtraction?
 #       if we can remove the post section and it's rings?
 #       or at least account for it.
@@ -178,7 +175,8 @@ def computeMorphologyMetrics(
     search_image_path = getFilePathViaGUI('Select File To Analyize')
   elif search_image_path.lower() == 'select_dir':
     search_image_path = getDirPathViaGUI('Select Directory With Images To Analyze')
-  base_dir, test_files = contentsOfDir(dir_path=search_image_path, search_terms=['.tif', '.tiff', '.jpg', '.png'])
+  base_dir, file_names = contentsOfDir(dir_path=search_image_path, search_terms=['.tif', '.tiff', '.jpg', '.png'])
+  
   results_dir_name = "results_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
   results_dir = os.path.join(base_dir, results_dir_name)
   os.mkdir(results_dir)
@@ -195,7 +193,7 @@ def computeMorphologyMetrics(
   elif template_image_paths[0].lower() == 'draw_rois_once':
     drawn_roi_templates_dir = os.path.join(results_dir, 'drawn_template_images')
     os.mkdir(drawn_roi_templates_dir)
-    file_name, file_extension = test_files[0]  # NOTE: this could be a selected file too
+    file_name, file_extension = file_names[0]  # NOTE: this could be a selected file too
     search_image_for_template = cv.imread(os.path.join(base_dir, file_name + file_extension))
     rois_info = roiInfoFromUserDrawings(search_image_for_template)
     left_roi = rois_info['left']
@@ -216,7 +214,7 @@ def computeMorphologyMetrics(
 
   all_metrics = []
   image_analyzed_id = 0
-  for file_name, file_extension in test_files:
+  for file_name, file_extension in file_names:
       file_to_analyze = os.path.join(base_dir, file_name + file_extension)
       results_image, metrics = morphologyMetricsForImage(
         search_image_path=file_to_analyze,
@@ -648,25 +646,32 @@ def resultsToCSV(
   workbook = openpyxl.Workbook()
   sheet = workbook.active
 
-  heading_row = 1
-  sheet['A' + str(heading_row)] = 'File'
-  sheet['B' + str(heading_row)] = 'Horizontal Length'
-  sheet['C' + str(heading_row)] = 'Left Edge Length'
-  sheet['D' + str(heading_row)] = 'Mid Point Length'
-  sheet['E' + str(heading_row)] = 'Right Edge Length'
-  sheet['F' + str(heading_row)] = 'Area'
+  file_column = 'A'
+  horizontal_column = 'B'
+  mid_point_column = 'C'
+  left_edge_column = 'D'
+  right_edge_column = 'E'
+  area_column = 'F'
+  
+  heading_row = '1'
+  sheet[file_column + heading_row] = 'File'
+  sheet[horizontal_column + heading_row] = 'Horizontal Length'
+  sheet[left_edge_column + heading_row] = 'Left Edge Length'
+  sheet[mid_point_column + heading_row] = 'Mid Point Length'
+  sheet[right_edge_column + heading_row] = 'Right Edge Length'
+  sheet[area_column + heading_row] = 'Area'
 
-  data_row = heading_row + 1
+  data_row = 2
   num_rows_to_write = len(analysis_results)
   for results_row in range(num_rows_to_write):
       metrics = analysis_results[results_row]
       sheet_row = str(results_row + data_row)
-      sheet['A' + sheet_row] = metrics['file']
-      sheet['B' + sheet_row] = float(metrics['horizontal_length'])
-      sheet['C' + sheet_row] = float(metrics['left_edge_vertical_length'])
-      sheet['D' + sheet_row] = float(metrics['mid_point_vertical_length'])
-      sheet['E' + sheet_row] = float(metrics['right_edge_vertical_length'])
-      sheet['F' + sheet_row] = float(metrics['tissue_area'])
+      sheet[file_column + sheet_row] = metrics['file']
+      sheet[horizontal_column + sheet_row] = float(metrics['horizontal_length'])
+      sheet[left_edge_column + sheet_row] = float(metrics['left_edge_vertical_length'])
+      sheet[mid_point_column + sheet_row] = float(metrics['mid_point_vertical_length'])
+      sheet[right_edge_column + sheet_row] = float(metrics['right_edge_vertical_length'])
+      sheet[area_column + sheet_row] = float(metrics['tissue_area'])
   workbook.save(filename=path_to_output_file)
 
 
