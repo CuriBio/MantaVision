@@ -14,7 +14,7 @@ from mantavision import getFilePathViaGUI, getDirPathViaGUI
 from skimage import filters as skimagefilters
 from track_template import intensityAdjusted
 from numpy.polynomial.polynomial import polyfit, Polynomial
-from mantavision import getDirPathViaGUI, getFilePathViaGUI
+from mantavision import getDirPathViaGUI, getFilePathViaGUI, contentsOfDir
 
 from matplotlib import pyplot as plt
 
@@ -610,34 +610,6 @@ def outerEdges(input_array: np.ndarray, show_plots: bool=True) -> int:
   }
 
 
-def contentsOfDir(dir_path: str, search_terms: List[str], search_extension_only: bool=True) -> Tuple[List[str], List[Tuple[str]]]:
-  if dir_path == 'select':
-    dir_path = getDirPathViaGUI('select directory with files to analyze')
-
-  all_files_found = []  
-  if os.path.isdir(dir_path):
-    base_dir = dir_path
-    for search_term in search_terms:
-      glob_search_term = '*' + search_term
-      if not search_extension_only:
-        glob_search_term += '*'
-      files_found = glob.glob(os.path.join(dir_path, glob_search_term))
-      if len(files_found) > 0:
-        all_files_found.extend(files_found)
-  else:
-    # presume it's actually a single file path
-    base_dir = os.path.dirname(dir_path)
-    all_files_found = [dir_path]
-  if len(all_files_found) < 1:
-    return None, None
-
-  files = []
-  for file_path in all_files_found:
-      file_name, file_extension = os.path.splitext(os.path.basename(file_path))
-      files.append((file_name, file_extension))
-  return base_dir, files
-
-
 def resultsToCSV(
   analysis_results: List[Dict],
   path_to_output_file
@@ -677,13 +649,9 @@ def resultsToCSV(
 
 if __name__ == '__main__':
   
-  metrics = morphologyMetrics(
+  computeMorphologyMetrics(
     search_image_path=None,
     template_image_paths=None,
     sub_pixel_search_increment=None,
     sub_pixel_refinement_radius=None
   )
-
-  print(f"horizontal inner distance between rois: {round(metrics['distance_between_rois'], 2)} (microns)")
-  print(f"vertical thickness at midpoint between rois: {round(metrics['midpoint_thickness'], 2)} (microns)")
-  print(f"area between rois: {round(metrics['area_between_rois'], 2)} (square microns)")

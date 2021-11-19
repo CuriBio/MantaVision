@@ -45,7 +45,9 @@ def runTrackTemplate(config: Dict):
   os.mkdir(dirs['results_xlsx_dir_path'])
   os.mkdir(dirs['results_video_dir_path'])
   os.mkdir(dirs['results_template_dir_path'])
-  os.mkdir(dirs['results_video_frames_dir_path'])
+  os.mkdir(dirs['results_video_min_frames_dir_path'])
+  if next(iter(args))['output_frames']:
+    os.mkdir(dirs['results_video_frames_dir_path'])
 
   # run the tracking routine on each input video
   # and write out the results
@@ -80,13 +82,10 @@ def runTrackTemplate(config: Dict):
     # write the template used for tracking to the results dir
     cv.imwrite(input_args['results_template_filename'], template)
 
-    # create dirs for frame related output
-    os.mkdir(input_args['output_video_frames_dir_path'])
     # write out the frame with the min movement position
-    os.mkdir(input_args['output_video_min_frame_dir_path'])
     video2images(
       input_video_path=input_args['input_video_path'],
-      output_dir_path=input_args['output_video_min_frame_dir_path'],
+      output_dir_path=dirs['results_video_min_frames_dir_path'],
       enhance_contrast=False,
       frame_number_to_write=min_frame_number,
       image_extension='tiff'
@@ -94,6 +93,7 @@ def runTrackTemplate(config: Dict):
 
     # write out the results video as frames if requested
     if input_args['output_frames']:
+      os.mkdir(input_args['output_video_frames_dir_path'])      
       video2images(
         input_video_path=input_args['output_video_path'],
         output_dir_path=input_args['output_video_frames_dir_path'],
@@ -102,10 +102,18 @@ def runTrackTemplate(config: Dict):
       )
 
     # write the results as xlsx
-    resultsToCSV(
+    resultsToCSVforSDK(
       tracking_results,
       input_args['path_to_excel_template'],
-      input_args['path_to_excel_results'],
+      input_args['path_to_sdk_excel_results'],
+      frames_per_second,
+      input_args['well_name'], 
+      input_args['date_stamp']
+    )
+
+    resultsToCSVforUser(
+      tracking_results,
+      input_args['path_to_user_excel_results'],
       frames_per_second,
       input_args['well_name'], 
       input_args['date_stamp']
@@ -126,9 +134,10 @@ def runTrackTemplate(config: Dict):
   xlsx_archive_file_path = os.path.join(dirs['results_dir_path'], 'xlsx-results.zip')
   xlsx_archive = zipfile.ZipFile(xlsx_archive_file_path, 'w')
   for dir_name, _, file_names in os.walk(dirs['results_xlsx_dir_path']):
-      for file_name in file_names:
-          file_path = os.path.join(dir_name, file_name)
-          xlsx_archive.write(file_path, os.path.basename(file_path))
+    for file_name in file_names:
+      if 'sdk' in file_name:  # only include the xlsx files intended for the sdk
+        file_path = os.path.join(dir_name, file_name)
+        xlsx_archive.write(file_path, os.path.basename(file_path))
   xlsx_archive.close()
 
   num_videos_processed = len(args)
@@ -148,7 +157,7 @@ def verifiedInputs(config: Dict) -> Tuple[str, List[Dict]]:
     if config['input_video_path'] is None:
       open_video_dir_dialog = True
     else:
-      if config['input_video_path'].lower() == 'select' or config['input_video_path'].lower() == '':
+      if config['input_video_path'].lower() == 'select_dir':
         open_video_dir_dialog = True
       elif not os.path.isdir(config['input_video_path']):
         error_msgs.append('Input path to video/s does not exist.')      
@@ -172,7 +181,7 @@ def verifiedInputs(config: Dict) -> Tuple[str, List[Dict]]:
     if config['template_guide_image_path'] is None:
       open_template_dir_dialog = True
     else:
-      if config['template_guide_image_path'].lower() == 'select' or config['template_guide_image_path'].lower() == '':
+      if config['template_guide_image_path'].lower() == 'select_file':
         open_template_dir_dialog = True
       elif config['template_guide_image_path'].lower() == 'draw':
         config['template_guide_image_path'] = ''
@@ -211,7 +220,8 @@ def verifiedInputs(config: Dict) -> Tuple[str, List[Dict]]:
   results_xlsx_dir_path = os.path.join(results_dir_path, 'xlsx')
   results_video_dir_path = os.path.join(results_dir_path, 'video')
   results_template_dir_path = os.path.join(results_dir_path, 'template')  
-  results_video_frames_dir_path = os.path.join(results_video_dir_path, 'frames')  
+  results_video_frames_dir_path = os.path.join(results_video_dir_path, 'frames')
+  results_video_min_frames_dir_path = os.path.join(results_dir_path, 'min_frame')
 
   dirs = {
     'base_dir': base_dir,
@@ -220,7 +230,8 @@ def verifiedInputs(config: Dict) -> Tuple[str, List[Dict]]:
     'results_xlsx_dir_path': results_xlsx_dir_path,
     'results_video_dir_path': results_video_dir_path,
     'results_template_dir_path': results_template_dir_path,
-    'results_video_frames_dir_path': results_video_frames_dir_path
+    'results_video_frames_dir_path': results_video_frames_dir_path,
+    'results_video_min_frames_dir_path': results_video_min_frames_dir_path
   }
 
   if 'path_to_excel_template' not in config:
@@ -316,9 +327,9 @@ def verifiedInputs(config: Dict) -> Tuple[str, List[Dict]]:
     # set all the required path values
     input_video_path = os.path.join(base_dir, file_name + input_file_extension)
     output_video_frames_dir_path = os.path.join(results_video_frames_dir_path, file_name)
-    output_video_min_frame_dir_path = os.path.join(output_video_frames_dir_path, 'min_frame')
     output_json_path = os.path.join(results_json_dir_path, file_name + '-results.json')
-    path_to_excel_results = os.path.join(results_xlsx_dir_path, file_name + '-reslts.xlsx')
+    path_to_user_excel_results = os.path.join(results_xlsx_dir_path, file_name + '-reslts_user.xlsx')
+    path_to_sdk_excel_results = os.path.join(results_xlsx_dir_path, file_name + '-reslts_sdk.xlsx')
     output_file_extension = '.mp4'
     output_video_path = os.path.join(results_video_dir_path, file_name + '-results' + output_file_extension)
     results_template_filename = os.path.join(results_template_dir_path, file_name + '-template.tiff')
@@ -330,10 +341,10 @@ def verifiedInputs(config: Dict) -> Tuple[str, List[Dict]]:
       'user_roi_selection': user_roi_selection,
       'output_video_path': output_video_path,
       'output_video_frames_dir_path': output_video_frames_dir_path,
-      'output_video_min_frame_dir_path': output_video_min_frame_dir_path,
       'output_json_path': output_json_path,
       'path_to_excel_template': path_to_excel_template,
-      'path_to_excel_results': path_to_excel_results,
+      'path_to_sdk_excel_results': path_to_sdk_excel_results,
+      'path_to_user_excel_results': path_to_user_excel_results,
       'guide_match_search_seconds': guide_match_search_seconds,
       'microns_per_pixel': microns_per_pixel,
       'output_conversion_factor': output_conversion_factor,
@@ -375,27 +386,32 @@ def getFilePathViaGUI(window_title: str='') -> str:
   ) 
 
 
-def contentsOfDir(dir_path: str, search_terms: List[str]) -> Tuple[List[str], List[Tuple['str']]]:
+def contentsOfDir(dir_path: str, search_terms: List[str], search_extension_only: bool=True) -> Tuple[List[str], List[Tuple[str]]]:
+  all_files_found = []  
   if os.path.isdir(dir_path):
     base_dir = dir_path
     for search_term in search_terms:
-      glob_search_term = '*' + search_term + '*'
-      file_paths = glob.glob(os.path.join(dir_path, glob_search_term))
-      if len(file_paths) > 0:
-        # we've found videos so don't bother searching for more
-        break
+      glob_search_term = '*' + search_term
+      if not search_extension_only:
+        glob_search_term += '*'
+      files_found = glob.glob(os.path.join(dir_path, glob_search_term))
+      if len(files_found) > 0:
+        all_files_found.extend(files_found)
   else:
     # presume it's actually a single file path
     base_dir = os.path.dirname(dir_path)
-    file_paths = [dir_path]
+    all_files_found = [dir_path]
+  if len(all_files_found) < 1:
+    return None, None
+
   files = []
-  for file_path in file_paths:
+  for file_path in all_files_found:
       file_name, file_extension = os.path.splitext(os.path.basename(file_path))
       files.append((file_name, file_extension))
   return base_dir, files
 
 
-def resultsToCSV(
+def resultsToCSVforSDK(
   tracking_results: List[Dict],
   path_to_template_file: str,
   path_to_output_file,
@@ -423,12 +439,57 @@ def resultsToCSV(
   template_start_row = 2
   time_column = 'A'
   displacement_column = 'B'
-  x_pos_column = 'C'
-  y_pos_column = 'D'
   num_rows_to_write = len(tracking_results)
   for results_row in range(num_rows_to_write):
       tracking_result = tracking_results[results_row]
       sheet_row = str(results_row + template_start_row)
+      sheet[time_column + sheet_row] = float(tracking_result['TIME_STAMP'])
+      sheet[displacement_column + sheet_row] = float(tracking_result['XY_DISPLACEMENT'])
+  workbook.save(filename=path_to_output_file)
+
+
+def resultsToCSVforUser(
+  tracking_results: List[Dict],
+  path_to_output_file,
+  frames_per_second: float,
+  well_name: str = None, 
+  date_stamp: str = '1010-01-01'
+):    
+  workbook = openpyxl.Workbook()
+  sheet = workbook.active
+
+  if well_name is None:
+    well_name = 'Z01'
+  sheet['F2'] = 'Well Name'    
+  sheet['G2'] = well_name
+  sheet['F3'] = 'Date'
+  sheet['G3'] = date_stamp + ' 00:00:00'
+  sheet['F4'] = 'Plate Barcode'
+  sheet['G4'] = 'NA'  # plate barcode
+  sheet['F5'] = 'GPS'
+  sheet['G5'] = frames_per_second
+  sheet['F6'] = 'Twitches Point Up' 
+  sheet['G6'] = 'y'   # do twiches point up
+  sheet['F7'] = 'Microscope Name'
+  sheet['G7'] = 'NA'  # microscope name
+
+  time_column = 'A'
+  displacement_column = 'B'
+  x_pos_column = 'C'
+  y_pos_column = 'D'
+  heading_row = 1
+  data_row = 2
+
+  sheet[time_column + str(heading_row)] = 'Time'
+  sheet[displacement_column + str(heading_row)] = 'XY Displacement'
+  sheet[x_pos_column + str(heading_row)] = 'Template Match X Pos'
+  sheet[y_pos_column + str(heading_row)] = 'Template Match Y Pos'
+
+  # set the time and post displacement fields
+  num_rows_to_write = len(tracking_results)
+  for results_row in range(num_rows_to_write):
+      tracking_result = tracking_results[results_row]
+      sheet_row = str(results_row + data_row)
       sheet[time_column + sheet_row] = float(tracking_result['TIME_STAMP'])
       sheet[displacement_column + sheet_row] = float(tracking_result['XY_DISPLACEMENT'])
       sheet[x_pos_column + sheet_row] = float(tracking_result['TEMPLATE_MATCH_ORIGIN_X'])
