@@ -255,8 +255,16 @@ def computeMorphologyMetrics(
       image_analyzed_id += 1
 
   results_xlsx_name = 'results.xlsx'
-  results_xlsx_path = os.path.join(results_dir, results_xlsx_name)
-  resultsToCSV(all_metrics, results_xlsx_path)
+  results_xlsx_path = os.path.join(results_dir, results_xlsx_name)  
+  runtime_parameters = {
+    'search_image_path' : base_dir,
+    'template_image_paths': template_image_paths,
+    'sub_pixel_search_increment' : sub_pixel_search_increment,
+    'sub_pixel_refinement_radius' : sub_pixel_refinement_radius,    
+    'microns_per_pixel': microns_per_pixel,
+    'use_midline_background' : use_midline_background  
+  }
+  resultsToCSV(all_metrics, results_xlsx_path, runtime_parameters)
 
 
 def morphologyMetricsForImage(
@@ -612,7 +620,8 @@ def outerEdges(input_array: np.ndarray, show_plots: bool=True) -> int:
 
 def resultsToCSV(
   analysis_results: List[Dict],
-  path_to_output_file
+  path_to_output_file: str,
+  runtime_parameters: Dict
 ):    
 
   workbook = openpyxl.Workbook()
@@ -644,6 +653,23 @@ def resultsToCSV(
       sheet[mid_point_column + sheet_row] = float(metrics['mid_point_vertical_length'])
       sheet[right_edge_column + sheet_row] = float(metrics['right_edge_vertical_length'])
       sheet[area_column + sheet_row] = float(metrics['tissue_area'])
+
+  # add the runtime parameters
+  runtime_config_lables_column = 'H'
+  runtime_config_data_column = 'I'
+  sheet[runtime_config_lables_column + heading_row] = 'runtime parameters'
+  sheet[runtime_config_lables_column + str(data_row + 0)] = 'input images'
+  sheet[runtime_config_data_column + str(data_row + 0)] = runtime_parameters['search_image_path']
+  sheet[runtime_config_lables_column + str(data_row + 1)] = 'input templates'
+  template_paths = runtime_parameters['template_image_paths'][0] + ', ' + runtime_parameters['template_image_paths'][1]
+  sheet[runtime_config_data_column + str(data_row + 1)] = template_paths 
+  sheet[runtime_config_lables_column + str(data_row + 2)] = 'microns per pixel'
+  sheet[runtime_config_data_column + str(data_row + 2)] = runtime_parameters['microns_per_pixel']
+  sheet[runtime_config_lables_column + str(data_row + 3)] = 'sub pixel refinement search increment'
+  sheet[runtime_config_data_column + str(data_row + 3)] = runtime_parameters['sub_pixel_search_increment']
+  sheet[runtime_config_lables_column + str(data_row + 4)] = 'sub pixel refinement radius'
+  sheet[runtime_config_data_column + str(data_row + 4)] = runtime_parameters['sub_pixel_refinement_radius']
+
   workbook.save(filename=path_to_output_file)
 
 
