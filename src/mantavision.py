@@ -23,6 +23,11 @@ def runTrackTemplate(config: Dict):
   track_templates_start_time = time.time()
   dirs, args = verifiedInputs(config)
   
+  if 'errors' in args:
+    if 'input dir empty' in args['errors']:
+      print('WARNING. The selected directory is empty. Nothing to do. Exiting')
+      return
+
   # make all the dirs needed for writing the results 
   # unless they already exist in which case we need to barf
   dirs_exist_error_message = ''
@@ -213,7 +218,13 @@ def verifiedInputs(config: Dict) -> Tuple[str, List[Dict]]:
   template_guide_image_path = config['template_guide_image_path']
   supported_file_extensions = ['.mp4', '.avi', '.mov', '.nd2']
   base_dir, video_files = contentsOfDir(dir_path=config['input_video_path'], search_terms=supported_file_extensions)
-  
+  if video_files is None:
+    return (None, {'errors': {'input dir empty'}})    
+  else:
+    num_videos_in_dir = len(video_files)
+    if num_videos_in_dir < 1:
+      return (None, {'errors': {'input dir empty'}})
+
   unique_name = "results_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
   results_dir_path = os.path.join(base_dir, unique_name)
   results_json_dir_path = os.path.join(results_dir_path, 'json')
