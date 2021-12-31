@@ -42,7 +42,8 @@ def trackTemplate(
   sub_pixel_search_increment: float = None,
   sub_pixel_refinement_radius: float = None,
   user_roi_selection: bool = True, 
-  max_movement_per_frame = None
+  max_movement_per_frame = None,
+  direction_sense: Dict = None,
 ) -> Tuple[str, List[Dict], float, np.ndarray, int]:
   '''
   Tracks a template image through each frame of a video.
@@ -72,7 +73,7 @@ def trackTemplate(
     return (error_msg, [{}], frames_per_second, None, -1)
 
   # open a video reader stream
-  input_video_stream = VideoReader(input_video_path)
+  input_video_stream = VideoReader(input_video_path, direction_sense=direction_sense)
   if not input_video_stream.isOpened():
     error_msg = "Error. Can't open videos stream for capture. Nothing has been tracked."
     return (error_msg, [{}], frames_per_second, None, -1)

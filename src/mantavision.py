@@ -71,7 +71,8 @@ def runTrackTemplate(config: Dict):
       input_args['sub_pixel_search_increment'],
       input_args['sub_pixel_refinement_radius'],
       input_args['user_roi_selection'],
-      input_args['max_pixel_movement_per_frame']
+      input_args['max_pixel_movement_per_frame'],
+      input_args['direction_sense']
     )
     total_tracking_time += (time.time() - video_tracking_start_time)
     
@@ -288,6 +289,11 @@ def verifiedInputs(config: Dict) -> Tuple[str, List[Dict]]:
   else:
     output_frames = config['output_frames']
   
+  if 'direction_sense' not in config:
+    direction_sense = None
+  else:
+    direction_sense = config['direction_sense']
+
   # set all the values needed to run template matching on each input video
   configs = []
   for file_name, input_file_extension in video_files:
@@ -363,6 +369,7 @@ def verifiedInputs(config: Dict) -> Tuple[str, List[Dict]]:
       'sub_pixel_refinement_radius': sub_pixel_refinement_radius,
       'max_pixel_movement_per_frame': max_pixel_movement_per_frame,
       'output_frames': output_frames,
+      'direction_sense': direction_sense,      
       'well_name': well_name,
       'date_stamp': date_stamp,
     })
