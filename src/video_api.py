@@ -221,7 +221,6 @@ class PYAVReader():
         )
 
     def frameRGB(self) -> np.ndarray:
-        # print(f'format type: {self.current_frame.format.name}')
         return orientedFrame(
             self.current_frame.to_ndarray(format='rgb24'),
             self.direction_sense
@@ -493,8 +492,10 @@ def orientedFrame(current_frame, direction_sense: Dict) -> np.ndarray:
             flip_directions.append(0)
         if direction_sense['x'] < 0:
             flip_directions.append(1)
-        current_frame = np.flip(current_frame, flip_directions)
-    return current_frame.copy()
+        # NOTE: the copy() that follows is necesarry because
+        # openCV can't use the "view" returned by np.flip()
+        current_frame = np.flip(current_frame, flip_directions).copy()
+    return current_frame
 
 
 def rgbConverter(type: str='eye') -> np.ndarray:

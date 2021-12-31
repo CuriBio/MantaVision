@@ -43,7 +43,7 @@ def trackTemplate(
   sub_pixel_refinement_radius: float = None,
   user_roi_selection: bool = True, 
   max_movement_per_frame = None,
-  direction_sense: Dict = None,
+  contraction_vector: Tuple = None,
 ) -> Tuple[str, List[Dict], float, np.ndarray, int]:
   '''
   Tracks a template image through each frame of a video.
@@ -73,7 +73,7 @@ def trackTemplate(
     return (error_msg, [{}], frames_per_second, None, -1)
 
   # open a video reader stream
-  input_video_stream = VideoReader(input_video_path, direction_sense=direction_sense)
+  input_video_stream = VideoReader(input_video_path)
   if not input_video_stream.isOpened():
     error_msg = "Error. Can't open videos stream for capture. Nothing has been tracked."
     return (error_msg, [{}], frames_per_second, None, -1)
@@ -120,9 +120,11 @@ def trackTemplate(
   min_x_origin = (frame_width, frame_height)
   max_x_origin = (0, 0)
   min_x_frame = 0
+  max_x_frame = 0
   min_y_origin = (frame_width, frame_height)  
   max_y_origin = (0, 0)
   min_y_frame = 0
+  max_y_frame = 0
 
   tracking_results = [] # will be a list of dicts
   best_match_origin_x = None
@@ -175,11 +177,13 @@ def trackTemplate(
       min_y_frame = frame_number
     if best_match_origin_y > max_y_origin[1]:
       max_y_origin = (best_match_origin_x, best_match_origin_y)
+      max_y_frame = frame_number
     if best_match_origin_x < min_x_origin[0]:
       min_x_origin = (best_match_origin_x, best_match_origin_y)
       min_x_frame = frame_number
     if best_match_origin_x > max_x_origin[0]:
       max_x_origin = (best_match_origin_x, best_match_origin_y)
+      max_x_frame = frame_number
 
     # draw a grid over the region in the frame where the template matched
     if video_writer is not None:
@@ -213,17 +217,23 @@ def trackTemplate(
   input_video_stream.close()
 
   # adjust match displacements so they're relative to the match closest to the origin
-  min_frame_numbers = (min_x_frame, min_y_frame)
-  extreme_points = [min_x_origin, min_y_origin, max_x_origin, max_y_origin]
-  displacement_adjusted_results, min_frame_number = displacementAdjustedResults(
+  displacement_adjusted_results, min_contration_frame_number = displacementAdjustedResults(
     results_to_adjust=tracking_results,
     microns_per_pixel=microns_per_pixel,
     output_conversion_factor=output_conversion_factor,
-    extreme_points=extreme_points,
-    min_frame_numbers=min_frame_numbers
+    extreme_points=[min_x_origin, min_y_origin, max_x_origin, max_y_origin],
+    min_frame_numbers=(min_x_frame, min_y_frame),
+    max_frame_numbers=(max_x_frame, max_y_frame),
+    contraction_vector=contraction_vector
   )
  
-  return ((warning_msg, error_msg), displacement_adjusted_results, frames_per_second, template_rgb, min_frame_number)
+  return (
+    (warning_msg, error_msg),
+    displacement_adjusted_results,
+    frames_per_second,
+    template_rgb,
+    min_contration_frame_number
+  )
 
 
 def displacementAdjustedResults(
@@ -232,32 +242,49 @@ def displacementAdjustedResults(
   output_conversion_factor: float,
   extreme_points: List[Tuple[float, float]],
   min_frame_numbers: Tuple[int, int],
-  contraction_vector: Tuple[int, int]=None
+  max_frame_numbers: Tuple[int, int],
+  contraction_vector: Tuple[int, int]=(1,-1)
 ) -> List[Dict]:
-  ''' Adjust displacement values for all video frames so they are relative to the
-      point in the video where the template (roi) match is closest to the origin
+  ''' Adjust displacement values for matches in all frames so they are relative to the
+      point in the video stream where the template (roi) match is closest to the origin
       instead of the being relative to the actual video frame origin.
   '''
-  # TODO: currently, positive movement is defined as down or right
-  #       we can use the contraction_vector parameter to define
-  #       which direction of contration is positive. i.e.
-  #       (0,  -1) means positive contractions are right to left,
-  #       (-1, -1) means positive contractions are bottom right to top left.
-  #       then readjust match origin coordinates accordingly so that
-  #       XY displacement is reported as 0 to some positive value that direction
+  # TODO: change to a dict or many dicts so we're not referring to random tuple 
+  #       positions that have zero meaning and can easily be passed in the wrong order
+  contraction_moves_right = contraction_vector[0] > 0
+  contraction_moves_down = contraction_vector[1] < 0  # image orientation is flipped in y
   min_x_origin, min_y_origin, max_x_origin, max_y_origin = extreme_points
-  range_of_x_movement = max_x_origin[0] - min_x_origin[0]
-  range_of_y_movement = max_y_origin[1] - min_y_origin[1]
+  range_of_x_movement = abs(max_x_origin[0] - min_x_origin[0])
+  range_of_y_movement = abs(max_y_origin[1] - min_y_origin[1])
   if range_of_x_movement > range_of_y_movement:
     main_movement_axis = 'x'
-    min_template_origin_x = min_x_origin[0]
-    min_template_origin_y = min_x_origin[1]
-    min_frame_number = min_frame_numbers[0]
+    if contraction_moves_right:
+      min_frame_number = min_frame_numbers[0]
+      min_template_origin_x = min_x_origin[0]
+      min_template_origin_y = min_x_origin[1]
+    else:
+      min_frame_number = max_frame_numbers[0]
+      min_template_origin_x = max_x_origin[0]
+      min_template_origin_y = max_x_origin[1]
+    # if contraction_moves_down:
+    #   min_template_origin_y = min_x_origin[1]
+    # else:
+    #   min_template_origin_y = max_x_origin[1]
   else:
     main_movement_axis = 'y'
-    min_template_origin_x = min_y_origin[0]
-    min_template_origin_y = min_y_origin[1]
-    min_frame_number = min_frame_numbers[1]
+    if contraction_moves_down:
+      min_frame_number = min_frame_numbers[1]
+      min_template_origin_y = min_y_origin[1]
+      min_template_origin_x = min_y_origin[0]
+    else:
+      min_frame_number = max_frame_numbers[1]
+      min_template_origin_y = max_y_origin[1]
+      min_template_origin_x = max_y_origin[0]
+    # if contraction_moves_right:
+    #   min_template_origin_x = min_y_origin[0]
+    # else:
+    #   min_template_origin_x = max_y_origin[0]
+
   print(f'main axis of movement detected along {main_movement_axis}')
 
   adjusted_tracking_results = []
