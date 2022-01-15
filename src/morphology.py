@@ -14,13 +14,10 @@ from mantavision import getFilePathViaGUI, getDirPathViaGUI
 from skimage import filters as skimagefilters
 from track_template import intensityAdjusted
 from numpy.polynomial.polynomial import polyfit, Polynomial
-from mantavision import getDirPathViaGUI, getFilePathViaGUI
+from mantavision import getDirPathViaGUI, getFilePathViaGUI, contentsOfDir
 
 from matplotlib import pyplot as plt
 
-
-# TODO: add an option that allows only drawing one roi for the first image and then using that
-#       as a template for all other images.
 
 # TODO: what we need is some form of background subtraction?
 #       if we can remove the post section and it's rings?
@@ -39,24 +36,6 @@ from matplotlib import pyplot as plt
 
 
 # TODO:
-# do a polynomial fit with 1, 2, 3, or 4 segments, and degree 2, 3, or 4.
-# then for each edge pixel, compute the abs difference between the detected edge position
-# and the position in the polyfit. we then remove any pixels with an edge position tha tis
-# > x% away for the polyfit position at that pixel (where x% is determined by the height/dims
-# of the image and converted to a specific pixel amount. should probably also have some default
-# min and max pixels.). So then, we go and fill back in each of the removed pixels by:
-# - searching left and right of the end points that are still there, picking 
-#   a small number of pixels on either side (2-5 i guess) and fitting a poly to that and
-#   filling in the missing pixels.
-# - the same as above start at the left end point and for every missing pixel, 
-#   only search in the direction of whichever end point we are closest to, 
-#   and only use pixels on that side to fit a poly. we probably want to use the specific
-#   position in the curve to decide where to search from i.e. if we're really close to the 
-#   left then search left and extend right, if we're left but close to the middle, maybe
-#   use the middle section right hand side and extend left. if the gap is not very big, 
-#   then perhaps use both left and right. the sections shouldn't be too wide. maybe
-#   only 1/10 the entire length of the horizontal midline length.
-
 # - when doing multiple images, if we manually select ROIs, we use the same templates for all images
 
 # - change the way we find the left magnets right edge, and right posts left edge
@@ -178,7 +157,8 @@ def computeMorphologyMetrics(
     search_image_path = getFilePathViaGUI('Select File To Analyize')
   elif search_image_path.lower() == 'select_dir':
     search_image_path = getDirPathViaGUI('Select Directory With Images To Analyze')
-  base_dir, test_files = contentsOfDir(dir_path=search_image_path, search_terms=['.tif', '.tiff', '.jpg', '.png'])
+  base_dir, file_names = contentsOfDir(dir_path=search_image_path, search_terms=['.tif', '.tiff', '.jpg', '.png'])
+  
   results_dir_name = "results_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
   results_dir = os.path.join(base_dir, results_dir_name)
   os.mkdir(results_dir)
@@ -195,7 +175,7 @@ def computeMorphologyMetrics(
   elif template_image_paths[0].lower() == 'draw_rois_once':
     drawn_roi_templates_dir = os.path.join(results_dir, 'drawn_template_images')
     os.mkdir(drawn_roi_templates_dir)
-    file_name, file_extension = test_files[0]  # NOTE: this could be a selected file too
+    file_name, file_extension = file_names[0]  # NOTE: this could be a selected file too
     search_image_for_template = cv.imread(os.path.join(base_dir, file_name + file_extension))
     rois_info = roiInfoFromUserDrawings(search_image_for_template)
     left_roi = rois_info['left']
@@ -216,7 +196,7 @@ def computeMorphologyMetrics(
 
   all_metrics = []
   image_analyzed_id = 0
-  for file_name, file_extension in test_files:
+  for file_name, file_extension in file_names:
       file_to_analyze = os.path.join(base_dir, file_name + file_extension)
       results_image, metrics = morphologyMetricsForImage(
         search_image_path=file_to_analyze,
@@ -257,8 +237,16 @@ def computeMorphologyMetrics(
       image_analyzed_id += 1
 
   results_xlsx_name = 'results.xlsx'
-  results_xlsx_path = os.path.join(results_dir, results_xlsx_name)
-  resultsToCSV(all_metrics, results_xlsx_path)
+  results_xlsx_path = os.path.join(results_dir, results_xlsx_name)  
+  runtime_parameters = {
+    'search_image_path' : base_dir,
+    'template_image_paths': template_image_paths,
+    'sub_pixel_search_increment' : sub_pixel_search_increment,
+    'sub_pixel_refinement_radius' : sub_pixel_refinement_radius,    
+    'microns_per_pixel': microns_per_pixel,
+    'use_midline_background' : use_midline_background  
+  }
+  resultsToCSV(all_metrics, results_xlsx_path, runtime_parameters)
 
 
 def morphologyMetricsForImage(
@@ -322,8 +310,8 @@ def morphologyMetricsForImage(
   # compute a measure of variance for the gradmag and if there is too much variance..., or
   # take the two estimated peaks and if they're not significantly larger (10+ times) 
   # than 98/99% of all the other points...
-  # then we know we have crap edges and we can compute the  
-  # cumulative sum of the gradmag moving average, 
+  # then we know we have crap edges and we can compute:
+  # gradmag -> moving average -> cumulative sum 
   # chop off the top and bottom approx 50-100 pixels (possibly make it a parameter?) 
   # and then fit an "S" shaped poly
   #   _
@@ -612,73 +600,66 @@ def outerEdges(input_array: np.ndarray, show_plots: bool=True) -> int:
   }
 
 
-def contentsOfDir(dir_path: str, search_terms: List[str], search_extension_only: bool=True) -> Tuple[List[str], List[Tuple[str]]]:
-  if dir_path == 'select':
-    dir_path = getDirPathViaGUI('select directory with files to analyze')
-
-  all_files_found = []  
-  if os.path.isdir(dir_path):
-    base_dir = dir_path
-    for search_term in search_terms:
-      glob_search_term = '*' + search_term
-      if not search_extension_only:
-        glob_search_term += '*'
-      files_found = glob.glob(os.path.join(dir_path, glob_search_term))
-      if len(files_found) > 0:
-        all_files_found.extend(files_found)
-  else:
-    # presume it's actually a single file path
-    base_dir = os.path.dirname(dir_path)
-    all_files_found = [dir_path]
-  if len(all_files_found) < 1:
-    return None, None
-
-  files = []
-  for file_path in all_files_found:
-      file_name, file_extension = os.path.splitext(os.path.basename(file_path))
-      files.append((file_name, file_extension))
-  return base_dir, files
-
-
 def resultsToCSV(
   analysis_results: List[Dict],
-  path_to_output_file
+  path_to_output_file: str,
+  runtime_parameters: Dict
 ):    
 
   workbook = openpyxl.Workbook()
   sheet = workbook.active
 
-  heading_row = 1
-  sheet['A' + str(heading_row)] = 'File'
-  sheet['B' + str(heading_row)] = 'Horizontal Length'
-  sheet['C' + str(heading_row)] = 'Left Edge Length'
-  sheet['D' + str(heading_row)] = 'Mid Point Length'
-  sheet['E' + str(heading_row)] = 'Right Edge Length'
-  sheet['F' + str(heading_row)] = 'Area'
+  file_column = 'A'
+  horizontal_column = 'B'
+  mid_point_column = 'C'
+  left_edge_column = 'D'
+  right_edge_column = 'E'
+  area_column = 'F'
+  
+  heading_row = '1'
+  sheet[file_column + heading_row] = 'File'
+  sheet[horizontal_column + heading_row] = 'Horizontal Length'
+  sheet[left_edge_column + heading_row] = 'Left Edge Length'
+  sheet[mid_point_column + heading_row] = 'Mid Point Length'
+  sheet[right_edge_column + heading_row] = 'Right Edge Length'
+  sheet[area_column + heading_row] = 'Area'
 
-  data_row = heading_row + 1
+  data_row = 2
   num_rows_to_write = len(analysis_results)
   for results_row in range(num_rows_to_write):
       metrics = analysis_results[results_row]
       sheet_row = str(results_row + data_row)
-      sheet['A' + sheet_row] = metrics['file']
-      sheet['B' + sheet_row] = float(metrics['horizontal_length'])
-      sheet['C' + sheet_row] = float(metrics['left_edge_vertical_length'])
-      sheet['D' + sheet_row] = float(metrics['mid_point_vertical_length'])
-      sheet['E' + sheet_row] = float(metrics['right_edge_vertical_length'])
-      sheet['F' + sheet_row] = float(metrics['tissue_area'])
+      sheet[file_column + sheet_row] = metrics['file']
+      sheet[horizontal_column + sheet_row] = float(metrics['horizontal_length'])
+      sheet[left_edge_column + sheet_row] = float(metrics['left_edge_vertical_length'])
+      sheet[mid_point_column + sheet_row] = float(metrics['mid_point_vertical_length'])
+      sheet[right_edge_column + sheet_row] = float(metrics['right_edge_vertical_length'])
+      sheet[area_column + sheet_row] = float(metrics['tissue_area'])
+
+  # add the runtime parameters
+  runtime_config_lables_column = 'H'
+  runtime_config_data_column = 'I'
+  sheet[runtime_config_lables_column + heading_row] = 'runtime parameters'
+  sheet[runtime_config_lables_column + str(data_row + 0)] = 'input images'
+  sheet[runtime_config_data_column + str(data_row + 0)] = runtime_parameters['search_image_path']
+  sheet[runtime_config_lables_column + str(data_row + 1)] = 'input templates'
+  template_paths = runtime_parameters['template_image_paths'][0] + ', ' + runtime_parameters['template_image_paths'][1]
+  sheet[runtime_config_data_column + str(data_row + 1)] = template_paths 
+  sheet[runtime_config_lables_column + str(data_row + 2)] = 'microns per pixel'
+  sheet[runtime_config_data_column + str(data_row + 2)] = runtime_parameters['microns_per_pixel']
+  sheet[runtime_config_lables_column + str(data_row + 3)] = 'sub pixel refinement search increment'
+  sheet[runtime_config_data_column + str(data_row + 3)] = runtime_parameters['sub_pixel_search_increment']
+  sheet[runtime_config_lables_column + str(data_row + 4)] = 'sub pixel refinement radius'
+  sheet[runtime_config_data_column + str(data_row + 4)] = runtime_parameters['sub_pixel_refinement_radius']
+
   workbook.save(filename=path_to_output_file)
 
 
 if __name__ == '__main__':
   
-  metrics = morphologyMetrics(
+  computeMorphologyMetrics(
     search_image_path=None,
     template_image_paths=None,
     sub_pixel_search_increment=None,
     sub_pixel_refinement_radius=None
   )
-
-  print(f"horizontal inner distance between rois: {round(metrics['distance_between_rois'], 2)} (microns)")
-  print(f"vertical thickness at midpoint between rois: {round(metrics['midpoint_thickness'], 2)} (microns)")
-  print(f"area between rois: {round(metrics['area_between_rois'], 2)} (square microns)")

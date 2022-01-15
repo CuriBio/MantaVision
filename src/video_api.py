@@ -90,9 +90,9 @@ class VideoWriter:
 
 class VideoReader:
     ''' Unified interface for reading videos of various formats ND2, mp4/avi ... '''
-    def __init__(self, video_path: str, reader_api: str=None):
+    def __init__(self, video_path: str, reader_api: str=None, direction_sense: Dict = None):
         self.video_path = video_path
-        self.reader = self._set_reader(reader_api)
+        self.reader = self._set_reader(reader_api, direction_sense)
 
     def _apiFromPath(self) -> str:
         self.format_apis = [
@@ -105,12 +105,12 @@ class VideoReader:
                 return video_format_api['api']
         return None
 
-    def _set_reader(self, reader_api: str):
+    def _set_reader(self, reader_api: str, direction_sense: Dict = None):
         if reader_api is None:
             reader_api = self._apiFromPath()
         if reader_api == 'nd2':
-            return ND2VideoReader(self.video_path)
-        return PYAVReader(self.video_path)
+            return ND2VideoReader(self.video_path, direction_sense)
+        return PYAVReader(self.video_path, direction_sense)
 
     def isOpened(self) -> bool:
         return self.reader.isOpened()
@@ -190,7 +190,8 @@ class VideoReader:
 
 class PYAVReader():
     ''' Video reader interface using pyav for mp4, avi, mov etc (anything other than ND2)'''
-    def __init__(self, video_path: str):
+    def __init__(self, video_path: str, direction_sense: Dict = None):
+        self.direction_sense = direction_sense
         self.video_path = video_path
         self.container = av.open(self.video_path)
         self.video_stream = self.container.streams.video[0]
@@ -214,11 +215,16 @@ class PYAVReader():
         self.next()
 
     def frame(self) -> np.ndarray:
-        return self.current_frame.to_ndarray()
+        return orientedFrame(
+            self.current_frame.to_ndarray(),
+            self.direction_sense
+        )
 
     def frameRGB(self) -> np.ndarray:
-        # print(f'format type: {self.current_frame.format.name}')
-        return self.current_frame.to_ndarray(format='rgb24')
+        return orientedFrame(
+            self.current_frame.to_ndarray(format='rgb24'),
+            self.direction_sense
+        )
 
     def frameVideoRGB(self) -> np.ndarray:
         # unlike nd2 files, video files won't ever need to have
@@ -227,7 +233,10 @@ class PYAVReader():
         return self.frameRGB()
 
     def frameGray(self) -> np.ndarray:
-        return self.current_frame.to_ndarray(format='gray')
+        return orientedFrame(
+            self.current_frame.to_ndarray(format='gray'),
+            self.direction_sense
+        )
 
     def timeStamp(self) -> float:
         return self.current_frame.time
@@ -305,12 +314,12 @@ class PYAVReader():
 
 class ND2VideoReader():
     ''' Video reader interface using nd2 for ND2 files: https://github.com/tlambert03/nd2 '''
-    def __init__(self, video_path: str):
+    def __init__(self, video_path: str, direction_sense: Dict = None):
         self.video_path = video_path
         self.nd2_file = nd2.ND2File(self.video_path)
         self.is_rgb = self.nd2_file.is_rgb
         self.rgb_conversion = rgbConverter(type='eye')
-
+        self.direction_sense = direction_sense
         self.is_legacy = self.nd2_file.is_legacy
 
         if 'C' in self.nd2_file.sizes:
@@ -349,9 +358,13 @@ class ND2VideoReader():
 
     def frameRGB(self) -> np.ndarray:
         if self.is_rgb:
-            return self.nd2_frames[self.frame_num].to_numpy()
+            current_frame = self.nd2_frames[self.frame_num].to_numpy()
         else:
-            return grayToRGB(self.nd2_frames[self.frame_num].to_numpy())
+            current_frame = grayToRGB(self.nd2_frames[self.frame_num].to_numpy())
+        return orientedFrame(
+            current_frame,
+            self.direction_sense
+        )
 
     def frameVideoRGB(self) -> np.ndarray:
         new_height = self.height
@@ -366,13 +379,20 @@ class ND2VideoReader():
             old_frame = grayToRGB(self.nd2_frames[self.frame_num].to_numpy())
         frame_to_return = np.zeros((new_height, new_width, 3), dtype=np.uint8)
         frame_to_return[0:old_frame.shape[0], 0:old_frame.shape[1],:] = old_frame
-        return frame_to_return
+        return orientedFrame(
+            frame_to_return,
+            self.direction_sense
+        )        
 
     def frameGray(self) -> np.ndarray:
         if self.is_rgb:
-            return rgbToGray(self.nd2_frames[self.frame_num].to_numpy(), self.rgb_conversion)
+            current_frame = rgbToGray(self.nd2_frames[self.frame_num].to_numpy(), self.rgb_conversion)
         else:
-            return self.nd2_frames[self.frame_num].to_numpy()
+            current_frame = self.nd2_frames[self.frame_num].to_numpy()
+        return orientedFrame(
+            current_frame,
+            self.direction_sense
+        )
 
     def framePTS(self, frame_num: int=None) -> int:
         if frame_num is None:
@@ -463,6 +483,19 @@ class ND2VideoReader():
             return False
         self.frame_num = frame_position
         return True
+
+
+def orientedFrame(current_frame, direction_sense: Dict) -> np.ndarray:
+    if direction_sense is not None:
+        flip_directions = []
+        if direction_sense['y'] < 0:
+            flip_directions.append(0)
+        if direction_sense['x'] < 0:
+            flip_directions.append(1)
+        # NOTE: the copy() that follows is necesarry because
+        # openCV can't use the "view" returned by np.flip()
+        current_frame = np.flip(current_frame, flip_directions).copy()
+    return current_frame
 
 
 def rgbConverter(type: str='eye') -> np.ndarray:
