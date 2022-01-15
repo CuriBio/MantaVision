@@ -36,24 +36,6 @@ from matplotlib import pyplot as plt
 
 
 # TODO:
-# do a polynomial fit with 1, 2, 3, or 4 segments, and degree 2, 3, or 4.
-# then for each edge pixel, compute the abs difference between the detected edge position
-# and the position in the polyfit. we then remove any pixels with an edge position tha tis
-# > x% away for the polyfit position at that pixel (where x% is determined by the height/dims
-# of the image and converted to a specific pixel amount. should probably also have some default
-# min and max pixels.). So then, we go and fill back in each of the removed pixels by:
-# - searching left and right of the end points that are still there, picking 
-#   a small number of pixels on either side (2-5 i guess) and fitting a poly to that and
-#   filling in the missing pixels.
-# - the same as above start at the left end point and for every missing pixel, 
-#   only search in the direction of whichever end point we are closest to, 
-#   and only use pixels on that side to fit a poly. we probably want to use the specific
-#   position in the curve to decide where to search from i.e. if we're really close to the 
-#   left then search left and extend right, if we're left but close to the middle, maybe
-#   use the middle section right hand side and extend left. if the gap is not very big, 
-#   then perhaps use both left and right. the sections shouldn't be too wide. maybe
-#   only 1/10 the entire length of the horizontal midline length.
-
 # - when doing multiple images, if we manually select ROIs, we use the same templates for all images
 
 # - change the way we find the left magnets right edge, and right posts left edge
@@ -328,8 +310,8 @@ def morphologyMetricsForImage(
   # compute a measure of variance for the gradmag and if there is too much variance..., or
   # take the two estimated peaks and if they're not significantly larger (10+ times) 
   # than 98/99% of all the other points...
-  # then we know we have crap edges and we can compute the  
-  # cumulative sum of the gradmag moving average, 
+  # then we know we have crap edges and we can compute:
+  # gradmag -> moving average -> cumulative sum 
   # chop off the top and bottom approx 50-100 pixels (possibly make it a parameter?) 
   # and then fit an "S" shaped poly
   #   _
