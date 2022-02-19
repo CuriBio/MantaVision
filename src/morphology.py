@@ -2,20 +2,19 @@
 
 
 import os
-import glob
+# import glob
 from datetime import datetime
-import shutil
+# import shutil
 import openpyxl
 import numpy as np
-from cv2 import cv2 as cv
+import cv2 as cv
 from typing import Tuple, List, Dict
 from track_template import matchResults
 from mantavision import getFilePathViaGUI, getDirPathViaGUI
-from skimage import filters as skimagefilters
+# from skimage import filters as skimagefilters
 from track_template import intensityAdjusted
-from numpy.polynomial.polynomial import polyfit, Polynomial
+from numpy.polynomial.polynomial import Polynomial  # , polyfit
 from mantavision import getDirPathViaGUI, getFilePathViaGUI, contentsOfDir
-
 from matplotlib import pyplot as plt
 
 
@@ -212,7 +211,7 @@ def computeMorphologyMetrics(
           'left_edge_vertical_length': round(metrics['left_end_point_thickness'], 2),
           'mid_point_vertical_length': round(metrics['midpoint_thickness'], 2),
           'right_edge_vertical_length': round(metrics['right_end_point_thickness'], 2),
-          'tissue_area': round(metrics['area_between_rois'], 2)
+          # 'tissue_area': round(metrics['area_between_rois'], 2)
         }        
       )
 
@@ -229,7 +228,7 @@ def computeMorphologyMetrics(
         print(f"vertical thickness at inner edge of left ROI : {round(metrics['left_end_point_thickness'], 2)} (microns)")
         print(f"vertical thickness at midpoint between rois: {round(metrics['midpoint_thickness'], 2)} (microns)")
         print(f"vertical thickness at inner edge of right ROI : {round(metrics['right_end_point_thickness'], 2)} (microns)")
-        print(f"area between rois: {round(metrics['area_between_rois'], 2)} (microns)")
+        # print(f"area between rois: {round(metrics['area_between_rois'], 2)} (microns)")
         plt.imshow(cv.cvtColor(results_image, cv.COLOR_BGR2RGB))
         plt.show()
         print()
@@ -249,6 +248,29 @@ def computeMorphologyMetrics(
   resultsToCSV(all_metrics, results_xlsx_path, runtime_parameters)
 
 
+# TODO:
+# we can find the edge of the points near the middle by:
+# - segmenting the image with the triangle method and walk out from the midpoint in both up and down directions
+# until the first backround pixle is found, this is the edge at the mid point.
+# and we can find the edge for the end points by also walking out from the vertical midpoint, both up and down,
+# - computing a measure of 2D smoothed local variance (with a readius of at least 1 or 2), then
+# compute a moving average of say 3-5 pixels. when this measure of variance increases by more than say, 25%?
+# we presume we've walked over the edge. This variance method might also work for the middle points.
+# we could compute a measure of variance near the midpoint and presume the whole tissue has that intensity
+# +/- the variance (stddev actually) and just walk out from the center line until the change is greater than 1 stddev
+# (maybe that needs to be true for 3 of the following5 pixels to say that the 1st pixel that was > variance threshold is the edge)
+# - and we can also combine these methods or use some as a guide for the others i.e. if one is very robust
+# but not accurate, we can use it to limit where we look, then use one of the other methods that is more accurate.
+def variance(input_array: np.ndarray, x_pos: int, y_pos: int) -> float:
+  centre_value = input_array[y_pos, x_pos]
+  diff_sum = 0
+  for y_offset in [-1, 0, 1]:
+    for x_offset in [-1, 0, 1]:
+      diff = centre_value - input_array[y_pos + y_offset, x_pos + x_offset]
+      diff_square = diff * diff
+  return diff_sum/8.0
+
+
 def morphologyMetricsForImage(
   search_image_path: str=None,
   template_image_paths: List[str]=None,
@@ -261,6 +283,7 @@ def morphologyMetricsForImage(
   if microns_per_pixel is None:
     microns_per_pixel = 1.0
 
+  # load the image
   if search_image_path is None or search_image_path.lower() == 'select_file':
     search_image_path = getFilePathViaGUI('image to search path')
   search_image = cv.imread(search_image_path)
@@ -270,6 +293,7 @@ def morphologyMetricsForImage(
   search_image_gray = cv.cvtColor(search_image, cv.COLOR_BGR2GRAY)
   search_image_gray_adjusted = intensityAdjusted(search_image_gray) 
 
+  # load or draw the ROIs
   if isinstance(template_image_paths, str):
     template_image_paths = [template_image_paths]
   if template_image_paths[0].lower() == 'draw_rois':
@@ -286,11 +310,11 @@ def morphologyMetricsForImage(
       sub_pixel_search_increment=None,
       sub_pixel_refinement_radius=None  
     )
-  
   left_roi = rois_info['left']
   right_roi = rois_info['right']
   # TODO: deal with more than 2 roi's being drawn??? maybe not.
 
+  # compute the distance between the inner sides of each ROI
   right_distance_marker_x = right_roi['ORIGIN_X']
   left_distance_marker_x = left_roi['ORIGIN_X'] + left_roi['WIDTH']
   if left_distance_marker_x >= right_distance_marker_x:
@@ -299,152 +323,80 @@ def morphologyMetricsForImage(
     left_distance_marker_x = right_distance_marker_x - 1
   pixel_distance_between_rois = right_distance_marker_x - left_distance_marker_x
   distance_between_rois = microns_per_pixel*pixel_distance_between_rois
+  horizontal_midpoint = left_distance_marker_x + pixel_distance_between_rois/2
+  left_vertical_midpoint = left_roi['ORIGIN_Y'] + left_roi['HEIGHT']/2
+  right_vertical_midpoint = right_roi['ORIGIN_Y'] + right_roi['HEIGHT']/2
+  vertical_midpoint = (left_vertical_midpoint + right_vertical_midpoint)/2
 
-  # find the points we think are at the upper/lower edges  
-  points_to_find_edges_at = np.asarray(range(left_distance_marker_x, right_distance_marker_x))
-  points_to_fit_poly_at = np.asarray(range(pixel_distance_between_rois))  
-  upper_edge_points = np.empty(pixel_distance_between_rois)
-  lower_edge_points = np.empty(pixel_distance_between_rois)
-
-  # TODO: 
-  # compute a measure of variance for the gradmag and if there is too much variance..., or
-  # take the two estimated peaks and if they're not significantly larger (10+ times) 
-  # than 98/99% of all the other points...
-  # then we know we have crap edges and we can compute:
-  # gradmag -> moving average -> cumulative sum 
-  # chop off the top and bottom approx 50-100 pixels (possibly make it a parameter?) 
-  # and then fit an "S" shaped poly
-  #   _
-  # _/
-  #
-  # so fit a logistic style function?
-  # then we can use the fitted parameters to "draw" lines at the 
-  # bottom and top horizontal sections and middle slope section
-  # and then work out where the horizontal sections intersect with the sloped section
-  # and those become the points where the "edges" are
+  # find the points we think are at the upper/lower edges for the far left, mid and far right horizontal positions
+  points_to_find_edges_at = np.asarray([int(left_distance_marker_x), int(horizontal_midpoint), int(right_distance_marker_x)])
+  upper_edge_points = np.empty(len(points_to_find_edges_at))
+  lower_edge_points = np.empty(len(points_to_find_edges_at))
 
   show_plots = False
   for index, point_to_find_edges_at in enumerate(points_to_find_edges_at):
-    # if point_to_find_edges_at >= 700 and point_to_find_edges_at <= 730:
-    #   show_plots = True
-    # else:
-    #   show_plots = False
-    edge_point = outerEdges(search_image_gray[:, point_to_find_edges_at], show_plots=show_plots)    
+    edge_point = outerEdges(
+      search_image_gray[:, point_to_find_edges_at],
+      vertical_midpoint=vertical_midpoint,
+      show_plots=show_plots
+    )
     upper_edge_points[index] = edge_point['upper_edge_pos']
     lower_edge_points[index] = edge_point['lower_edge_pos']
  
-  # # fit curves to those upper/lower "edge points" because it can be very noisy
-  # # compute a single polyfit
-  # polyfit_deg = 4
-  # upper_edge_points_poly = Polynomial.fit(points_to_fit_poly_at, upper_edge_points, polyfit_deg)
-  # upper_edge_points_from_poly = upper_edge_points_poly(points_to_fit_poly_at)
-  # lower_edge_points_poly = Polynomial.fit(points_to_fit_poly_at, lower_edge_points, polyfit_deg)
-  # lower_edge_points_from_poly = lower_edge_points_poly(points_to_fit_poly_at)
+  # # compute the area between the fitted curves
+  # edge_point_diffs = lower_edge_points - upper_edge_points
+  # area_between_rois = microns_per_pixel * np.sum(edge_point_diffs)
 
-  # # compute a piecewise smooth fit 
-  # polyfit_deg = 4
-  # num_sub_regions = 8
-  # split_upper_edge_points = np.array_split(upper_edge_points, num_sub_regions)
-  # split_lower_edge_points = np.array_split(lower_edge_points, num_sub_regions)
-  # for split_num in range(num_sub_regions):
-  #   sub_region_upper_edge_points = split_upper_edge_points[split_num]
-  #   upper_edge_sub_region_range = np.asarray(range(len(sub_region_upper_edge_points)))
-  #   upper_edge_points_poly = Polynomial.fit(
-  #     upper_edge_sub_region_range,
-  #     sub_region_upper_edge_points, 
-  #     polyfit_deg
-  #   )
-  #   split_upper_edge_points[split_num] = upper_edge_points_poly(upper_edge_sub_region_range)
-  #   sub_region_lower_edge_points = split_lower_edge_points[split_num]
-  #   lower_edge_sub_region_range = np.asarray(range(len(sub_region_lower_edge_points)))
-  #   lower_edge_points_poly = Polynomial.fit(
-  #     lower_edge_sub_region_range,
-  #     sub_region_lower_edge_points, 
-  #     polyfit_deg
-  #   )
-  #   split_lower_edge_points[split_num] = lower_edge_points_poly(lower_edge_sub_region_range)
-  # upper_edge_points = np.concatenate(split_upper_edge_points, axis=0)
-  # lower_edge_points = np.concatenate(split_lower_edge_points, axis=0)
-
-  # compute the area between the fitted curves
-  edge_point_diffs = lower_edge_points - upper_edge_points
-  area_between_rois = microns_per_pixel * np.sum(edge_point_diffs)
-
-  # find distance between edges at the midpoint
-  # TODO: if use_midline_background is True
-  #       then we collect a small sample of pixel intensities in the gray scale image
-  #       at the top and/or bottom of the image in some small region either side of
-  #       the midline, we then say that anything that is NOT in the range of the backgroun
-  #       is the tissue and we compute the centreline width with those pixels
-  #       we could then walk outward from that and just the tissue/background boundary
-  #       and we reach the inside roi edges
-
-
-  half_pixel_distance_between_rois = round(pixel_distance_between_rois/2)
-  midpoint_upper_edge_position = lower_edge_points[half_pixel_distance_between_rois]
-  midpoint_thickness = microns_per_pixel*(
-    midpoint_upper_edge_position - upper_edge_points[half_pixel_distance_between_rois]
-  )
-
-  # find thickness at left roi inner edge
+  # compute the vertical distance beteen "edges" for the left, mid, and right points
   left_end_point_thickness = microns_per_pixel*(lower_edge_points[0] - upper_edge_points[0])
-
-  # find thickness at right roi inner edge
-  right_end_point_thickness = microns_per_pixel*(lower_edge_points[-1] - upper_edge_points[-1])
+  midpoint_thickness = microns_per_pixel*(lower_edge_points[1] - upper_edge_points[1])  
+  right_end_point_thickness = microns_per_pixel*(lower_edge_points[2] - upper_edge_points[2])
 
   metrics = {
     'distance_between_rois': distance_between_rois,
     'midpoint_thickness': midpoint_thickness,
     'left_end_point_thickness': left_end_point_thickness,
     'right_end_point_thickness': right_end_point_thickness,
-    'area_between_rois': area_between_rois 
+    # 'area_between_rois': area_between_rois 
   }
 
   # create a version of the input that has the results drawn on it
-  # TODO: figure out if I have to make the results image a uint8
-  #       becuase i don't think it's necessary.
-  #       other than for adding colours.
   results_image = search_image.copy().astype(np.uint8)
 
   # draw the results metrics on the results image
   # draw the horizontal line between left and right ROI inner edges
   horizontal_line_position_colour_bgr = (255, 0, 0)
-  upper_midpoint_pos_y = upper_edge_points[half_pixel_distance_between_rois]
-  lower_midpoint_pos_y = lower_edge_points[half_pixel_distance_between_rois]
-  horizontal_line_position_y = round(
-    upper_midpoint_pos_y + (lower_midpoint_pos_y - upper_midpoint_pos_y)*0.5
-  )
   cv.line(
     results_image,
-    pt1=(left_distance_marker_x, horizontal_line_position_y),
-    pt2=(right_distance_marker_x, horizontal_line_position_y),
+    pt1=(left_distance_marker_x, int(left_vertical_midpoint)),
+    pt2=(right_distance_marker_x, int(right_vertical_midpoint)),
     color=horizontal_line_position_colour_bgr,
     thickness=3,
     lineType=cv.LINE_AA
   )
 
-  # draw the upper and lower edges of object
-  edge_contour_colour_bgr = (0, 0, 128)
-  lower_edge_points_to_draw = zip(points_to_find_edges_at.astype(np.int32), lower_edge_points.astype(np.int32))
-  for x_pos, y_pos in lower_edge_points_to_draw:
-    cv.circle(
-      results_image,
-      center=(x_pos, y_pos),
-      radius=2,    
-      color=edge_contour_colour_bgr,
-      thickness=3,
-      lineType=cv.LINE_AA
-    )
-  upper_edge_points_to_draw = zip(points_to_find_edges_at.astype(np.int32), upper_edge_points.astype(np.int32))
-  for x_pos, y_pos in upper_edge_points_to_draw:
-    cv.circle(
-      results_image,
-      center=(x_pos, y_pos),
-      radius=2,    
-      color=edge_contour_colour_bgr,
-      thickness=3,
-      lineType=cv.LINE_AA
-    )
+  # # draw the upper and lower edges of object
+  # edge_contour_colour_bgr = (0, 0, 128)
+  # lower_edge_points_to_draw = zip(points_to_find_edges_at.astype(np.int32), lower_edge_points.astype(np.int32))
+  # for x_pos, y_pos in lower_edge_points_to_draw:
+  #   cv.circle(
+  #     results_image,
+  #     center=(x_pos, y_pos),
+  #     radius=2,    
+  #     color=edge_contour_colour_bgr,
+  #     thickness=3,
+  #     lineType=cv.LINE_AA
+  #   )
+  # upper_edge_points_to_draw = zip(points_to_find_edges_at.astype(np.int32), upper_edge_points.astype(np.int32))
+  # for x_pos, y_pos in upper_edge_points_to_draw:
+  #   cv.circle(
+  #     results_image,
+  #     center=(x_pos, y_pos),
+  #     radius=2,    
+  #     color=edge_contour_colour_bgr,
+  #     thickness=3,
+  #     lineType=cv.LINE_AA
+  #   )
 
   # draw the left ROI inner edge object vertical thickness line
   edge_width_lines_colour_bgr = (0, 255, 0)
@@ -470,12 +422,12 @@ def morphologyMetricsForImage(
     lineType=cv.LINE_AA
   )
   # draw the horizontal midpoint object vertical thickness line
-  midpoint_point_upper_edge_pos = round(upper_edge_points[half_pixel_distance_between_rois])
-  midpoint_point_lower_edge_pos = round(lower_edge_points[half_pixel_distance_between_rois]) 
+  midpoint_point_upper_edge_pos = round(upper_edge_points[1])
+  midpoint_point_lower_edge_pos = round(lower_edge_points[1]) 
   cv.line(
     results_image,
-    pt1=(left_distance_marker_x + half_pixel_distance_between_rois, midpoint_point_upper_edge_pos),
-    pt2=(left_distance_marker_x + half_pixel_distance_between_rois, midpoint_point_lower_edge_pos),
+    pt1=(int(horizontal_midpoint), midpoint_point_upper_edge_pos),
+    pt2=(int(horizontal_midpoint), midpoint_point_lower_edge_pos),
     color=edge_width_lines_colour_bgr,
     thickness=3,
     lineType=cv.LINE_AA
@@ -484,120 +436,84 @@ def morphologyMetricsForImage(
   return results_image, metrics 
 
 
-def outerEdges(input_array: np.ndarray, show_plots: bool=True) -> int:
+def normalized(input_image: np.ndarray) -> np.ndarray:
+  input_array_min: float = np.min(input_image)
+  input_array_max: float = np.max(input_image)
+  input_array_zero_origin: np.ndarray = input_image - input_array_min
+  input_array_new_range: float = 512.0
+  input_array_current_range: float = float(input_array_max - input_array_min)
+  input_array_normalizer: float = input_array_new_range/input_array_current_range
+  return input_array_zero_origin * input_array_normalizer
+
+
+def gradmag(input_array: np.ndarray, order: int = 2) -> np.ndarray:
+  input_array_gradient = np.gradient(input_array, edge_order=order)
+  return np.square(input_array_gradient)
+
+
+def yGradmag(input_array: np.ndarray) -> np.ndarray:
+  return np.square(
+    cv.Sobel(input_array, -1, 0, 1, ksize=5)[:, 0]
+  )
+
+
+def movingAverage(input_array: np.ndarray, filter_radius: int = 5) -> np.ndarray:
+  len_of_average = 2*filter_radius + 1
+  ma_operator = np.ones(len_of_average)/len_of_average
+  return np.convolve(input_array, ma_operator, mode='valid')
+
+
+def outerEdges(input_array: np.ndarray, vertical_midpoint: int, show_plots: bool=False) -> int:
   '''
   Presumes there are two main edges on the outside of a
   horizontally aligned "tube/rectangle" like structure
-  i.e. 
+  i.e.
   ------------
 
   ------------
   If horizontal_pos is None, input_array should be a 1D array of intensities 
   (either raw or gradmag) i.e. a vertical cross section 1 pixel thick
   '''
-  # normalize the input
-  input_array_min = np.min(input_array)
-  input_array_max = np.max(input_array)
-  input_array_range = input_array_max - input_array_min
-  input_array_new_range = 512
-  input_array_normalized = input_array_new_range * (
-    (input_array - input_array_min)/float(input_array_range)
-  )
 
-  # compute a moving average (ma) smoothed gradmag of the input
-  input_array_gradient = np.gradient(input_array_normalized, edge_order=2)
-  input_array_gradmag = np.square(input_array_gradient)
-  # compute a moving averge
-  ma_radius = 5
-  len_of_average = 2*ma_radius + 1
-  input_array_gradmag_ma = np.convolve(
-    input_array_gradmag,
-    np.ones(len_of_average)/len_of_average,
-    mode='valid'
-  )
+  input_array_normalized = normalized(input_array)
+  input_array_gradmag = yGradmag(input_array_normalized)
+  input_array_gradmag_ma = movingAverage(input_array_gradmag)
 
   if show_plots:
-    # plt.plot(input_array_gradmag_ma, label='Gradient Magnitude of vertical line at midpoint', color = 'r')
-    # plt.show()
-    
+    plt.plot(input_array_gradmag_ma, label='Gradient Magnitude of vertical line at midpoint', color = 'r')
     gradient_cumulative_sum = np.cumsum(input_array_gradmag)
-    gradient_cumulative_sum_ma = np.convolve(
-      gradient_cumulative_sum,
-      np.ones(len_of_average)/len_of_average,
-      mode='valid'
-    )
-    plt.plot(gradient_cumulative_sum_ma, label='Cummulative Distribution of Gradient', color = 'g')
+    plt.show()
+    # gradient_cumulative_sum_ma = np.convolve(
+    #   gradient_cumulative_sum,
+    #   np.ones(len_of_average)/len_of_average,
+    #   mode='valid'
+    # )
+    plt.plot(gradient_cumulative_sum, label='Cummulative Distribution of Gradient', color = 'g')
     plt.show()
 
-  # find what we presume is the edge (one of two) with the highest gradmag intensity
+  # first find what we presume is one of two tissue edges using the highest intensity gradmag 
   max_intensity_pos = np.argmax(input_array_gradmag_ma)
-  max_intensity = input_array_gradmag_ma[max_intensity_pos]
-  half_max_intensity = max_intensity/2
-
-  # find what we presume is the second edge, with lower intensity than the first one we found
-  # if we know the correct direction, we can basically just keep looking for a peak
-  # and when the intensity has dropped to half the value of the current max of a proper local max
-  # we bail out and say we must have found the peak.
-  input_array_gradmag_ma_length = len(input_array_gradmag_ma)
-  upper_cumulative_sum = np.sum(input_array_gradmag_ma[:max_intensity_pos])
-  lower_cumulative_sum = np.sum(input_array_gradmag_ma[max_intensity_pos:])
-  if lower_cumulative_sum < upper_cumulative_sum:
-    # look for the second highest peak scaning left to right 
-    # moving from left end right towards the max peak. 
-    start_pos = 0
-    end_pos = max_intensity_pos - 1
-    increment = 1
-  else:
-    # look for the second highest peak scanning right to left 
-    # moving from right end left towards the max peak. 
-    start_pos = input_array_gradmag_ma_length + 1
-    end_pos = max_intensity_pos
-    increment = -1
-
-  search_radius = 5
-  other_peak_max_pos = start_pos
-  other_peak_max_value = -np.inf
-  for pos in range(start_pos, end_pos, increment):
-    min_pos = max(0, pos - search_radius)
-    max_pos = min(pos + search_radius + 1, input_array_gradmag_ma_length)
-
-    search_sub_region_max_value = input_array_gradmag_ma[min_pos]
-    search_sub_region_max_pos = min_pos
-    for search_sub_region_pos in range(min_pos, max_pos):
-      current_value = input_array_gradmag_ma[search_sub_region_pos]
-      if current_value >= search_sub_region_max_value:
-        search_sub_region_max_value = current_value
-        search_sub_region_max_pos = search_sub_region_pos
-
-    if search_sub_region_max_pos == pos:
-      # local max so check it's a 'global' max with what we've checked so far
-      if search_sub_region_max_value >= other_peak_max_value:
-        other_peak_max_pos = search_sub_region_max_pos
-        other_peak_max_value = search_sub_region_max_value
-
-    if other_peak_max_value > half_max_intensity:
-      # we arbitrarily decide the other peak must be at least half the global max
-      if search_sub_region_max_value < other_peak_max_value/2:
-        # if the current search values have dropped by half from the max 
-        # we must be walking down the descending side of a peak and therefore 
-        # we presume we have found the other peak so bail out of the search
-        break  
-
+  # then find what we presume is the other edge on the opposite side of the horizontal midpoint
+  # we presume the tissue is mostly symmetric and so look for the other edge in the vacinity 
+  # of the first edge mirrored on the opposite side of the horizontal midline 
+  half_width = max_intensity_pos - vertical_midpoint
+  second_edge_candidate_pos: int = int(vertical_midpoint - half_width)
+  # create a buffer of +/- 10% of image height to look for the other edge
+  vertical_height = input_array_gradmag_ma.shape[0]
+  candidate_range_buffer = int(vertical_height * 0.1)
+  candidate_start_pos = max(0, second_edge_candidate_pos - candidate_range_buffer)
+  candidate_end_pos = min(second_edge_candidate_pos + candidate_range_buffer, vertical_height)
+  other_peak_max_pos = np.argmax(input_array_gradmag_ma[candidate_start_pos:candidate_end_pos]) + candidate_start_pos
   if max_intensity_pos < other_peak_max_pos:
-    upper_edge_pos = max_intensity_pos
-    lower_edge_pos = other_peak_max_pos
+    return {
+        'lower_edge_pos': other_peak_max_pos,
+        'upper_edge_pos': max_intensity_pos,
+    }
   else:
-    upper_edge_pos = other_peak_max_pos
-    lower_edge_pos = max_intensity_pos
-
-  # adjust for the moving average clipping the ends off
-  upper_edge_pos += ma_radius
-  lower_edge_pos += ma_radius
-
-  return {
-      'lower_edge_pos': lower_edge_pos,
-      'upper_edge_pos': upper_edge_pos,
-  }
+    return {
+        'lower_edge_pos': max_intensity_pos,
+        'upper_edge_pos': other_peak_max_pos,
+    }
 
 
 def resultsToCSV(
@@ -634,7 +550,7 @@ def resultsToCSV(
       sheet[left_edge_column + sheet_row] = float(metrics['left_edge_vertical_length'])
       sheet[mid_point_column + sheet_row] = float(metrics['mid_point_vertical_length'])
       sheet[right_edge_column + sheet_row] = float(metrics['right_edge_vertical_length'])
-      sheet[area_column + sheet_row] = float(metrics['tissue_area'])
+      # sheet[area_column + sheet_row] = float(metrics['tissue_area'])
 
   # add the runtime parameters
   runtime_config_lables_column = 'H'
