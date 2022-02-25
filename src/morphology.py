@@ -16,7 +16,8 @@ from track_template import intensityAdjusted
 from numpy.polynomial.polynomial import Polynomial  # , polyfit
 from mantavision import getDirPathViaGUI, getFilePathViaGUI, contentsOfDir
 from matplotlib import pyplot as plt
-
+from scipy import ndimage as ndifilters
+from skimage import filters as skimagefilters
 
 # TODO: what we need is some form of background subtraction?
 #       if we can remove the post section and it's rings?
@@ -211,7 +212,7 @@ def computeMorphologyMetrics(
           'left_edge_vertical_length': round(metrics['left_end_point_thickness'], 2),
           'mid_point_vertical_length': round(metrics['midpoint_thickness'], 2),
           'right_edge_vertical_length': round(metrics['right_end_point_thickness'], 2),
-          # 'tissue_area': round(metrics['area_between_rois'], 2)
+          'tissue_area': round(metrics['area_between_rois'], 2)
         }        
       )
 
@@ -228,7 +229,7 @@ def computeMorphologyMetrics(
         print(f"vertical thickness at inner edge of left ROI : {round(metrics['left_end_point_thickness'], 2)} (microns)")
         print(f"vertical thickness at midpoint between rois: {round(metrics['midpoint_thickness'], 2)} (microns)")
         print(f"vertical thickness at inner edge of right ROI : {round(metrics['right_end_point_thickness'], 2)} (microns)")
-        # print(f"area between rois: {round(metrics['area_between_rois'], 2)} (microns)")
+        print(f"area between rois: {round(metrics['area_between_rois'], 2)} (microns)")
         plt.imshow(cv.cvtColor(results_image, cv.COLOR_BGR2RGB))
         plt.show()
         print()
@@ -251,9 +252,9 @@ def computeMorphologyMetrics(
 # TODO:
 # we can find the edge of the points near the middle by:
 # - segmenting the image with the triangle method and walk out from the midpoint in both up and down directions
-# until the first backround pixle is found, this is the edge at the mid point.
+# until the first backround pixel is found, this is the edge at the mid point.
 # and we can find the edge for the end points by also walking out from the vertical midpoint, both up and down,
-# - computing a measure of 2D smoothed local variance (with a readius of at least 1 or 2), then
+# - computing a measure of 2D smoothed local variance, then
 # compute a moving average of say 3-5 pixels. when this measure of variance increases by more than say, 25%?
 # we presume we've walked over the edge. This variance method might also work for the middle points.
 # we could compute a measure of variance near the midpoint and presume the whole tissue has that intensity
@@ -261,14 +262,123 @@ def computeMorphologyMetrics(
 # (maybe that needs to be true for 3 of the following5 pixels to say that the 1st pixel that was > variance threshold is the edge)
 # - and we can also combine these methods or use some as a guide for the others i.e. if one is very robust
 # but not accurate, we can use it to limit where we look, then use one of the other methods that is more accurate.
-def variance(input_array: np.ndarray, x_pos: int, y_pos: int) -> float:
-  centre_value = input_array[y_pos, x_pos]
-  diff_sum = 0
-  for y_offset in [-1, 0, 1]:
-    for x_offset in [-1, 0, 1]:
-      diff = centre_value - input_array[y_pos + y_offset, x_pos + x_offset]
-      diff_square = diff * diff
-  return diff_sum/8.0
+
+def verticalVariance(input_array: np.ndarray, var_rad: int, smoothing_sigma: float = None) -> np.ndarray:
+  def varApprox(input_array: np.ndarray, var_rad: int, pos: Tuple[int]) -> float:
+    centre_value = input_array[pos]
+    diff_square_sum = 0
+    for y_offset in range(-var_rad, var_rad + 1):
+        diff = centre_value - input_array[pos[0] + y_offset, pos[1]]
+        diff_square_sum += diff**2
+    return diff_square_sum
+
+  variability_image = np.zeros(input_array.shape, dtype=np.float32)
+  grid_points_y = range(var_rad, input_array.shape[0] - var_rad)
+  grid_points_x = range(var_rad, input_array.shape[1] - var_rad)
+  grid_coordinates = tuple(
+    np.meshgrid(
+      grid_points_y,
+      grid_points_x,
+      indexing='ij',
+    )
+  )
+  if smoothing_sigma is not None:
+    input_to_compute = smoothedHorizontally(input_array, sigma=6.0)
+  else: 
+    input_to_compute = input_array
+  variability_image[grid_coordinates] = varApprox(
+    input_array=input_to_compute,
+    var_rad=var_rad,
+    pos=grid_coordinates
+  )
+  return variability_image
+
+
+def verticalVariance1D(input_array: np.ndarray, var_rad: int, smoothing_sigma: float = None) -> np.ndarray:
+  variability_image = np.zeros(input_array.shape, dtype=np.float32)
+  grid_points_y = range(var_rad, input_array.shape[0] - var_rad)
+  for pos in grid_points_y:
+    centre_value = input_array[pos]
+    diff_square_sum = 0
+    for y_offset in range(-var_rad, var_rad + 1):
+        diff = centre_value - input_array[pos + y_offset]
+        diff_square_sum += diff**2
+    variability_image[pos] = diff_square_sum
+  return variability_image
+
+
+def thresholded(input_image: np.ndarray, method: str, binarize: bool=False) -> np.ndarray:
+  # https://scikit-image.org/docs/dev/api/skimage.filters.html#skimage.filters.threshold_isodata
+  foreground_image_mask = input_image.copy().astype(np.float32)
+  if method == 'otsu':
+    input_image_threshold = skimagefilters.threshold_otsu(
+      foreground_image_mask
+    )
+  elif method == 'multi':
+    input_image_threshold = skimagefilters.threshold_multiotsu(
+      foreground_image_mask,
+      classes=4
+    )
+  elif method == 'adaptive':
+    input_image_threshold = skimagefilters.threshold_local(
+      foreground_image_mask,
+      block_size=3,
+      method='mean'  # 'gaussian', 'median'
+    )    
+  elif method == 'li':
+    input_image_threshold = skimagefilters.threshold_li(
+      foreground_image_mask
+    )
+  elif method == 'triangle':
+    input_image_threshold = skimagefilters.threshold_triangle(
+      foreground_image_mask
+    )
+  elif method == 'mean':
+    input_image_threshold = skimagefilters.threshold_mean(
+      foreground_image_mask
+    )    
+  else:
+    raise RuntimeError(f"threshold method {method} is not supported.")
+  if method == 'multi':
+    input_image_threshold = input_image_threshold.tolist()
+    max_val = np.max(input_image)
+    input_image_threshold = [0] + input_image_threshold + [max_val]
+    num_segments = len(input_image_threshold)
+    for segment in range(1, num_segments):
+      prev_thresh = input_image_threshold[segment - 1]
+      curr_thresh = input_image_threshold[segment]
+      foreground_image_mask[
+          (foreground_image_mask >= prev_thresh) & (foreground_image_mask < curr_thresh) 
+      ] = round(prev_thresh)
+    highest_thresh = input_image_threshold[-1]
+    foreground_image_mask[
+        foreground_image_mask >= highest_thresh 
+    ] = round(highest_thresh)
+  else:
+    foreground_image_mask[
+        foreground_image_mask < input_image_threshold
+    ] = 0.0
+    if binarize:
+      foreground_image_mask[foreground_image_mask > 0.0] = 1.0
+  # foreground_image_mask = foreground_image_mask.astype(np.uint8)
+  return foreground_image_mask
+
+
+def smoothed(input_image: np.ndarray, sigma: float) -> np.ndarray:
+  return ndifilters.gaussian_filter(
+      input_image,
+      sigma=sigma,
+      mode='constant',
+  )
+
+
+def smoothedHorizontally(input_image: np.ndarray, sigma: float) -> np.ndarray:
+  return ndifilters.gaussian_filter1d(
+      input_image,
+      sigma=sigma,
+      mode='constant',
+      axis=1
+  )
 
 
 def morphologyMetricsForImage(
@@ -276,10 +386,9 @@ def morphologyMetricsForImage(
   template_image_paths: List[str]=None,
   sub_pixel_search_increment: float = None,
   sub_pixel_refinement_radius: float = None,
-  microns_per_pixel: float=None,
-  use_midline_background: bool=True
+  microns_per_pixel: float=None
 ):
-
+  ''' '''
   if microns_per_pixel is None:
     microns_per_pixel = 1.0
 
@@ -342,10 +451,77 @@ def morphologyMetricsForImage(
     )
     upper_edge_points[index] = edge_point['upper_edge_pos']
     lower_edge_points[index] = edge_point['lower_edge_pos']
- 
-  # # compute the area between the fitted curves
-  # edge_point_diffs = lower_edge_points - upper_edge_points
-  # area_between_rois = microns_per_pixel * np.sum(edge_point_diffs)
+
+  # find ALL edge points of tissue between templates
+  median_image = ndifilters.median_filter(search_image_gray, size=10)
+  # plt.imshow(median_image)
+  # plt.show()
+  # median_image_path = '/storage/data/home/positimothy/dev/repo/curibio/optical-tracking/test_data/morphology/failing/images/out/median.tif'
+  # cv.imwrite(median_image_path, median_image)
+  points_to_find_edges = np.asarray([point for point in range(left_distance_marker_x, right_distance_marker_x)])
+  top_edge_points = np.empty(len(points_to_find_edges))
+  bottom_edge_points = np.empty(len(points_to_find_edges))
+  show_plots = False
+  
+  for index, point_to_find_edges in enumerate(points_to_find_edges):
+    edge_point = outerEdges(
+      median_image[:, point_to_find_edges],
+      vertical_midpoint=vertical_midpoint,
+      show_plots=show_plots
+    )
+    top_edge_points[index] = edge_point['upper_edge_pos']
+    bottom_edge_points[index] = edge_point['lower_edge_pos']
+
+  # attempt to segment the image so we can find some edges we think are reasonable locations
+  # which we can then use as a guide to determine if the previous edge points need to be adjusted
+  # the mean thresholding method works best for a single threshold, (li works too but not as well)
+  # multi also works but then you have to pick the phase (from whatever the phase is at the midpoint)
+  segmented_image = smoothed(search_image_gray, sigma=10.0)
+  segmented_image = ndifilters.median_filter(segmented_image, size=5)
+  segmented_image = thresholded(segmented_image, method='mean', binarize=True)
+  # plt.imshow(segmented_image)
+  # plt.show()
+  # segmented_image_image_path = '/storage/data/home/positimothy/dev/repo/curibio/optical-tracking/test_data/morphology/failing/images/out/segmented.tif'
+  # cv.imwrite(segmented_image_image_path, segmented_image)
+
+  # y-gradient
+  compute_ddx = False
+  compute_ddy = True
+  y_grad_image = np.square(
+    cv.Sobel(segmented_image, -1, int(compute_ddx), int(compute_ddy), ksize=5)
+  )
+  # plt.imshow(y_grad_image)
+  # plt.show()
+
+  # original + amount * (original - blurred)
+  sharpened_image = median_image + 0.25*y_grad_image
+  # plt.imshow(sharpened_image)
+  # plt.show()
+
+  # y_grad_image_path = '/storage/data/home/positimothy/dev/repo/curibio/optical-tracking/test_data/morphology/failing/images/out/y_grad.tif'
+  # cv.imwrite(y_grad_image_path, y_grad_image)
+
+  # using the edge found at the midpoint, walk along that edge in the segmented_image
+  # i.e. look up and down +/- 1 pixel at the horizontally next "edge" pixel if it's too far from the segmented edge, adjust it
+  # until we get to the far left/right edge point we found earlier
+  # (Li method on the smoothed image might work to obtain just the tissue and separate it from the post background)
+
+  # y_grad_image_normalized = normalized(y_grad_image)
+  # search_image_gray_normalized = normalized(median_image)
+  # enhanced_image = search_image_gray_normalized + y_grad_image_normalized
+  # enhanced_image = normalized(enhanced_image, new_range=255.0).astype(np.uint8)
+  # enhanced_image = smoothed(enhanced_image, sigma=6.0)
+  # plt.imshow(enhanced_image)
+  # plt.show()
+  # enhanced_image_path = '/storage/data/home/positimothy/dev/repo/curibio/optical-tracking/test_data/morphology/failing/images/out/enhanced.tif'
+  # cv.imwrite(enhanced_image_path, enhanced_image)
+  # ##############################################################################
+  # ##############################################################################
+
+
+  # compute the area between the fitted curves
+  edge_point_diffs = lower_edge_points - upper_edge_points
+  area_between_rois = microns_per_pixel * np.sum(edge_point_diffs)
 
   # compute the vertical distance beteen "edges" for the left, mid, and right points
   left_end_point_thickness = microns_per_pixel*(lower_edge_points[0] - upper_edge_points[0])
@@ -357,7 +533,7 @@ def morphologyMetricsForImage(
     'midpoint_thickness': midpoint_thickness,
     'left_end_point_thickness': left_end_point_thickness,
     'right_end_point_thickness': right_end_point_thickness,
-    # 'area_between_rois': area_between_rois 
+    'area_between_rois': area_between_rois
   }
 
   # create a version of the input that has the results drawn on it
@@ -375,28 +551,28 @@ def morphologyMetricsForImage(
     lineType=cv.LINE_AA
   )
 
-  # # draw the upper and lower edges of object
-  # edge_contour_colour_bgr = (0, 0, 128)
-  # lower_edge_points_to_draw = zip(points_to_find_edges_at.astype(np.int32), lower_edge_points.astype(np.int32))
-  # for x_pos, y_pos in lower_edge_points_to_draw:
-  #   cv.circle(
-  #     results_image,
-  #     center=(x_pos, y_pos),
-  #     radius=2,    
-  #     color=edge_contour_colour_bgr,
-  #     thickness=3,
-  #     lineType=cv.LINE_AA
-  #   )
-  # upper_edge_points_to_draw = zip(points_to_find_edges_at.astype(np.int32), upper_edge_points.astype(np.int32))
-  # for x_pos, y_pos in upper_edge_points_to_draw:
-  #   cv.circle(
-  #     results_image,
-  #     center=(x_pos, y_pos),
-  #     radius=2,    
-  #     color=edge_contour_colour_bgr,
-  #     thickness=3,
-  #     lineType=cv.LINE_AA
-  #   )
+  # draw the upper and lower edges of object
+  edge_contour_colour_bgr = (0, 0, 128)
+  lower_edge_points_to_draw = zip(points_to_find_edges.astype(np.int32), bottom_edge_points.astype(np.int32))
+  for x_pos, y_pos in lower_edge_points_to_draw:
+    cv.circle(
+      results_image,
+      center=(x_pos, y_pos),
+      radius=2,    
+      color=edge_contour_colour_bgr,
+      thickness=3,
+      lineType=cv.LINE_AA
+    )
+  upper_edge_points_to_draw = zip(points_to_find_edges.astype(np.int32), top_edge_points.astype(np.int32))
+  for x_pos, y_pos in upper_edge_points_to_draw:
+    cv.circle(
+      results_image,
+      center=(x_pos, y_pos),
+      radius=2,    
+      color=edge_contour_colour_bgr,
+      thickness=3,
+      lineType=cv.LINE_AA
+    )
 
   # draw the left ROI inner edge object vertical thickness line
   edge_width_lines_colour_bgr = (0, 255, 0)
@@ -436,13 +612,12 @@ def morphologyMetricsForImage(
   return results_image, metrics 
 
 
-def normalized(input_image: np.ndarray) -> np.ndarray:
+def normalized(input_image: np.ndarray, new_range: float = 512.0) -> np.ndarray:
   input_array_min: float = np.min(input_image)
   input_array_max: float = np.max(input_image)
   input_array_zero_origin: np.ndarray = input_image - input_array_min
-  input_array_new_range: float = 512.0
   input_array_current_range: float = float(input_array_max - input_array_min)
-  input_array_normalizer: float = input_array_new_range/input_array_current_range
+  input_array_normalizer: float = new_range/input_array_current_range
   return input_array_zero_origin * input_array_normalizer
 
 
@@ -452,6 +627,8 @@ def gradmag(input_array: np.ndarray, order: int = 2) -> np.ndarray:
 
 
 def yGradmag(input_array: np.ndarray) -> np.ndarray:
+  # NOTE: this only returns the 0th x element because 
+  # it's only used for a single vertical strip of pixels
   return np.square(
     cv.Sobel(input_array, -1, 0, 1, ksize=5)[:, 0]
   )
@@ -550,7 +727,7 @@ def resultsToCSV(
       sheet[left_edge_column + sheet_row] = float(metrics['left_edge_vertical_length'])
       sheet[mid_point_column + sheet_row] = float(metrics['mid_point_vertical_length'])
       sheet[right_edge_column + sheet_row] = float(metrics['right_edge_vertical_length'])
-      # sheet[area_column + sheet_row] = float(metrics['tissue_area'])
+      sheet[area_column + sheet_row] = float(metrics['tissue_area'])
 
   # add the runtime parameters
   runtime_config_lables_column = 'H'
