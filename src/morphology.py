@@ -249,20 +249,6 @@ def computeMorphologyMetrics(
   resultsToCSV(all_metrics, results_xlsx_path, runtime_parameters)
 
 
-# TODO:
-# we can find the edge of the points near the middle by:
-# - segmenting the image with the triangle method and walk out from the midpoint in both up and down directions
-# until the first backround pixel is found, this is the edge at the mid point.
-# and we can find the edge for the end points by also walking out from the vertical midpoint, both up and down,
-# - computing a measure of 2D smoothed local variance, then
-# compute a moving average of say 3-5 pixels. when this measure of variance increases by more than say, 25%?
-# we presume we've walked over the edge. This variance method might also work for the middle points.
-# we could compute a measure of variance near the midpoint and presume the whole tissue has that intensity
-# +/- the variance (stddev actually) and just walk out from the center line until the change is greater than 1 stddev
-# (maybe that needs to be true for 3 of the following5 pixels to say that the 1st pixel that was > variance threshold is the edge)
-# - and we can also combine these methods or use some as a guide for the others i.e. if one is very robust
-# but not accurate, we can use it to limit where we look, then use one of the other methods that is more accurate.
-
 def verticalVariance(input_array: np.ndarray, var_rad: int, smoothing_sigma: float = None) -> np.ndarray:
   def varApprox(input_array: np.ndarray, var_rad: int, pos: Tuple[int]) -> float:
     centre_value = input_array[pos]
@@ -439,8 +425,8 @@ def morphologyMetricsForImage(
 
   # find the points we think are at the upper/lower edges for the far left, mid and far right horizontal positions
   points_to_find_edges_at = np.asarray([int(left_distance_marker_x), int(horizontal_midpoint), int(right_distance_marker_x)])
-  upper_edge_points = np.empty(len(points_to_find_edges_at))
-  lower_edge_points = np.empty(len(points_to_find_edges_at))
+  key_upper_edge_points = np.empty(len(points_to_find_edges_at))
+  key_lower_edge_points = np.empty(len(points_to_find_edges_at))
 
   show_plots = False
   for index, point_to_find_edges_at in enumerate(points_to_find_edges_at):
@@ -449,84 +435,83 @@ def morphologyMetricsForImage(
       vertical_midpoint=vertical_midpoint,
       show_plots=show_plots
     )
-    upper_edge_points[index] = edge_point['upper_edge_pos']
-    lower_edge_points[index] = edge_point['lower_edge_pos']
+    key_upper_edge_points[index] = edge_point['upper_edge_pos']
+    key_lower_edge_points[index] = edge_point['lower_edge_pos']
 
-  # find ALL edge points of tissue between templates
+
+  # find the edge points of tissue between templates
   median_image = ndifilters.median_filter(search_image_gray, size=10)
   # plt.imshow(median_image)
   # plt.show()
   # median_image_path = '/storage/data/home/positimothy/dev/repo/curibio/optical-tracking/test_data/morphology/failing/images/out/median.tif'
   # cv.imwrite(median_image_path, median_image)
-  points_to_find_edges = np.asarray([point for point in range(left_distance_marker_x, right_distance_marker_x)])
+  
+  # first find the edge points in a region near the horizontal midpoint
+  midpoint_search_radius = 5
+  left_midpoint_edge = int(horizontal_midpoint) - midpoint_search_radius
+  right_midpoint_edge = int(horizontal_midpoint) + midpoint_search_radius
+  points_to_find_edges = np.asarray([point for point in range(left_midpoint_edge, right_midpoint_edge + 1)])
   top_edge_points = np.empty(len(points_to_find_edges))
   bottom_edge_points = np.empty(len(points_to_find_edges))
   show_plots = False
-  
   for index, point_to_find_edges in enumerate(points_to_find_edges):
-    edge_point = outerEdges(
+    edge_points = outerEdges(
       median_image[:, point_to_find_edges],
       vertical_midpoint=vertical_midpoint,
       show_plots=show_plots
     )
-    top_edge_points[index] = edge_point['upper_edge_pos']
-    bottom_edge_points[index] = edge_point['lower_edge_pos']
+    top_edge_points[index] = edge_points['upper_edge_pos']
+    bottom_edge_points[index] = edge_points['lower_edge_pos']
+  # ensure we don't randomly choose a bad edge midpoint by
+  # forcing it to be within some range of the median for the midpoint region
+  edge_point_variance = 5
+  top_edge_points_median = np.median(top_edge_points)
+  top_edge_midpoint = top_edge_points[midpoint_search_radius]
+  if top_edge_midpoint < top_edge_points_median - edge_point_variance:
+    top_edge_midpoint = top_edge_points_median
+  if top_edge_midpoint > top_edge_points_median + edge_point_variance:    
+    top_edge_midpoint = top_edge_points_median
+  bottom_edge_points_median = np.median(bottom_edge_points)
+  bottom_edge_midpoint = bottom_edge_points[midpoint_search_radius]
+  if bottom_edge_midpoint < bottom_edge_points_median - edge_point_variance:
+    bottom_edge_midpoint = bottom_edge_points_median
+  if bottom_edge_midpoint > bottom_edge_points_median + edge_point_variance:    
+    bottom_edge_midpoint = bottom_edge_points_median
 
-  # attempt to segment the image so we can find some edges we think are reasonable locations
-  # which we can then use as a guide to determine if the previous edge points need to be adjusted
-  # the mean thresholding method works best for a single threshold, (li works too but not as well)
-  # multi also works but then you have to pick the phase (from whatever the phase is at the midpoint)
-  segmented_image = smoothed(search_image_gray, sigma=10.0)
-  segmented_image = ndifilters.median_filter(segmented_image, size=5)
-  segmented_image = thresholded(segmented_image, method='mean', binarize=True)
-  # plt.imshow(segmented_image)
-  # plt.show()
-  # segmented_image_image_path = '/storage/data/home/positimothy/dev/repo/curibio/optical-tracking/test_data/morphology/failing/images/out/segmented.tif'
-  # cv.imwrite(segmented_image_image_path, segmented_image)
-
-  # y-gradient
-  compute_ddx = False
-  compute_ddy = True
-  y_grad_image = np.square(
-    cv.Sobel(segmented_image, -1, int(compute_ddx), int(compute_ddy), ksize=5)
-  )
-  # plt.imshow(y_grad_image)
-  # plt.show()
-
-  # original + amount * (original - blurred)
-  sharpened_image = median_image + 0.25*y_grad_image
-  # plt.imshow(sharpened_image)
-  # plt.show()
-
-  # y_grad_image_path = '/storage/data/home/positimothy/dev/repo/curibio/optical-tracking/test_data/morphology/failing/images/out/y_grad.tif'
-  # cv.imwrite(y_grad_image_path, y_grad_image)
-
-  # using the edge found at the midpoint, walk along that edge in the segmented_image
-  # i.e. look up and down +/- 1 pixel at the horizontally next "edge" pixel if it's too far from the segmented edge, adjust it
-  # until we get to the far left/right edge point we found earlier
-  # (Li method on the smoothed image might work to obtain just the tissue and separate it from the post background)
-
-  # y_grad_image_normalized = normalized(y_grad_image)
-  # search_image_gray_normalized = normalized(median_image)
-  # enhanced_image = search_image_gray_normalized + y_grad_image_normalized
-  # enhanced_image = normalized(enhanced_image, new_range=255.0).astype(np.uint8)
-  # enhanced_image = smoothed(enhanced_image, sigma=6.0)
-  # plt.imshow(enhanced_image)
-  # plt.show()
-  # enhanced_image_path = '/storage/data/home/positimothy/dev/repo/curibio/optical-tracking/test_data/morphology/failing/images/out/enhanced.tif'
-  # cv.imwrite(enhanced_image_path, enhanced_image)
-  # ##############################################################################
-  # ##############################################################################
-
-
-  # compute the area between the fitted curves
-  edge_point_diffs = lower_edge_points - upper_edge_points
-  area_between_rois = microns_per_pixel * np.sum(edge_point_diffs)
+  # now find ALL edge points of tissue between templates by walking out from the central points
+  # and only looking at max edges within a narrow horizontal range of the adjacent inner pixel
+  all_points_to_find_edges = np.asarray([point for point in range(left_distance_marker_x, right_distance_marker_x + 1)])
+  edge_values_middle = int(len(all_points_to_find_edges)/2)
+  top_edge_values = np.empty(len(all_points_to_find_edges))
+  top_edge_values[edge_values_middle] = top_edge_midpoint
+  bottom_edge_values = np.empty(len(all_points_to_find_edges))
+  bottom_edge_values[edge_values_middle] = bottom_edge_midpoint
+  show_plots = False
+  
+  right_points = np.asarray([point for point in range(int(horizontal_midpoint) + 1, right_distance_marker_x)])
+  left_points = np.asarray([point for point in range(int(horizontal_midpoint) - 1, left_distance_marker_x  - 1, -1)])
+  all_points = [(left_points, edge_values_middle - 1, -1), (right_points, edge_values_middle + 1, 1)]
+  edge_point_details = [(top_edge_midpoint, top_edge_values), (bottom_edge_midpoint, bottom_edge_values)]
+  for points_to_find_edges, start, direction in all_points:
+    for edge_midpoint, edge_values in edge_point_details:
+      prev_edge_point = edge_midpoint
+      for index, point_to_find_edges in enumerate(points_to_find_edges):
+        edge_point = outerEdge(
+          median_image[:, point_to_find_edges],
+          vertical_midpoint=prev_edge_point, 
+          search_radius=edge_point_variance
+        ) 
+        edge_values[start + direction*index] = edge_point
+        prev_edge_point = edge_point
 
   # compute the vertical distance beteen "edges" for the left, mid, and right points
-  left_end_point_thickness = microns_per_pixel*(lower_edge_points[0] - upper_edge_points[0])
-  midpoint_thickness = microns_per_pixel*(lower_edge_points[1] - upper_edge_points[1])  
-  right_end_point_thickness = microns_per_pixel*(lower_edge_points[2] - upper_edge_points[2])
+  left_end_point_thickness = microns_per_pixel*(key_lower_edge_points[0] - key_upper_edge_points[0])
+  midpoint_thickness = microns_per_pixel*(key_lower_edge_points[1] - key_upper_edge_points[1])  
+  right_end_point_thickness = microns_per_pixel*(key_lower_edge_points[2] - key_upper_edge_points[2])
+
+  # compute the area between the fitted curves
+  edge_point_diffs = bottom_edge_values - top_edge_values
+  area_between_rois = microns_per_pixel * np.sum(edge_point_diffs)
 
   metrics = {
     'distance_between_rois': distance_between_rois,
@@ -553,7 +538,7 @@ def morphologyMetricsForImage(
 
   # draw the upper and lower edges of object
   edge_contour_colour_bgr = (0, 0, 128)
-  lower_edge_points_to_draw = zip(points_to_find_edges.astype(np.int32), bottom_edge_points.astype(np.int32))
+  lower_edge_points_to_draw = zip(all_points_to_find_edges.astype(np.int32), bottom_edge_values.astype(np.int32))
   for x_pos, y_pos in lower_edge_points_to_draw:
     cv.circle(
       results_image,
@@ -563,7 +548,7 @@ def morphologyMetricsForImage(
       thickness=3,
       lineType=cv.LINE_AA
     )
-  upper_edge_points_to_draw = zip(points_to_find_edges.astype(np.int32), top_edge_points.astype(np.int32))
+  upper_edge_points_to_draw = zip(all_points_to_find_edges.astype(np.int32), top_edge_values.astype(np.int32))
   for x_pos, y_pos in upper_edge_points_to_draw:
     cv.circle(
       results_image,
@@ -576,8 +561,8 @@ def morphologyMetricsForImage(
 
   # draw the left ROI inner edge object vertical thickness line
   edge_width_lines_colour_bgr = (0, 255, 0)
-  left_end_point_upper_edge_pos = round(upper_edge_points[0])
-  left_end_point_lower_edge_pos = round(lower_edge_points[0])
+  left_end_point_upper_edge_pos = round(key_upper_edge_points[0])
+  left_end_point_lower_edge_pos = round(key_lower_edge_points[0])
   cv.line(
     results_image,
     pt1=(left_distance_marker_x, left_end_point_lower_edge_pos),
@@ -587,8 +572,8 @@ def morphologyMetricsForImage(
     lineType=cv.LINE_AA
   )
   # draw the right ROI inner edge object vertical thickness line
-  right_end_point_upper_edge_pos = round(upper_edge_points[-1])
-  right_end_point_lower_edge_pos = round(lower_edge_points[-1]) 
+  right_end_point_upper_edge_pos = round(key_upper_edge_points[-1])
+  right_end_point_lower_edge_pos = round(key_lower_edge_points[-1]) 
   cv.line(
     results_image,
     pt1=(right_distance_marker_x, right_end_point_lower_edge_pos),
@@ -598,8 +583,8 @@ def morphologyMetricsForImage(
     lineType=cv.LINE_AA
   )
   # draw the horizontal midpoint object vertical thickness line
-  midpoint_point_upper_edge_pos = round(upper_edge_points[1])
-  midpoint_point_lower_edge_pos = round(lower_edge_points[1]) 
+  midpoint_point_upper_edge_pos = round(key_upper_edge_points[1])
+  midpoint_point_lower_edge_pos = round(key_lower_edge_points[1]) 
   cv.line(
     results_image,
     pt1=(int(horizontal_midpoint), midpoint_point_upper_edge_pos),
@@ -638,6 +623,22 @@ def movingAverage(input_array: np.ndarray, filter_radius: int = 5) -> np.ndarray
   len_of_average = 2*filter_radius + 1
   ma_operator = np.ones(len_of_average)/len_of_average
   return np.convolve(input_array, ma_operator, mode='valid')
+
+
+def outerEdge(input_array: np.ndarray, vertical_midpoint: int, search_radius: int) -> int:
+  '''
+  '''
+  # TODO: restrict the input_array to +/- some region that is larger than the
+  #       radii of the gradmag and moving average functions so we don't have to 
+  #       compute them for the entire set that we never look at
+  input_array_normalized = normalized(input_array)
+  input_array_gradmag = yGradmag(input_array_normalized)
+  input_array_gradmag_ma = movingAverage(input_array_gradmag)
+  search_range_start = vertical_midpoint - search_radius
+  search_range_end = vertical_midpoint + search_radius
+  return search_range_start + np.argmax(
+    input_array_gradmag_ma[int(search_range_start) : int(search_range_end)]
+  )
 
 
 def outerEdges(input_array: np.ndarray, vertical_midpoint: int, show_plots: bool=False) -> int:
