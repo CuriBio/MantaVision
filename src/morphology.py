@@ -198,6 +198,7 @@ def computeMorphologyMetrics(
           'mid_point_vertical_length': round(metrics['midpoint_thickness'], 2),
           'right_edge_vertical_length': round(metrics['right_end_point_thickness'], 2),
           'tissue_area': round(metrics['area_between_rois'], 2),
+          'orientation': round(metrics['orientation'], 2),
           'warning_flags': metrics['warning_flags']
         }        
       )
@@ -216,6 +217,8 @@ def computeMorphologyMetrics(
         print(f"vertical length at midpoint between ROIs: {round(metrics['midpoint_thickness'], 2)} (microns)")
         print(f"vertical length at right ROI : {round(metrics['right_end_point_thickness'], 2)} (microns)")
         print(f"area between ROIs: {round(metrics['area_between_rois'], 2)} (microns\u00b2)")
+        print(f"orientation of horizontal line between ROIs: {round(metrics['orientation'], 2)}\u00b0")        
+        
         if len(metrics['warning_flags']) > 0:
           print('WARNING!:')
           for warning_msg in metrics['warning_flags']:
@@ -384,10 +387,10 @@ def morphologyMetricsForImage(
         edge_values[start + direction*index] = edge_point
         prev_edge_point = edge_point
 
-  # compute the vertical distance between "edges" for the left, mid & right key point initial guesses
-  left_end_point_thickness_kp = microns_per_pixel*(key_lower_edge_points[0] - key_upper_edge_points[0])
-  midpoint_thickness_kp = microns_per_pixel*(key_lower_edge_points[1] - key_upper_edge_points[1])  
-  right_end_point_thickness_kp = microns_per_pixel*(key_lower_edge_points[2] - key_upper_edge_points[2])
+  # # compute the vertical distance between "edges" for the left, mid & right key point initial guesses
+  # left_end_point_thickness_kp = microns_per_pixel*(key_lower_edge_points[0] - key_upper_edge_points[0])
+  # midpoint_thickness_kp = microns_per_pixel*(key_lower_edge_points[1] - key_upper_edge_points[1])  
+  # right_end_point_thickness_kp = microns_per_pixel*(key_lower_edge_points[2] - key_upper_edge_points[2])
 
   # compute the vertical distance between "edges" all edge points estimated by walking outward
   left_end_point_thickness = microns_per_pixel*(bottom_edge_values[0] - top_edge_values[0])
@@ -400,6 +403,14 @@ def morphologyMetricsForImage(
 
   # compute WARNING FLAGS indicating bad measurements
   warning_flags = []
+
+  # sanity check on area computed
+  image_area = search_image_gray.shape[0] * search_image_gray.shape[1]
+  if area_between_rois > image_area:
+    warning_flags.append(
+      "Area indicates measurements may be inaccurate"
+    )
+
   # # difference too great between initial vertical distance and those computed from edges
   # # NOTE: this appears to be a bad measure of error
   # acceptable_vertical_pixel_diff_at_key_points = 40*microns_per_pixel
@@ -509,12 +520,17 @@ def morphologyMetricsForImage(
       )      
       break
 
+  angle_of_midline = -1.0*np.rad2deg(
+    np.arctan(horizontal_line_grad)
+  )
+
   metrics = {
     'distance_between_rois': distance_between_rois,
     'midpoint_thickness': midpoint_thickness,
     'left_end_point_thickness': left_end_point_thickness,
     'right_end_point_thickness': right_end_point_thickness,
     'area_between_rois': area_between_rois,
+    'orientation': angle_of_midline,
     'warning_flags': warning_flags
   }
 
@@ -701,7 +717,8 @@ def resultsToCSV(
   left_edge_column = 'D'
   right_edge_column = 'E'
   area_column = 'F'
-  warning_column = 'G'
+  orientation_column = 'G'
+  warning_column = 'H'
   
   heading_row = '1'
   sheet[file_column + heading_row] = 'File'
@@ -710,6 +727,7 @@ def resultsToCSV(
   sheet[mid_point_column + heading_row] = 'Mid Point Length'
   sheet[right_edge_column + heading_row] = 'Right Edge Length'
   sheet[area_column + heading_row] = 'Area'
+  sheet[orientation_column + heading_row] = 'Orientation'  
   sheet[warning_column + heading_row] = 'WARNINGS'
 
   data_row = 2
@@ -723,6 +741,8 @@ def resultsToCSV(
       sheet[mid_point_column + sheet_row] = float(metrics['mid_point_vertical_length'])
       sheet[right_edge_column + sheet_row] = float(metrics['right_edge_vertical_length'])
       sheet[area_column + sheet_row] = float(metrics['tissue_area'])
+      sheet[orientation_column + sheet_row] = float(metrics['orientation'])
+
       warnings = metrics['warning_flags']
       if len(warnings) > 0:
         warning_text = warnings.pop()
