@@ -4,7 +4,7 @@ import numpy as np
 from scipy.ndimage import shift
 import math
 import pathlib
-from cv2 import cv2 as cv # pip install --user opencv-python
+import cv2 as cv # pip install --user opencv-python
 from video_api import VideoReader, VideoWriter
 from typing import Tuple, List, Dict
 
@@ -126,7 +126,7 @@ def trackTemplate(
   min_y_frame = 0
   max_y_frame = 0
 
-  tracking_results = [] # will be a list of dicts
+  tracking_results: List[Dict] = []
   best_match_origin_x = None
   best_match_origin_y = None
   match_points = []
