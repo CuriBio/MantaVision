@@ -468,24 +468,44 @@ def morphologyMetricsForImage(
   # length of left and right portions is too different
   left_side_length = horizontal_midpoint - left_distance_marker_x
   right_side_length = right_distance_marker_x - horizontal_midpoint
-  side_length_ratio = left_side_length/right_side_length
-  if side_length_ratio < 1.0:
-    side_length_ratio = 1.0/side_length_ratio
-  acceptable_side_length_ratio = 1.3
-  if side_length_ratio > acceptable_side_length_ratio:
+  # TODO: check for div by zero
+  # np.any(np.isclose(
+  if np.isclose(left_side_length, 0.0):
     warning_flags.append(
-      "Ratio between left and right portion lengths indicates measurements may be inaccurate"
-    )     
+      "distance between left end and center indicates measurements may be inaccurate"
+    )
+  elif np.isclose(right_side_length, 0.0):
+    warning_flags.append(
+      "distance between right end and center indicates measurements may be inaccurate"
+    )
+  else:
+    side_length_ratio = left_side_length/right_side_length
+    if side_length_ratio < 1.0:
+      side_length_ratio = 1.0/side_length_ratio
+    acceptable_side_length_ratio = 1.3
+    if side_length_ratio > acceptable_side_length_ratio:
+      warning_flags.append(
+        "Ratio between left and right portion lengths indicates measurements may be inaccurate"
+      )     
 
   # vertical thickness at left and right key points is too different
-  end_point_thickness_ratio = left_end_point_thickness / right_end_point_thickness
-  if end_point_thickness_ratio < 1.0:
-    end_point_thickness_ratio = 1.0/end_point_thickness_ratio
-  acceptable_end_point_thickness_ratio = 1.3
-  if end_point_thickness_ratio > acceptable_end_point_thickness_ratio:
+  if np.isclose(right_end_point_thickness, 0.0) or right_end_point_thickness is None:
     warning_flags.append(
-      "Vertical length between upper and lower edges at left and right key points indicates measurements may be inaccurate"
+      "Missing right vertical end point indicates measurements may be inaccurate"
     )
+  elif np.isclose(left_end_point_thickness, 0.0) or left_end_point_thickness is None:
+    warning_flags.append(
+      "Missing left vertical end point indicates measurements may be inaccurate"
+    )    
+  else:
+    end_point_thickness_ratio = left_end_point_thickness / right_end_point_thickness
+    if end_point_thickness_ratio < 1.0:
+      end_point_thickness_ratio = 1.0/end_point_thickness_ratio
+    acceptable_end_point_thickness_ratio = 1.3
+    if end_point_thickness_ratio > acceptable_end_point_thickness_ratio:
+      warning_flags.append(
+        "Vertical length between upper and lower edges at left and right key points indicates measurements may be inaccurate"
+      )
 
   # edge points are too close to the horizontal midline
   horizontal_line_grad = (right_vertical_midpoint - left_vertical_midpoint) / (right_distance_marker_x - left_distance_marker_x)
@@ -509,16 +529,26 @@ def morphologyMetricsForImage(
   # upper and lower edge point distances to horizontal midline are too great
   upper_edge_distance_to_midline = np.abs(upper_edge_distance_to_midline)
   lower_edge_distance_to_midline = np.abs(lower_edge_distance_to_midline)
-  edge_distance_to_midline_ratio = upper_edge_distance_to_midline/lower_edge_distance_to_midline
-  acceptable_edge_distance_to_midline_ratio = 2.0
-  for edge_distance_ratio in edge_distance_to_midline_ratio:
-    if edge_distance_ratio < 1.0:
-      edge_distance_ratio = 1.0/edge_distance_ratio
-    if edge_distance_ratio > acceptable_edge_distance_to_midline_ratio:
-      warning_flags.append(
-        "Ratio of upper and lower edge distance to horizontal midline indicates measurements may be inaccurate"
-      )      
-      break
+
+  if np.any(np.isclose(upper_edge_distance_to_midline, 0.0)) or upper_edge_distance_to_midline is None:
+    warning_flags.append(
+        "upper edge distance to horizontal midline indicates measurements may be inaccurate"
+    )
+  elif np.any(np.isclose(lower_edge_distance_to_midline, 0.0)) or lower_edge_distance_to_midline is None:
+    warning_flags.append(
+        "lower edge distance to horizontal midline indicates measurements may be inaccurate"
+    )    
+  else:
+    edge_distance_to_midline_ratio = upper_edge_distance_to_midline/lower_edge_distance_to_midline
+    acceptable_edge_distance_to_midline_ratio = 2.0
+    for edge_distance_ratio in edge_distance_to_midline_ratio:
+      if edge_distance_ratio < 1.0:
+        edge_distance_ratio = 1.0/edge_distance_ratio
+      if edge_distance_ratio > acceptable_edge_distance_to_midline_ratio:
+        warning_flags.append(
+          "Ratio of upper and lower edge distance to horizontal midline indicates measurements may be inaccurate"
+        )      
+        break
 
   angle_of_midline = -1.0*np.rad2deg(
     np.arctan(horizontal_line_grad)
