@@ -645,6 +645,8 @@ def normalized(input_image: np.ndarray, new_range: float = 512.0) -> np.ndarray:
   input_array_max: float = np.max(input_image)
   input_array_zero_origin: np.ndarray = input_image - input_array_min
   input_array_current_range: float = float(input_array_max - input_array_min)
+  if np.isclose(input_array_current_range, 0.0):
+    return input_array_zero_origin
   input_array_normalizer: float = new_range/input_array_current_range
   return input_array_zero_origin * input_array_normalizer
 
