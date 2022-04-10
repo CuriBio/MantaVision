@@ -468,14 +468,25 @@ def morphologyMetricsForImage(
   # length of left and right portions is too different
   left_side_length = horizontal_midpoint - left_distance_marker_x
   right_side_length = right_distance_marker_x - horizontal_midpoint
-  side_length_ratio = left_side_length/right_side_length
-  if side_length_ratio < 1.0:
-    side_length_ratio = 1.0/side_length_ratio
-  acceptable_side_length_ratio = 1.3
-  if side_length_ratio > acceptable_side_length_ratio:
+  # TODO: check for div by zero
+  # np.any(np.isclose(
+  if np.isclose(left_side_length, 0.0):
     warning_flags.append(
-      "Ratio between left and right portion lengths indicates measurements may be inaccurate"
-    )     
+      "distance between left end and center indicates measurements may be inaccurate"
+    )
+  elif np.isclose(right_side_length, 0.0):
+    warning_flags.append(
+      "distance between right end and center indicates measurements may be inaccurate"
+    )
+  else:
+    side_length_ratio = left_side_length/right_side_length
+    if side_length_ratio < 1.0:
+      side_length_ratio = 1.0/side_length_ratio
+    acceptable_side_length_ratio = 1.3
+    if side_length_ratio > acceptable_side_length_ratio:
+      warning_flags.append(
+        "Ratio between left and right portion lengths indicates measurements may be inaccurate"
+      )     
 
   # vertical thickness at left and right key points is too different
   if np.isclose(right_end_point_thickness, 0.0) or right_end_point_thickness is None:
