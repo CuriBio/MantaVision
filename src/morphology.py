@@ -786,8 +786,8 @@ def resultsToCSV(
       sheet[warning_column + sheet_row] = warning_text
 
   # add the runtime parameters
-  runtime_config_lables_column = 'H'
-  runtime_config_data_column = 'I'
+  runtime_config_lables_column = 'J'
+  runtime_config_data_column = 'K'
   sheet[runtime_config_lables_column + heading_row] = 'runtime parameters'
   sheet[runtime_config_lables_column + str(data_row + 0)] = 'input images'
   sheet[runtime_config_data_column + str(data_row + 0)] = runtime_parameters['search_image_path']
