@@ -410,7 +410,7 @@ def templateFromInputROI(
   return (new_template, new_template_gray)
 
 
-def userDrawnROI(input_image: np.ndarray) -> Dict:
+def userDrawnROI(input_image: np.ndarray, title_text: str=None) -> Dict:
   '''
   Show the user a window with an image they can draw a ROI on.
   Args:
@@ -419,7 +419,10 @@ def userDrawnROI(input_image: np.ndarray) -> Dict:
     ROI selected by the user from the input image.
   '''
   # create a window that can be resized
-  roi_selector_window_name = "DRAW RECTANGULAR ROI"
+  if title_text is None:
+    roi_selector_window_name = "DRAW RECTANGULAR ROI"
+  else:
+    roi_selector_window_name = title_text    
   roi_gui_flags = cv.WINDOW_KEEPRATIO | cv.WINDOW_NORMAL  # can resize the window
   cv.namedWindow(roi_selector_window_name, flags=roi_gui_flags)
 
@@ -493,7 +496,9 @@ def matchResults(
   image_to_search: np.ndarray,
   template_to_match: np.ndarray,
   sub_pixel_search_increment: float=None,
-  sub_pixel_refinement_radius: int=None
+  sub_pixel_refinement_radius: int=None,
+  sub_pixel_search_template: np.ndarray=None,
+  sub_pixel_search_offset_right: bool=False
 ) -> Tuple[float, List[float]]:
   '''
     Computes the coordinates of the best match between the input image and template_to_match.
@@ -501,9 +506,9 @@ def matchResults(
     Accuracy is +/-sub_pixel_search_increment if |sub_pixel_search_increment| < 1.0 and not None.
   '''
 
-  if sub_pixel_search_increment is not None and not abs(sub_pixel_search_increment) < 1.0:
-    print('WARNING. Passing sub_pixel_search_increment >= 1.0 to bestMatch() is pointless. Ignoring.')
-    sub_pixel_search_increment = None
+  # if sub_pixel_search_increment is not None and not abs(sub_pixel_search_increment) < 1.0:
+  #   print('WARNING. Passing sub_pixel_search_increment >= 1.0 to bestMatch() is pointless. Ignoring.')
+  #   sub_pixel_search_increment = None
   
   # find the best match for template_to_match in image_to_search
   match_results = cv.matchTemplate(image_to_search, template_to_match, cv.TM_CCOEFF)
@@ -513,13 +518,19 @@ def matchResults(
     return (match_measure, match_coordinates)
 
   # refine the results with a sub pixel search
-
   if sub_pixel_refinement_radius is None:
     sub_pixel_search_radius = 1
   else:
     sub_pixel_search_radius = sub_pixel_refinement_radius
   match_coordinates_origin_x = match_coordinates[0]
   match_coordinates_origin_y = match_coordinates[1]
+  if sub_pixel_search_offset_right:
+    match_coordinates_origin_x += template_to_match.shape[1]
+  if sub_pixel_search_template is not None:
+    template_to_match = sub_pixel_search_template  # must go after the offset
+    if sub_pixel_search_offset_right:
+      match_coordinates_origin_x -= template_to_match.shape[1]
+
   sub_region_y_start = max(
     match_coordinates_origin_y - sub_pixel_search_radius,
     0
