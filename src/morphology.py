@@ -1,135 +1,80 @@
 #! /usr/bin/env python
 
-
-from distutils.log import warn
 import os
-# import glob
+from distutils.log import warn
 from datetime import datetime
-# import shutil
 import openpyxl
 import numpy as np
 import cv2 as cv
 from typing import Tuple, List, Dict
-from track_template import matchResults
-from mantavision import getFilePathViaGUI, getDirPathViaGUI
-# from skimage import filters as skimagefilters
-from track_template import intensityAdjusted
-from numpy.polynomial.polynomial import Polynomial  # , polyfit
-from mantavision import getDirPathViaGUI, getFilePathViaGUI, contentsOfDir
+from numpy.polynomial.polynomial import Polynomial
 from matplotlib import pyplot as plt
 from scipy import ndimage as ndifilters
 from skimage import filters as skimagefilters
-
-# TODO:
-# - when doing multiple images, if we manually select ROIs, we use the same templates for all images
-
-# - change the way we find the left magnets right edge, and right posts left edge
-#   so that the initial templates can be roughly drawn just to find the magnet and fixed post
-#   and then use another set of templates that have hard edges on the right of the magnet
-#   and left of the fixed post that we use to refine those locations edges to compute the
-#   length measurement end points.
+from mantavision import getFilePathViaGUI, getDirPathViaGUI, contentsOfDir
+from track_template import matchResults, intensityAdjusted, userDrawnROI
 
 
 def roiInfoFromTemplates(
   search_image: np.ndarray,
-  template_image_paths: List[str],
+  template_image_paths: Dict,
   sub_pixel_search_increment: float=None,
   sub_pixel_refinement_radius: float=None
 ) -> Dict:
   ''' Finds the best match ROI for templates within search_image,
       and passes back the location information for all ROIs found.
   '''
-  rois = {}
-  num_rois = 0
-  for template_image_path in template_image_paths:
-    template_image = cv.imread(template_image_path)
-    if template_image is None:
-      print(f'ERROR. Could not open the template image pointed to by the path provided: {template_image_path}. Exiting.')
+  rois_info = {}
+  for template_position, template_path_details in template_image_paths.items():
+    outer_template_path = template_path_details['outer']
+    outer_template_image = cv.imread(outer_template_path)
+    if outer_template_image is None:
+      print(f'ERROR. Could not open the template image at path provided: {outer_template_path}. Exiting.')
       return None
-    template_image = cv.cvtColor(template_image, cv.COLOR_BGR2GRAY)
-    template_image = intensityAdjusted(template_image)
+    outer_template_image = cv.cvtColor(outer_template_image, cv.COLOR_BGR2GRAY)
+    outer_template_image = intensityAdjusted(outer_template_image)
+    if template_path_details['inner'] is not None:
+      inner_template_image_path = template_path_details['inner']
+      inner_template_image = cv.imread(inner_template_image_path)
+      inner_template_image = cv.cvtColor(inner_template_image, cv.COLOR_BGR2GRAY)
+      inner_template_image = intensityAdjusted(inner_template_image)
+      if sub_pixel_search_increment is None:
+        sub_pixel_search_increment = 1.0
+      if sub_pixel_refinement_radius is None:
+        sub_pixel_refinement_radius = 5
+    else:
+      inner_template_image = None
+    if template_position == 'left':
+      sub_pixel_search_offset_right = True
+    else:
+      sub_pixel_search_offset_right = False
     _, match_coordinates = matchResults(
       image_to_search=search_image,
-      template_to_match=template_image,
+      template_to_match=outer_template_image,
       sub_pixel_search_increment=sub_pixel_search_increment,
-      sub_pixel_refinement_radius=sub_pixel_refinement_radius
+      sub_pixel_refinement_radius=sub_pixel_refinement_radius,
+      sub_pixel_search_template=inner_template_image,
+      sub_pixel_search_offset_right=sub_pixel_search_offset_right
     )
     roi_origin_x, roi_origin_y = match_coordinates
-    roi_height = template_image.shape[0]
-    roi_width = template_image.shape[1]  
+    roi_height = outer_template_image.shape[0]
+    roi_width = outer_template_image.shape[1]  
     roi_parameters = {
-      'ORIGIN_X': roi_origin_x,
-      'ORIGIN_Y': roi_origin_y,
-      'WIDTH':  roi_width,
-      'HEIGHT': roi_height
+      'ORIGIN_X': int(roi_origin_x),
+      'ORIGIN_Y': int(roi_origin_y),
+      'WIDTH':  int(roi_width),
+      'HEIGHT': int(roi_height)
     }
-    rois[num_rois] = roi_parameters
-    num_rois += 1
-
-  # return a ordered and labelled set or ROI's
-  roi_info = {}
-  if rois[0]['ORIGIN_X'] < rois[1]['ORIGIN_X']:
-    roi_info['left'] = rois[0]
-    roi_info['right'] = rois[1]
-  else:
-    roi_info['left'] = rois[1]
-    roi_info['right'] = rois[0]
-  return roi_info
-
-
-def roiInfoFromUserDrawings(input_image: np.ndarray) -> Dict:
-  '''
-  Show the user a window with an image they can draw a ROI on.
-  Args:
-    input_image: the image to show the user.
-  Returns:
-    ROIs selected by the user from the input image.
-  '''
-  # create a window that can be resized
-  roi_selector_window_name = "DRAW RECTANGULAR ROI"
-  roi_gui_flags = cv.WINDOW_KEEPRATIO | cv.WINDOW_NORMAL  # can resize the window
-  cv.namedWindow(roi_selector_window_name, flags=roi_gui_flags)
-
-  # open a roi selector in the resizeable window we just created
-  roi_selections = cv.selectROIs(roi_selector_window_name, input_image, showCrosshair=False)
-  cv.destroyAllWindows()
-  print()
-
-  rois = {}
-  num_rois = 0
-  for roi_selection in roi_selections:
-    x_start = roi_selection[0]
-    x_end = x_start + roi_selection[2]
-    if x_end - x_start <= 0:
-      return None
-    y_start = roi_selection[1]
-    y_end = y_start + roi_selection[3]
-    if y_end - y_start <= 0:
-      return None
-
-    roi_parameters = {
-      'ORIGIN_X': roi_selection[0],
-      'ORIGIN_Y': roi_selection[1],
-      'WIDTH':  roi_selection[2],
-      'HEIGHT': roi_selection[3]
-    }
-    rois[num_rois] = roi_parameters
-    num_rois += 1
-
-  # return a ordered and labelled set or ROI's
-  roi_info = {}
-  if rois[0]['ORIGIN_X'] < rois[1]['ORIGIN_X']:
-    roi_info['left'] = rois[0]
-    roi_info['right'] = rois[1]
-  else:
-    roi_info['left'] = rois[1]
-    roi_info['right'] = rois[0]
-  return roi_info
+    rois_info[template_position] = roi_parameters
+  return rois_info
 
 
 def computeMorphologyMetrics(
-  search_image_path: str=None,
-  template_image_paths: List[str]=None,
+  search_image_path: str,
+  left_template_image_path: str,
+  right_template_image_path: str,
+  left_sub_template_image_path: str=None,
+  right_sub_template_image_path: str=None,  
   sub_pixel_search_increment: float = None,
   sub_pixel_refinement_radius: float = None,
   microns_per_pixel: float=None,
@@ -151,33 +96,30 @@ def computeMorphologyMetrics(
     results_image_dir = os.path.join(results_dir, 'result_images')
     os.mkdir(results_image_dir)
 
-  if isinstance(template_image_paths, str):
-    template_image_paths = [template_image_paths]    
-  if template_image_paths[0].lower() == 'select_files':
-    left_template_image_path = getFilePathViaGUI('Select Left ROI Template File')    
-    right_template_image_path = getFilePathViaGUI('Select Right ROI Template File')
-    template_image_paths = [left_template_image_path, right_template_image_path]
-  elif template_image_paths[0].lower() == 'draw_rois_once':
-    drawn_roi_templates_dir = os.path.join(results_dir, 'drawn_template_images')
-    os.mkdir(drawn_roi_templates_dir)
-    file_name, file_extension = file_names[0]  # NOTE: this could be a selected file too
-    search_image_for_template = cv.imread(os.path.join(base_dir, file_name + file_extension))
-    rois_info = roiInfoFromUserDrawings(search_image_for_template)
-    left_roi = rois_info['left']
-    left_template_image = search_image_for_template[
-      left_roi['ORIGIN_Y'] : left_roi['ORIGIN_Y'] + left_roi['HEIGHT'],
-      left_roi['ORIGIN_X'] : left_roi['ORIGIN_X'] + left_roi['WIDTH']
-    ]
-    left_template_image_path = os.path.join(drawn_roi_templates_dir, 'template_image_1.tif')
-    cv.imwrite(left_template_image_path, left_template_image)
-    right_roi = rois_info['right']
-    right_template_image = search_image_for_template[
-      right_roi['ORIGIN_Y'] : right_roi['ORIGIN_Y'] + right_roi['HEIGHT'],
-      right_roi['ORIGIN_X'] : right_roi['ORIGIN_X'] + right_roi['WIDTH']
-    ]
-    right_template_image_path = os.path.join(drawn_roi_templates_dir, 'template_image_2.tif')
-    cv.imwrite(right_template_image_path, right_template_image)
-    template_image_paths = [left_template_image_path, right_template_image_path]
+  template_paths = {
+    'left': {'outer': left_template_image_path, 'inner': left_sub_template_image_path},
+    'right': {'outer': right_template_image_path, 'inner': right_sub_template_image_path}    
+  }
+  for template_position, template_details in template_paths.items():
+    for template_type, template_path in template_details.items():
+      if template_path == 'select':
+        template_selection_title = f'Select File For {template_position} {template_type} template'
+        template_paths[template_position][template_type] = getFilePathViaGUI(template_selection_title)
+      elif template_path == 'draw':
+        drawn_roi_templates_dir = os.path.join(results_dir, 'drawn_template_images')
+        if not os.path.exists(drawn_roi_templates_dir):
+          os.mkdir(drawn_roi_templates_dir)
+        file_name, file_extension = file_names[0]  # NOTE: this could be a selected file too
+        search_image_for_template = cv.imread(os.path.join(base_dir, file_name + file_extension))
+        draw_roi_title = f'Draw ROI For {template_position} {template_type} template'
+        roi_info = userDrawnROI(search_image_for_template, draw_roi_title)
+        template_image = search_image_for_template[
+          roi_info['y_start'] : roi_info['y_end'],
+          roi_info['x_start'] : roi_info['x_end']
+        ]
+        template_image_path = os.path.join(drawn_roi_templates_dir, template_type + '_template_image.tif')
+        cv.imwrite(template_image_path, template_image)
+        template_paths[template_position][template_type] = template_image_path
 
   all_metrics = []
   image_analyzed_id = 0
@@ -185,7 +127,7 @@ def computeMorphologyMetrics(
       file_to_analyze = os.path.join(base_dir, file_name + file_extension)
       results_image, metrics = morphologyMetricsForImage(
         search_image_path=file_to_analyze,
-        template_image_paths=template_image_paths,
+        template_image_paths=template_paths,
         sub_pixel_search_increment=sub_pixel_search_increment,
         sub_pixel_refinement_radius=sub_pixel_refinement_radius,
         microns_per_pixel=microns_per_pixel
@@ -232,7 +174,7 @@ def computeMorphologyMetrics(
   results_xlsx_path = os.path.join(results_dir, results_xlsx_name)  
   runtime_parameters = {
     'search_image_path' : base_dir,
-    'template_image_paths': template_image_paths,
+    'template_image_paths': template_paths,
     'sub_pixel_search_increment' : sub_pixel_search_increment,
     'sub_pixel_refinement_radius' : sub_pixel_refinement_radius,    
     'microns_per_pixel': microns_per_pixel,
@@ -251,8 +193,8 @@ def smoothedHorizontally(input_image: np.ndarray, sigma: float) -> np.ndarray:
 
 
 def morphologyMetricsForImage(
-  search_image_path: str=None,
-  template_image_paths: List[str]=None,
+  search_image_path: str,
+  template_image_paths: Dict,
   sub_pixel_search_increment: float = None,
   sub_pixel_refinement_radius: float = None,
   microns_per_pixel: float=None
@@ -271,53 +213,58 @@ def morphologyMetricsForImage(
   search_image_gray = cv.cvtColor(search_image, cv.COLOR_BGR2GRAY)
   search_image_gray_adjusted = intensityAdjusted(search_image_gray) 
 
-  # load or draw the ROIs
-  if isinstance(template_image_paths, str):
-    template_image_paths = [template_image_paths]
-  if template_image_paths[0].lower() == 'draw_rois':
-    rois_info = roiInfoFromUserDrawings(search_image)
-  else:
-    if template_image_paths[0].lower() == 'select_files':
-      template_1_image_path = getFilePathViaGUI('left template to find path')  
-      template_2_image_path = getFilePathViaGUI('right template to find path')
-      template_image_paths = [template_1_image_path, template_2_image_path]
-
-    rois_info = roiInfoFromTemplates(
-      search_image=search_image_gray_adjusted,
-      template_image_paths=template_image_paths,
-      sub_pixel_search_increment=None,
-      sub_pixel_refinement_radius=None  
-    )
+  # get the ROIs
+  rois_info = roiInfoFromTemplates(
+    search_image=search_image_gray_adjusted,
+    template_image_paths=template_image_paths,
+    sub_pixel_search_increment=None,
+    sub_pixel_refinement_radius=None
+  )
   left_roi = rois_info['left']
   right_roi = rois_info['right']
-  # TODO: deal with more than 2 roi's being drawn??? maybe not.
 
-  # compute the distance between the inner sides of each ROI
-  right_distance_marker_x = right_roi['ORIGIN_X']
-  left_distance_marker_x = left_roi['ORIGIN_X'] + left_roi['WIDTH']
-  if left_distance_marker_x >= right_distance_marker_x:
-    # there was a problem and just so as not to kill the process
-    # we separate the rois to allow things to keep working
-    left_distance_marker_x = right_distance_marker_x - 1
-  pixel_distance_between_rois = right_distance_marker_x - left_distance_marker_x
-  distance_between_rois = microns_per_pixel*pixel_distance_between_rois
-  horizontal_midpoint = left_distance_marker_x + pixel_distance_between_rois/2
   left_vertical_midpoint = left_roi['ORIGIN_Y'] + left_roi['HEIGHT']/2
   right_vertical_midpoint = right_roi['ORIGIN_Y'] + right_roi['HEIGHT']/2
   vertical_midpoint = (left_vertical_midpoint + right_vertical_midpoint)/2
+
+  # compute the distance between the inner sides of each ROI
+  left_distance_marker_x = left_roi['ORIGIN_X'] + left_roi['WIDTH']
+  right_distance_marker_x = right_roi['ORIGIN_X']
+  vertical_edge_point_variance = 20
+  if left_distance_marker_x >= right_distance_marker_x - vertical_edge_point_variance:
+    # the analysis is garbage and we'll report that but 
+    # we separate the rois to allow the process to keep working
+    left_distance_marker_x = right_distance_marker_x - vertical_edge_point_variance - 1
+  else:
+    median_smoothed_image = ndifilters.median_filter(
+      smoothed(input_image=search_image_gray, sigma=5),
+      size=5
+    )
+    # adjust the left and right distance markers based on max edge detection
+    left_distance_marker_x = verticalEdge(
+      median_smoothed_image[int(left_vertical_midpoint), :],
+      horizontal_midpoint=int(left_distance_marker_x),
+      search_radius=vertical_edge_point_variance
+    )
+    right_distance_marker_x = verticalEdge(
+      median_smoothed_image[int(right_vertical_midpoint), :],
+      horizontal_midpoint=int(right_distance_marker_x),
+      search_radius=vertical_edge_point_variance
+    )
+  pixel_distance_between_rois = right_distance_marker_x - left_distance_marker_x
+  distance_between_rois = microns_per_pixel*pixel_distance_between_rois
+  horizontal_midpoint = left_distance_marker_x + pixel_distance_between_rois/2
 
   # find the points we think are at the upper/lower edges for the far left, mid and far right horizontal positions
   points_to_find_edges_at = np.asarray([int(left_distance_marker_x), int(horizontal_midpoint), int(right_distance_marker_x)])
   key_upper_edge_points = np.empty(len(points_to_find_edges_at))
   key_lower_edge_points = np.empty(len(points_to_find_edges_at))
 
-  # TODO: try and enhance conrast 
   # smooth the image horizontally only so that the vertical edges remain as sharp as possible 
   median_image = ndifilters.median_filter(
     smoothedHorizontally(input_image=search_image_gray, sigma=5),
     size=5
   )
-
   show_plots = False
   # find the edges at the centre and end points along the horizontal midline
   for index, point_to_find_edges_at in enumerate(points_to_find_edges_at):
@@ -410,25 +357,6 @@ def morphologyMetricsForImage(
     warning_flags.append(
       "Area indicates measurements may be inaccurate"
     )
-
-  # # difference too great between initial vertical distance and those computed from edges
-  # # NOTE: this appears to be a bad measure of error
-  # acceptable_vertical_pixel_diff_at_key_points = 40*microns_per_pixel
-  # left_kp_diff = abs(left_end_point_thickness_kp - left_end_point_thickness)
-  # if left_kp_diff > acceptable_vertical_pixel_diff_at_key_points:
-  #   warning_flags.append(
-  #     "Discrepancy of vertical distance measurements at left key point indicates measurements may be inaccurate"
-  #   )
-  # centre_kp_diff = abs(midpoint_thickness_kp - midpoint_thickness)
-  # if centre_kp_diff > acceptable_vertical_pixel_diff_at_key_points:
-  #   warning_flags.append(
-  #     "Discrepancy of vertical distance measurements at centre key point indicates measurements may be inaccurate"
-  #   )
-  # right_kp_diff = abs(right_end_point_thickness_kp - right_end_point_thickness)
-  # if left_kp_diff > acceptable_vertical_pixel_diff_at_key_points:
-  #   warning_flags.append(
-  #     "Discrepancy of vertical distance measurements at right key point indicates measurements may be inaccurate"
-  #   )
   
   # edges too close to image border  
   vertical_edge_pos_limit = 20
@@ -659,10 +587,32 @@ def yGradmag(input_array: np.ndarray) -> np.ndarray:
   )
 
 
+def xGradmag(input_array: np.ndarray) -> np.ndarray:
+  # NOTE: this only returns the 0th x element because 
+  # it's only used for a single vertical strip of pixels
+  return np.square(
+    cv.Sobel(input_array, -1, 1, 0, ksize=5)[0, :]
+  )
+
+
 def movingAverage(input_array: np.ndarray, filter_radius: int = 5) -> np.ndarray:
   len_of_average = 2*filter_radius + 1
   ma_operator = np.ones(len_of_average)/len_of_average
   return np.convolve(input_array, ma_operator, mode='valid')
+
+
+def verticalEdge(input_array: np.ndarray, horizontal_midpoint: int, search_radius: int) -> int:
+  # TODO: restrict the input_array to +/- some region that is larger than the
+  #       radii of the gradmag and moving average functions so we don't have to 
+  #       compute them for the entire set that we never look at
+  input_array_normalized = normalized(input_array)
+  input_array_gradmag = yGradmag(input_array_normalized)
+  input_array_gradmag_ma = movingAverage(input_array_gradmag)
+  search_range_start = max(0, horizontal_midpoint - search_radius)
+  search_range_end = min(len(input_array), horizontal_midpoint + search_radius)
+  return search_range_start + np.argmax(
+    input_array_gradmag_ma[int(search_range_start) : int(search_range_end)]
+  )
 
 
 def outerEdge(input_array: np.ndarray, vertical_midpoint: int, search_radius: int) -> int:
@@ -792,7 +742,13 @@ def resultsToCSV(
   sheet[runtime_config_lables_column + str(data_row + 0)] = 'input images'
   sheet[runtime_config_data_column + str(data_row + 0)] = runtime_parameters['search_image_path']
   sheet[runtime_config_lables_column + str(data_row + 1)] = 'input templates'
-  template_paths = runtime_parameters['template_image_paths'][0] + ', ' + runtime_parameters['template_image_paths'][1]
+  template_paths = ''
+  template_image_paths = runtime_parameters['template_image_paths']
+  for template_position, template_path_details in template_image_paths.items():
+    for template_type, template_path in template_path_details.items():
+      if template_path is not None:
+        template_paths += template_path + ', '
+  template_paths = template_paths[:-2]  # remove the last ', '
   sheet[runtime_config_data_column + str(data_row + 1)] = template_paths 
   sheet[runtime_config_lables_column + str(data_row + 2)] = 'microns per pixel'
   sheet[runtime_config_data_column + str(data_row + 2)] = runtime_parameters['microns_per_pixel']
