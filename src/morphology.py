@@ -1,6 +1,8 @@
 #! /usr/bin/env python
 
 import os
+from pathlib import Path
+from platform import system as os_name
 from distutils.log import warn
 from datetime import datetime
 import openpyxl
@@ -83,6 +85,10 @@ def computeMorphologyMetrics(
   display_result_images: bool=True
 ):
 
+  # if 'windows' in os_name().lower():
+  #   import codecs
+  #   search_image_path = codecs.escape_decode(bytes(win_path, "utf-8"))[0].decode("utf-8")    
+
   if search_image_path.lower() == 'select_file':
     search_image_path = getFilePathViaGUI('Select File To Analyize')
   elif search_image_path.lower() == 'select_dir':
@@ -102,16 +108,22 @@ def computeMorphologyMetrics(
   }
   for template_position, template_details in template_paths.items():
     for template_type, template_path in template_details.items():
-      if template_path == 'select':
-        template_selection_title = f'Select File For {template_position} {template_type} template'
+      if template_path == 'select_file':
+        if template_paths[template_position]['inner'] is None:
+          template_selection_title = f'Select File For {template_position} template'
+        else:
+          template_selection_title = f'Select File For {template_position} {template_type} template'          
         template_paths[template_position][template_type] = getFilePathViaGUI(template_selection_title)
-      elif template_path == 'draw':
+      elif template_path == 'draw_roi':
         drawn_roi_templates_dir = os.path.join(results_dir, 'drawn_template_images')
         if not os.path.exists(drawn_roi_templates_dir):
           os.mkdir(drawn_roi_templates_dir)
         file_name, file_extension = file_names[0]  # NOTE: this could be a selected file too
         search_image_for_template = cv.imread(os.path.join(base_dir, file_name + file_extension))
-        draw_roi_title = f'Draw ROI For {template_position} {template_type} template'
+        if template_paths[template_position]['inner'] is None:
+          draw_roi_title = f'Draw ROI For {template_position} template'
+        else:
+          draw_roi_title = f'Draw ROI For {template_position} {template_type} template'          
         roi_info = userDrawnROI(search_image_for_template, draw_roi_title)
         template_image = search_image_for_template[
           roi_info['y_start'] : roi_info['y_end'],
