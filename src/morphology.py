@@ -79,6 +79,7 @@ def computeMorphologyMetrics(
   right_sub_template_image_path: str=None,  
   sub_pixel_search_increment: float = None,
   sub_pixel_refinement_radius: float = None,
+  template_refinement_radius: int = 30,
   microns_per_pixel: float=None,
   use_midline_background: bool=True,
   write_result_images: bool=False,
@@ -142,7 +143,8 @@ def computeMorphologyMetrics(
         template_image_paths=template_paths,
         sub_pixel_search_increment=sub_pixel_search_increment,
         sub_pixel_refinement_radius=sub_pixel_refinement_radius,
-        microns_per_pixel=microns_per_pixel
+        microns_per_pixel=microns_per_pixel,
+        template_refinement_radius=template_refinement_radius
       )
       all_metrics.append(
         {
@@ -209,7 +211,8 @@ def morphologyMetricsForImage(
   template_image_paths: Dict,
   sub_pixel_search_increment: float = None,
   sub_pixel_refinement_radius: float = None,
-  microns_per_pixel: float=None
+  microns_per_pixel: float=None,
+  template_refinement_radius: int = 30
 ):
   ''' '''
   if microns_per_pixel is None:
@@ -242,26 +245,25 @@ def morphologyMetricsForImage(
   # compute the distance between the inner sides of each ROI
   left_distance_marker_x = left_roi['ORIGIN_X'] + left_roi['WIDTH']
   right_distance_marker_x = right_roi['ORIGIN_X']
-  vertical_edge_point_variance = 20
-  if left_distance_marker_x >= right_distance_marker_x - vertical_edge_point_variance:
+  if left_distance_marker_x >= right_distance_marker_x - template_refinement_radius:
     # the analysis is garbage and we'll report that but 
     # we separate the rois to allow the process to keep working
-    left_distance_marker_x = right_distance_marker_x - vertical_edge_point_variance - 1
+    left_distance_marker_x = right_distance_marker_x - template_refinement_radius - 1
   else:
     median_smoothed_image = ndifilters.median_filter(
-      smoothed(input_image=search_image_gray, sigma=5),
+      smoothed(input_image=search_image_gray_adjusted, sigma=5),
       size=5
     )
     # adjust the left and right distance markers based on max edge detection
     left_distance_marker_x = verticalEdge(
       median_smoothed_image[int(left_vertical_midpoint), :],
       horizontal_midpoint=int(left_distance_marker_x),
-      search_radius=vertical_edge_point_variance
+      search_radius=template_refinement_radius
     )
     right_distance_marker_x = verticalEdge(
       median_smoothed_image[int(right_vertical_midpoint), :],
       horizontal_midpoint=int(right_distance_marker_x),
-      search_radius=vertical_edge_point_variance
+      search_radius=template_refinement_radius
     )
   pixel_distance_between_rois = right_distance_marker_x - left_distance_marker_x
   distance_between_rois = microns_per_pixel*pixel_distance_between_rois
