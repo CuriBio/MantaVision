@@ -79,12 +79,17 @@ def computeMorphologyMetrics(
   right_sub_template_image_path: str=None,  
   sub_pixel_search_increment: float = None,
   sub_pixel_refinement_radius: float = None,
-  template_refinement_radius: int = 30,
+  template_refinement_radius: int = 40,
+  edge_finding_smoothing_radius: int = 1,
   microns_per_pixel: float=None,
-  use_midline_background: bool=True,
   write_result_images: bool=False,
   display_result_images: bool=True
 ):
+
+  if template_refinement_radius < 1:
+    raise RuntimeError("template_refinement_radius cannot be < 1")
+  if edge_finding_smoothing_radius < 1:
+    raise RuntimeError("edge_finding_smoothing_radius cannot be < 1")
 
   # if 'windows' in os_name().lower():
   #   import codecs
@@ -144,7 +149,8 @@ def computeMorphologyMetrics(
         sub_pixel_search_increment=sub_pixel_search_increment,
         sub_pixel_refinement_radius=sub_pixel_refinement_radius,
         microns_per_pixel=microns_per_pixel,
-        template_refinement_radius=template_refinement_radius
+        template_refinement_radius=template_refinement_radius,
+        edge_finding_smoothing_radius=edge_finding_smoothing_radius
       )
       all_metrics.append(
         {
@@ -192,7 +198,9 @@ def computeMorphologyMetrics(
     'sub_pixel_search_increment' : sub_pixel_search_increment,
     'sub_pixel_refinement_radius' : sub_pixel_refinement_radius,    
     'microns_per_pixel': microns_per_pixel,
-    'use_midline_background' : use_midline_background
+    'template_refinement_radius': template_refinement_radius,
+    'edge_finding_smoothing_radius': edge_finding_smoothing_radius
+
   }
   resultsToCSV(all_metrics, results_xlsx_path, runtime_parameters)
 
@@ -212,7 +220,8 @@ def morphologyMetricsForImage(
   sub_pixel_search_increment: float = None,
   sub_pixel_refinement_radius: float = None,
   microns_per_pixel: float=None,
-  template_refinement_radius: int = 30
+  template_refinement_radius: int = 40,
+  edge_finding_smoothing_radius: int = 1
 ):
   ''' '''
   if microns_per_pixel is None:
@@ -280,7 +289,7 @@ def morphologyMetricsForImage(
     size=5
   )
   show_plots = False
-  # find the edges at the centre and end points along the horizontal midline
+  # find the edges at the horizontal centre and end points
   for index, point_to_find_edges_at in enumerate(points_to_find_edges_at):
     edge_point = outerEdges(
       median_image[:, point_to_find_edges_at],
@@ -330,28 +339,35 @@ def morphologyMetricsForImage(
   top_edge_values[edge_values_middle] = top_edge_midpoint
   bottom_edge_values = np.zeros(len(all_points_to_find_edges))
   bottom_edge_values[edge_values_middle] = bottom_edge_midpoint
-  show_plots = False
   
   right_points = np.asarray([point for point in range(int(horizontal_midpoint) + 1, right_distance_marker_x)])
   left_points = np.asarray([point for point in range(int(horizontal_midpoint) - 1, left_distance_marker_x  - 1, -1)])
   all_points = [(left_points, edge_values_middle - 1, -1), (right_points, edge_values_middle + 1, 1)]
   edge_point_details = [(top_edge_midpoint, top_edge_values), (bottom_edge_midpoint, bottom_edge_values)]
   for points_to_find_edges, start, direction in all_points:
+    if direction < 1:
+      pass  # moving averge should be with points ot the right up to the midpoint
+    else:
+      pass  # moving averge should be with points to the left up to the midpoint      
     for edge_midpoint, edge_values in edge_point_details:
-      prev_edge_point = edge_midpoint
+      prev_edge_value = edge_midpoint
       for index, point_to_find_edges in enumerate(points_to_find_edges):
-        edge_point = outerEdge(
+        edge_value = outerEdge(
           median_image[:, point_to_find_edges],
-          vertical_midpoint=prev_edge_point, 
+          vertical_midpoint=prev_edge_value, 
           search_radius=edge_point_variance
-        ) 
-        edge_values[start + direction*index] = edge_point
-        prev_edge_point = edge_point
-
-  # # compute the vertical distance between "edges" for the left, mid & right key point initial guesses
-  # left_end_point_thickness_kp = microns_per_pixel*(key_lower_edge_points[0] - key_upper_edge_points[0])
-  # midpoint_thickness_kp = microns_per_pixel*(key_lower_edge_points[1] - key_upper_edge_points[1])  
-  # right_end_point_thickness_kp = microns_per_pixel*(key_lower_edge_points[2] - key_upper_edge_points[2])
+        )
+        edge_value_index = start + direction*index
+        edge_values[edge_value_index] = edge_value
+        # compute a moving average for the value to use as the next vertical search position
+        if direction < 1:  # moving average should be to the right
+          start_point_for_avg = edge_value_index
+          end_point_for_avg = min(edge_values_middle, edge_value_index - direction*edge_finding_smoothing_radius)
+        else:
+          end_point_for_avg = edge_value_index
+          start_point_for_avg = max(edge_values_middle, edge_value_index - direction*edge_finding_smoothing_radius)
+        prev_edge_value_avg = np.average(edge_values[start_point_for_avg:end_point_for_avg])
+        prev_edge_value = round(prev_edge_value_avg)
 
   # compute the vertical distance between "edges" all edge points estimated by walking outward
   left_end_point_thickness = microns_per_pixel*(bottom_edge_values[0] - top_edge_values[0])
@@ -577,8 +593,8 @@ def morphologyMetricsForImage(
     color=green_bgr,
     thickness=3,
     lineType=cv.LINE_AA
-  )  
-  
+  )
+
   return results_image, metrics 
 
 
@@ -718,12 +734,12 @@ def resultsToCSV(
   
   heading_row = '1'
   sheet[file_column + heading_row] = 'File'
-  sheet[horizontal_column + heading_row] = 'Horizontal Length'
-  sheet[left_edge_column + heading_row] = 'Left Edge Length'
-  sheet[mid_point_column + heading_row] = 'Mid Point Length'
-  sheet[right_edge_column + heading_row] = 'Right Edge Length'
-  sheet[area_column + heading_row] = 'Area'
-  sheet[orientation_column + heading_row] = 'Orientation'  
+  sheet[horizontal_column + heading_row] = 'Horizontal Length (microns)'
+  sheet[left_edge_column + heading_row] = 'Left Edge Length (microns)'
+  sheet[mid_point_column + heading_row] = 'Mid Point Length (microns)'
+  sheet[right_edge_column + heading_row] = 'Right Edge Length (microns)'
+  sheet[area_column + heading_row] = 'Area (square-microns)'
+  sheet[orientation_column + heading_row] = 'Orientation (degrees)'  
   sheet[warning_column + heading_row] = 'WARNINGS'
 
   data_row = 2
@@ -765,12 +781,21 @@ def resultsToCSV(
   template_paths = template_paths[:-2]  # remove the last ', '
   sheet[runtime_config_data_column + str(data_row + 1)] = template_paths 
   sheet[runtime_config_lables_column + str(data_row + 2)] = 'microns per pixel'
-  sheet[runtime_config_data_column + str(data_row + 2)] = runtime_parameters['microns_per_pixel']
+  sheet[runtime_config_data_column + str(data_row + 2)] = runtime_parameters['microns_per_pixel']    
   sheet[runtime_config_lables_column + str(data_row + 3)] = 'sub pixel refinement search increment'
-  sheet[runtime_config_data_column + str(data_row + 3)] = runtime_parameters['sub_pixel_search_increment']
+  if runtime_parameters['sub_pixel_search_increment'] == '' or runtime_parameters['sub_pixel_search_increment'] is None:
+    sheet[runtime_config_data_column + str(data_row + 3)] = 'None'
+  else:
+    sheet[runtime_config_data_column + str(data_row + 3)] = runtime_parameters['sub_pixel_search_increment']
   sheet[runtime_config_lables_column + str(data_row + 4)] = 'sub pixel refinement radius'
-  sheet[runtime_config_data_column + str(data_row + 4)] = runtime_parameters['sub_pixel_refinement_radius']
-
+  if runtime_parameters['sub_pixel_refinement_radius'] == '' or runtime_parameters['sub_pixel_refinement_radius'] is None:
+   sheet[runtime_config_data_column + str(data_row + 4)] = 'None'
+  else:
+    sheet[runtime_config_data_column + str(data_row + 4)] = runtime_parameters['sub_pixel_refinement_radius']
+  sheet[runtime_config_lables_column + str(data_row + 5)] = 'template refinement radius'
+  sheet[runtime_config_data_column + str(data_row + 5)] = runtime_parameters['template_refinement_radius']
+  sheet[runtime_config_lables_column + str(data_row + 6)] = 'edge finding smoothing radius'
+  sheet[runtime_config_data_column + str(data_row + 6)] = runtime_parameters['edge_finding_smoothing_radius']
   workbook.save(filename=path_to_output_file)
 
 
