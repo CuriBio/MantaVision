@@ -1,7 +1,7 @@
 #! /usr/bin/env python
 
 import numpy as np
-from scipy.ndimage import shift
+from scipy.ndimage import shift, rotate
 import math
 import pathlib
 import cv2 as cv # pip install --user opencv-python
@@ -29,9 +29,7 @@ from typing import Tuple, List, Dict
 #       like when an error is returned, the named struct can be returned 
 #       with sensible default values and just the updated error val.
 
-# TODO: we could try adding in rotation of the template +/- some small range of angles for each position per frame.
 
-  
 def trackTemplate(
   input_video_path: str,
   template_guide_image_path: str,
@@ -42,7 +40,8 @@ def trackTemplate(
   sub_pixel_search_increment: float = None,
   sub_pixel_refinement_radius: float = None,
   user_roi_selection: bool = True, 
-  max_movement_per_frame = None,
+  max_translation_per_frame: float = None,
+  max_rotation_per_frame: float = None,  
   contraction_vector: Tuple = None,
 ) -> Tuple[str, List[Dict], float, np.ndarray, int]:
   '''
@@ -64,6 +63,8 @@ def trackTemplate(
     microns_per_pixel = 1.0
   if output_conversion_factor is None:
     output_conversion_factor = 1.0
+  if max_rotation_per_frame is not None:
+    rotation_increment = 0.5   
 
   error_msg = None
   warning_msg = None
@@ -101,7 +102,9 @@ def trackTemplate(
   )
   template = intensityAdjusted(template_gray)
   template_height = template.shape[0]
+  template_half_height = template_height/2.0
   template_width = template.shape[1]
+  template_half_width = template_width/2.0
 
   # open an output (writable) video stream if required
   if output_video_path is not None:
@@ -129,31 +132,62 @@ def trackTemplate(
   tracking_results: List[Dict] = []
   best_match_origin_x = None
   best_match_origin_y = None
-  match_points = []
+  best_match_rotation = 0.0
 
   while input_video_stream.next():
+
+    current_frame = input_video_stream.frameGray()
+    if max_rotation_per_frame is None:
+      search_set = [{'angle': 0.0, 'frame': current_frame}]
+    else:
+      search_set = []
+      rotation_angle = best_match_rotation - max_rotation_per_frame
+      max_rotation_angle = best_match_rotation + max_rotation_per_frame + rotation_increment
+      while rotation_angle < max_rotation_angle:
+
+        pivot_point_x = best_match_origin_x
+        if pivot_point_x is not None:
+           pivot_point_x += template_half_width
+        pivot_point_y = best_match_origin_y 
+        if pivot_point_y is not None:
+          pivot_point_y += template_half_height
+
+        search_set.append(
+          {
+            'angle': rotation_angle,
+            'frame': rotatedImage(current_frame, rotation_angle, pivot_point_x, pivot_point_y)
+          }
+        )
+        rotation_angle += rotation_increment
+    
     # crop out a smaller sub region to search if required
-    if max_movement_per_frame is None:
+    if max_translation_per_frame is None:
       sub_region_padding = None
     else:
       sub_region_padding = (
-        math.ceil(max_movement_per_frame[0]/microns_per_pixel), math.ceil(max_movement_per_frame[1]/microns_per_pixel)
+        math.ceil(max_translation_per_frame[0]/microns_per_pixel), math.ceil(max_translation_per_frame[1]/microns_per_pixel)
       )
-    input_image_sub_region_to_search, input_image_sub_region_origin = inputImageSubRegion(
-      input_image=input_video_stream.frameGray(),
-      sub_region_base_shape=(template_width, template_height),
-      sub_region_origin=(best_match_origin_x, best_match_origin_y),
-      sub_region_padding=sub_region_padding
-    )
-    input_image_sub_region_to_search = intensityAdjusted(input_image_sub_region_to_search)
+    input_image_sub_region_origin = None
+    for frame_details in search_set:
+      input_image_sub_region_to_search, input_image_sub_region_origin = inputImageSubRegion(
+        input_image=frame_details['frame'],
+        sub_region_base_shape=(template_width, template_height),
+        sub_region_origin=(best_match_origin_x, best_match_origin_y),
+        sub_region_padding=sub_region_padding
+      )
+      input_image_sub_region_to_search = intensityAdjusted(input_image_sub_region_to_search)
+      frame_details['frame'] = input_image_sub_region_to_search
+
+    # TODO: make matchResults return a dict instead of a tuple?
     match_measure, match_coordinates = matchResults(
-      image_to_search=input_image_sub_region_to_search,
+      search_set=search_set,
       template_to_match=template,
       sub_pixel_search_increment=sub_pixel_search_increment,
       sub_pixel_refinement_radius=sub_pixel_refinement_radius
     )
     best_match_origin_x = match_coordinates[0] + input_image_sub_region_origin[0]
     best_match_origin_y = match_coordinates[1] + input_image_sub_region_origin[1]
+    best_match_rotation = match_coordinates[2]    
 
     original_time_stamp = input_video_stream.timeStamp()
     time_stamp_in_seconds = original_time_stamp
@@ -167,8 +201,8 @@ def trackTemplate(
       'XY_DISPLACEMENT': 0,
       'TEMPLATE_MATCH_ORIGIN_X': best_match_origin_x,
       'TEMPLATE_MATCH_ORIGIN_Y': best_match_origin_y,
+      'TEMPLATE_MATCH_ROTATION': -best_match_rotation  # rotations are opposite because images are stored upside down
     })
-    match_points.append((best_match_origin_x, best_match_origin_y))
 
     # update the min and max positions of the template origin for ALL frames
     # using the position in the y dimension only as the reference measure
@@ -185,31 +219,29 @@ def trackTemplate(
       max_x_origin = (best_match_origin_x, best_match_origin_y)
       max_x_frame = frame_number
 
-    # draw a grid over the region in the frame where the template matched
+    # mark the ROI on the frame where the template matched
     if video_writer is not None:
       frame = input_video_stream.frameVideoRGB()
 
-      # opencv drawing functions require integer coordinates
-      # so we convert them to the nearest pixel
-      grid_origin_y = int(math.floor(best_match_origin_y + 0.5))
-      grid_origin_x = int(math.floor(best_match_origin_x + 0.5))
-
-      # mark the template ROI on each frame
-      # first draw a rectangle around the template border
-      grid_square_diameter = 20  # make the roi we draw a multiple of a set size
-      grid_width = int(template_width/grid_square_diameter)*grid_square_diameter
-      grid_height = int(template_height/grid_square_diameter)*grid_square_diameter
-      template_bottom_right_y = min(frame_height, grid_origin_y + grid_height)
-      template_bottom_right_x = min(frame_width, grid_origin_x + grid_width)
-      grid_colour_bgr = (0, 255, 0)
-      cv.rectangle(
-        img=frame,
-        pt1=(grid_origin_x, grid_origin_y),
-        pt2=(template_bottom_right_x, template_bottom_right_y),
-        color=grid_colour_bgr,
-        thickness=1,
-        lineType=cv.LINE_AA
+      roi_edges = boundingBoxEdges(
+        box_origin_x=best_match_origin_x,
+        box_origin_y=best_match_origin_y,
+        box_width=template_width,
+        box_height=template_height,
+        rotation_degrees=-best_match_rotation  # rotations are opposite because images are stored upside down
       )
+
+      grid_colour_bgr = (0, 255, 0)
+      for edge_point_a, edge_point_b in roi_edges:
+        cv.line(
+          img=frame,
+          pt1=edge_point_a,
+          pt2=edge_point_b,
+          color=grid_colour_bgr,
+          thickness=1,
+          lineType=cv.LINE_AA
+        )
+
       video_writer.writeFrame(frame, input_video_stream.frameVideoPTS())
 
   if video_writer is not None:
@@ -234,6 +266,80 @@ def trackTemplate(
     template_rgb,
     min_contration_frame_number
   )
+
+
+def boundingBoxEdges(
+  box_origin_x,
+  box_origin_y,
+  box_width,
+  box_height,
+  rotation_degrees
+) -> List[Tuple]:
+
+  # define the x & y points at the box corners
+  box_origin_x = box_origin_x
+  box_end_x = box_origin_x + box_width
+  box_origin_y = box_origin_y
+  box_end_y = box_origin_y + box_height
+
+  # define the x, y coordinates of the box corners
+  top_left_point = (box_origin_x, box_origin_y)
+  top_right_point = (box_end_x, box_origin_y)
+  bottom_left_point = (box_origin_x, box_end_y)
+  bottom_right_point = (box_end_x, box_end_y)
+
+  # rotate the box corner points around the midpoint of the box
+  box_half_width = int(box_width/2.0)
+  box_half_height = int(box_height/2.0)
+  box_origin_point = (
+    box_origin_x + box_half_width,
+    box_origin_y + box_half_height  
+  )
+  rotation_radians = math.radians(rotation_degrees)
+  top_left_point = rotatedPoint(
+    top_left_point, rotation_radians, box_origin_point
+  )
+  top_right_point = rotatedPoint(
+    top_right_point, rotation_radians, box_origin_point
+  )
+  bottom_left_point = rotatedPoint(
+    bottom_left_point, rotation_radians, box_origin_point
+  )
+  bottom_right_point = rotatedPoint(
+    bottom_right_point, rotation_radians, box_origin_point
+  )
+
+  # define the end points of the 4 edges
+  top_edge = (top_left_point, top_right_point)
+  bottom_edge = (bottom_left_point, bottom_right_point)
+  left_edge = (top_left_point, bottom_left_point)
+  right_edge = (bottom_right_point, top_right_point)
+
+  return [top_edge, left_edge, right_edge, bottom_edge]
+
+
+def rotatedPoint(xy_point_to_rotate, angle_radians, rotation_center=(0, 0), round_result=True) -> Tuple:
+    """ Rotate (x, y) point around rotation_center """
+    x_point_to_rotate, y_point_to_rotate = xy_point_to_rotate
+    rotation_center_x, rotation_center_y = rotation_center
+    x_point_to_rotate_centered = (x_point_to_rotate - rotation_center_x)
+    y_point_to_rotate_centered = (y_point_to_rotate - rotation_center_y)
+    cos_rad = math.cos(angle_radians)
+    sin_rad = math.sin(angle_radians)
+    x_point_rotated = rotation_center_x + cos_rad*x_point_to_rotate_centered + sin_rad*y_point_to_rotate_centered
+    y_point_rotated = rotation_center_y - sin_rad*x_point_to_rotate_centered + cos_rad*y_point_to_rotate_centered
+
+    if round_result:
+      return (round(x_point_rotated), round(y_point_rotated))
+    return x_point_rotated, y_point_rotated
+
+
+def rotatedImage(image_to_rotate, rotation_degrees, pivot_x, pivot_y):
+  if pivot_x is None or pivot_y is None:
+    return image_to_rotate
+  scale_factor = 1.0
+  warp_matrix = cv.getRotationMatrix2D((pivot_x, pivot_y), rotation_degrees, scale_factor)
+  return cv.warpAffine(image_to_rotate, warp_matrix, image_to_rotate.shape)
 
 
 def displacementAdjustedResults(
@@ -330,8 +436,10 @@ def inputImageSubRegion(
     input_shape_y, 
     sub_region_origin_y + sub_region_base_height + sub_region_padding_y
   ))
-  # crop out the new sub region
+
+  # crop out the new sub region and adjust the intensity
   sub_region = input_image[sub_region_start_y:sub_region_end_y, sub_region_start_x:sub_region_end_x]
+
   # return the new sub region and it's origin relateve to the input_image
   return sub_region, (sub_region_start_x, sub_region_start_y)
 
@@ -451,7 +559,7 @@ def userDrawnROI(input_image: np.ndarray, title_text: str=None) -> Dict:
 #       and then add the switch to adjust contrast, gamma, or nothing etc.
 def intensityAdjusted(
   image_to_adjust: np.ndarray,
-  adjust_with_gamma: bool=True
+  adjust_with_gamma: bool=False
 ) -> np.ndarray:
   '''
   Performs an automatic adjustment of the input intensity range to enhance contrast.
@@ -493,7 +601,7 @@ def rescaled(intensity: float, intensity_min: float, intensity_range: float, new
 
 
 def matchResults(
-  image_to_search: np.ndarray,
+  search_set: List[dict],
   template_to_match: np.ndarray,
   sub_pixel_search_increment: float=None,
   sub_pixel_refinement_radius: int=None,
@@ -506,24 +614,32 @@ def matchResults(
     Accuracy is +/-sub_pixel_search_increment if |sub_pixel_search_increment| < 1.0 and not None.
   '''
 
-  # if sub_pixel_search_increment is not None and not abs(sub_pixel_search_increment) < 1.0:
-  #   print('WARNING. Passing sub_pixel_search_increment >= 1.0 to bestMatch() is pointless. Ignoring.')
-  #   sub_pixel_search_increment = None
-  
-  # find the best match for template_to_match in image_to_search
-  match_results = cv.matchTemplate(image_to_search, template_to_match, cv.TM_CCOEFF)
-  _, match_measure, _, match_coordinates = cv.minMaxLoc(match_results)  # opencv returns in x, y order
+  best_match_measure = 0.0
+  best_match_coordinates = None
+  best_match_rotation = None
+  best_match_frame = None
+
+  for frame_details in search_set:
+    image_to_search = frame_details['frame']
+    # find the best match for template_to_match in image_to_search
+    match_results = cv.matchTemplate(image_to_search, template_to_match, cv.TM_CCOEFF)
+    _, match_measure, _, match_coordinates = cv.minMaxLoc(match_results)
+    if match_measure > best_match_measure:
+      best_match_measure = match_measure
+      best_match_coordinates = match_coordinates
+      best_match_rotation = frame_details['angle']
+      best_match_frame = image_to_search
 
   if sub_pixel_search_increment is None:
-    return (match_measure, match_coordinates)
+    return (best_match_measure, (best_match_coordinates[0], best_match_coordinates[1], best_match_rotation))
 
   # refine the results with a sub pixel search
   if sub_pixel_refinement_radius is None:
     sub_pixel_search_radius = 1
   else:
     sub_pixel_search_radius = sub_pixel_refinement_radius
-  match_coordinates_origin_x = match_coordinates[0]
-  match_coordinates_origin_y = match_coordinates[1]
+  match_coordinates_origin_x = best_match_coordinates[0]
+  match_coordinates_origin_y = best_match_coordinates[1]
   if sub_pixel_search_offset_right:
     match_coordinates_origin_x += template_to_match.shape[1]
   if sub_pixel_search_template is not None:
@@ -537,7 +653,7 @@ def matchResults(
   )
   sub_region_y_end = min(
     match_coordinates_origin_y + template_to_match.shape[0] + sub_pixel_search_radius, 
-    image_to_search.shape[0]
+    best_match_frame.shape[0]
   )
   sub_region_x_start = max(
     match_coordinates_origin_x - sub_pixel_search_radius,
@@ -545,20 +661,21 @@ def matchResults(
   )
   sub_region_x_end = min(
     match_coordinates_origin_x + template_to_match.shape[1] + sub_pixel_search_radius,
-    image_to_search.shape[1]
+    best_match_frame.shape[1]
   )
   match_measure, match_sub_coordinates = bestSubPixelMatch(
-    image_to_search=image_to_search[
+    image_to_search=best_match_frame[
       sub_region_y_start:sub_region_y_end, 
       sub_region_x_start:sub_region_x_end
     ],
     template_to_match=template_to_match,
     search_increment=sub_pixel_search_increment
   )
-
+  
   match_coordinates = [
     sub_region_x_start + match_sub_coordinates[0],
-    sub_region_y_start + match_sub_coordinates[1]
+    sub_region_y_start + match_sub_coordinates[1],
+    best_match_rotation
   ]
   return (match_measure, match_coordinates)
 

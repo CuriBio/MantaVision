@@ -71,7 +71,8 @@ def runTrackTemplate(config: Dict):
       input_args['sub_pixel_search_increment'],
       input_args['sub_pixel_refinement_radius'],
       input_args['user_roi_selection'],
-      input_args['max_pixel_movement_per_frame'],
+      input_args['max_translation_per_frame'],
+      input_args['max_rotation_per_frame'],      
       input_args['contraction_vector']
     )
     total_tracking_time += (time.time() - video_tracking_start_time)
@@ -279,10 +280,15 @@ def verifiedInputs(config: Dict) -> Tuple[str, List[Dict]]:
     print('WARNING. sub_pixel_refinement_radius ignored because sub_pixel_search_increment not provided')
     sub_pixel_refinement_radius = None
   
-  if 'max_pixel_movement_per_frame' not in config:
-    max_pixel_movement_per_frame = None
+  if 'max_translation_per_frame' not in config:
+    max_translation_per_frame = None
   else:
-    max_pixel_movement_per_frame = (config['max_pixel_movement_per_frame'], config['max_pixel_movement_per_frame'])
+    max_translation_per_frame = (config['max_translation_per_frame'], config['max_translation_per_frame'])
+  
+  if 'max_rotation_per_frame' not in config:
+    max_rotation_per_frame = None
+  else:
+    max_rotation_per_frame = config['max_rotation_per_frame']
   
   if 'output_frames' not in config:
     output_frames = False
@@ -367,7 +373,8 @@ def verifiedInputs(config: Dict) -> Tuple[str, List[Dict]]:
       'output_conversion_factor': output_conversion_factor,
       'sub_pixel_search_increment': sub_pixel_search_increment,
       'sub_pixel_refinement_radius': sub_pixel_refinement_radius,
-      'max_pixel_movement_per_frame': max_pixel_movement_per_frame,
+      'max_translation_per_frame': max_translation_per_frame,
+      'max_rotation_per_frame': max_rotation_per_frame,
       'output_frames': output_frames,
       'contraction_vector': contraction_vector,      
       'well_name': well_name,
@@ -478,23 +485,24 @@ def resultsToCSVforUser(
 
   if well_name is None:
     well_name = 'Z01'
-  sheet['F2'] = 'Well Name'    
-  sheet['G2'] = well_name
-  sheet['F3'] = 'Date'
-  sheet['G3'] = date_stamp + ' 00:00:00'
-  sheet['F4'] = 'Plate Barcode'
-  sheet['G4'] = 'NA'  # plate barcode
-  sheet['F5'] = 'GPS'
-  sheet['G5'] = frames_per_second
-  sheet['F6'] = 'Twitches Point Up' 
-  sheet['G6'] = 'y'   # do twiches point up
-  sheet['F7'] = 'Microscope Name'
-  sheet['G7'] = 'NA'  # microscope name
+  sheet['G2'] = 'Well Name'    
+  sheet['H2'] = well_name
+  sheet['G3'] = 'Date'
+  sheet['H3'] = date_stamp + ' 00:00:00'
+  sheet['G4'] = 'Plate Barcode'
+  sheet['H4'] = 'NA'  # plate barcode
+  sheet['G5'] = 'GPS'
+  sheet['H5'] = frames_per_second
+  sheet['G6'] = 'Twitches Point Up' 
+  sheet['H6'] = 'y'   # do twiches point up
+  sheet['G7'] = 'Microscope Name'
+  sheet['H7'] = 'NA'  # microscope name
 
   time_column = 'A'
   displacement_column = 'B'
   x_pos_column = 'C'
   y_pos_column = 'D'
+  rot_column = 'E'
   heading_row = 1
   data_row = 2
 
@@ -502,6 +510,7 @@ def resultsToCSVforUser(
   sheet[displacement_column + str(heading_row)] = 'XY Displacement'
   sheet[x_pos_column + str(heading_row)] = 'Template Match X Pos'
   sheet[y_pos_column + str(heading_row)] = 'Template Match Y Pos'
+  sheet[rot_column + str(heading_row)] = 'Template Match Angle (deg)'
 
   # set the time and post displacement fields
   num_rows_to_write = len(tracking_results)
@@ -512,6 +521,7 @@ def resultsToCSVforUser(
       sheet[displacement_column + sheet_row] = float(tracking_result['XY_DISPLACEMENT'])
       sheet[x_pos_column + sheet_row] = float(tracking_result['TEMPLATE_MATCH_ORIGIN_X'])
       sheet[y_pos_column + sheet_row] = float(tracking_result['TEMPLATE_MATCH_ORIGIN_Y'])
+      sheet[rot_column + sheet_row] = float(tracking_result['TEMPLATE_MATCH_ROTATION'])
   workbook.save(filename=path_to_output_file)
 
 
