@@ -187,8 +187,11 @@ def trackTemplate(
     )
     best_match_origin_x = match_coordinates[0] + input_image_sub_region_origin[0]
     best_match_origin_y = match_coordinates[1] + input_image_sub_region_origin[1]
-    best_match_rotation = match_coordinates[2]    
-
+    best_match_rotation = match_coordinates[2]
+    # because images are stored flipped ("upside down"), 
+    # in order for match rotations to appear as humans see them
+    # they need to be relative to the flipped image
+    flipped_image_best_match_rotation = -best_match_rotation
     original_time_stamp = input_video_stream.timeStamp()
     time_stamp_in_seconds = original_time_stamp
     frame_number = input_video_stream.framePosition()
@@ -201,7 +204,7 @@ def trackTemplate(
       'XY_DISPLACEMENT': 0,
       'TEMPLATE_MATCH_ORIGIN_X': best_match_origin_x,
       'TEMPLATE_MATCH_ORIGIN_Y': best_match_origin_y,
-      'TEMPLATE_MATCH_ROTATION': -best_match_rotation  # rotations are opposite because images are stored upside down
+      'TEMPLATE_MATCH_ROTATION': flipped_image_best_match_rotation
     })
 
     # update the min and max positions of the template origin for ALL frames
@@ -228,7 +231,7 @@ def trackTemplate(
         box_origin_y=best_match_origin_y,
         box_width=template_width,
         box_height=template_height,
-        rotation_degrees=-best_match_rotation  # rotations are opposite because images are stored upside down
+        rotation_degrees=flipped_image_best_match_rotation
       )
 
       grid_colour_bgr = (0, 255, 0)
@@ -256,7 +259,9 @@ def trackTemplate(
     extreme_points=[min_x_origin, min_y_origin, max_x_origin, max_y_origin],
     min_frame_numbers=(min_x_frame, min_y_frame),
     max_frame_numbers=(max_x_frame, max_y_frame),
-    contraction_vector=contraction_vector
+    contraction_vector=contraction_vector,
+    template_half_height=template_half_height,
+    template_half_width=template_half_width
   )
  
   return (
@@ -349,12 +354,17 @@ def displacementAdjustedResults(
   extreme_points: List[Tuple[float, float]],
   min_frame_numbers: Tuple[int, int],
   max_frame_numbers: Tuple[int, int],
-  contraction_vector: Tuple[int, int]=(1,-1)
+  contraction_vector: Tuple[int, int],
+  template_half_height: float,
+  template_half_width: float
 ) -> List[Dict]:
   ''' Adjust displacement values for matches in all frames so they are relative to the
       point in the video stream where the template (roi) match is closest to the origin
-      instead of the being relative to the actual video frame origin.
-  '''
+      instead of the being relative to the actual video frame origin. '''
+
+  if contraction_vector is None:
+    contraction_vector = (1,-1)
+
   # TODO: change to a dict or many dicts so we're not referring to random tuple 
   #       positions that have zero meaning and can easily be passed in the wrong order
   contraction_moves_right = contraction_vector[0] > 0
@@ -395,14 +405,17 @@ def displacementAdjustedResults(
 
   adjusted_tracking_results = []
   for frame_info in results_to_adjust:
-    # re-adjust x and y positions so the min of the main axis of movement is the reference
+    # compute the x, y and xy displacements relative to the min of the main axis of movement
     x_displacement = (frame_info['TEMPLATE_MATCH_ORIGIN_X'] - min_template_origin_x)*float(microns_per_pixel)
     x_displacement *= float(output_conversion_factor)
-    frame_info['X_DISPLACEMENT'] = x_displacement
+    frame_info['X_DISPLACEMENT'] = x_displacement    
     y_displacement = (frame_info['TEMPLATE_MATCH_ORIGIN_Y'] - min_template_origin_y)*float(microns_per_pixel)
     y_displacement *= float(output_conversion_factor)
     frame_info['Y_DISPLACEMENT'] = y_displacement
     frame_info['XY_DISPLACEMENT'] = math.sqrt(x_displacement*x_displacement + y_displacement*y_displacement)
+    # adjust x and y match positions so they're relative to the center of the template
+    frame_info['TEMPLATE_MATCH_ORIGIN_X'] += template_half_width
+    frame_info['TEMPLATE_MATCH_ORIGIN_Y'] += template_half_height
     adjusted_tracking_results.append(frame_info)
   return adjusted_tracking_results, min_frame_number
 
