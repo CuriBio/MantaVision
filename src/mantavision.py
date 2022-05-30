@@ -491,7 +491,7 @@ def resultsToCSVforUser(
   sheet['H3'] = date_stamp + ' 00:00:00'
   sheet['G4'] = 'Plate Barcode'
   sheet['H4'] = 'NA'  # plate barcode
-  sheet['G5'] = 'GPS'
+  sheet['G5'] = 'FPS'
   sheet['H5'] = frames_per_second
   sheet['G6'] = 'Twitches Point Up' 
   sheet['H6'] = 'y'   # do twiches point up
@@ -508,8 +508,8 @@ def resultsToCSVforUser(
 
   sheet[time_column + str(heading_row)] = 'Time'
   sheet[displacement_column + str(heading_row)] = 'XY Displacement'
-  sheet[x_pos_column + str(heading_row)] = 'Template Match X Pos'
-  sheet[y_pos_column + str(heading_row)] = 'Template Match Y Pos'
+  sheet[x_pos_column + str(heading_row)] = 'Template Match Center X'
+  sheet[y_pos_column + str(heading_row)] = 'Template Match Center Y'
   sheet[rot_column + str(heading_row)] = 'Template Match Angle (deg)'
 
   # set the time and post displacement fields
