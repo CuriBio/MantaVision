@@ -108,6 +108,24 @@ def runTrackTemplate(config: Dict):
         image_extension='jpg'  # don't need high quality images for this
       )
 
+    meta_data = {
+      'frames_per_second': frames_per_second,
+      'well_name': input_args['well_name'], 
+      'date_stamp': input_args['date_stamp'],
+      'microns_per_pixel': input_args['microns_per_pixel'],
+      'output_conversion_factor': input_args['output_conversion_factor'],
+      'sub_pixel_search_increment': input_args['sub_pixel_search_increment'],
+      'sub_pixel_refinement_radius': input_args['sub_pixel_refinement_radius'],
+      'user_roi_selection': input_args['user_roi_selection'],
+      'max_translation_per_frame': input_args['max_translation_per_frame'],
+      'max_rotation_per_frame': input_args['max_rotation_per_frame'],      
+      'contraction_vector': input_args['contraction_vector']
+    }
+    # fill in missing values in meta_data
+    for md_key, md_value in meta_data.items():
+      if md_value is None:
+        meta_data[md_key] = 'None'
+
     # write the results as xlsx
     resultsToCSVforSDK(
       tracking_results,
@@ -118,13 +136,7 @@ def runTrackTemplate(config: Dict):
       input_args['date_stamp']
     )
 
-    resultsToCSVforUser(
-      tracking_results,
-      input_args['path_to_user_excel_results'],
-      frames_per_second,
-      input_args['well_name'], 
-      input_args['date_stamp']
-    )
+    resultsToCSVforUser(tracking_results, meta_data, input_args['path_to_user_excel_results'])
 
     # write the run config and results as json
     if input_args['output_json_path'] is not None:
@@ -473,36 +485,67 @@ def resultsToCSVforSDK(
   workbook.save(filename=path_to_output_file)
 
 
-def resultsToCSVforUser(
-  tracking_results: List[Dict],
-  path_to_output_file,
-  frames_per_second: float,
-  well_name: str = None, 
-  date_stamp: str = '1010-01-01'
-):    
+  # sheet[meta_data_name_column + '2'] = 'Well Name'
+  # well_name: str = meta_data['well_name'] 
+  # if well_name is None:
+  #   well_name = 'Z01'    
+  # sheet[meta_data_value_column + '2'] = well_name
+
+  # sheet[meta_data_name_column + '3'] = 'Date'  
+  # date_stamp: str = meta_data['date_stamp']
+  # if date_stamp is None:
+  #   date_stamp = '1010-01-01'
+  # sheet[meta_data_value_column + '3'] = date_stamp + ' 00:00:00'
+
+def resultsToCSVforUser(tracking_results: List[Dict], meta_data: Dict, path_to_output_file: str):    
   workbook = openpyxl.Workbook()
   sheet = workbook.active
 
-  if well_name is None:
-    well_name = 'Z01'
-  sheet['G2'] = 'Well Name'    
-  sheet['H2'] = well_name
-  sheet['G3'] = 'Date'
-  sheet['H3'] = date_stamp + ' 00:00:00'
-  sheet['G4'] = 'Plate Barcode'
-  sheet['H4'] = 'NA'  # plate barcode
-  sheet['G5'] = 'FPS'
-  sheet['H5'] = frames_per_second
-  sheet['G6'] = 'Twitches Point Up' 
-  sheet['H6'] = 'y'   # do twiches point up
-  sheet['G7'] = 'Microscope Name'
-  sheet['H7'] = 'NA'  # microscope name
+  meta_data_name_column = 'G'
+  meta_data_value_column = 'H' 
+  
+  sheet[meta_data_name_column + '2'] = 'Well Name'
+  sheet[meta_data_value_column + '2'] = meta_data['well_name']
+
+  sheet[meta_data_name_column + '3'] = 'Date'
+  sheet[meta_data_value_column + '3'] = meta_data['date_stamp']
+
+  sheet[meta_data_name_column + '4'] = 'Plate Barcode'
+  sheet[meta_data_value_column + '4'] = 'NA'  # plate barcode
+
+  sheet[meta_data_name_column + '5'] = 'FPS'
+  sheet[meta_data_value_column + '5'] = meta_data['frames_per_second']
+
+  sheet[meta_data_name_column + '6'] = 'Microscope Name'
+  sheet[meta_data_value_column + '6'] = 'NA'  # microscope name
+
+  sheet[meta_data_name_column + '7'] = 'contraction_vector'
+  sheet[meta_data_value_column + '7'] = f"{meta_data['contraction_vector']}"
+
+  sheet[meta_data_name_column + '8'] = 'max_translation_per_frame'
+  sheet[meta_data_value_column + '8'] = f"{meta_data['max_translation_per_frame']}"
+
+  sheet[meta_data_name_column + '9'] = 'max_rotation_per_frame'
+  sheet[meta_data_value_column + '9'] = meta_data['max_rotation_per_frame']
+
+  sheet[meta_data_name_column + '10'] = 'output_conversion_factor'
+  sheet[meta_data_value_column + '10'] = meta_data['output_conversion_factor']
+
+  sheet[meta_data_name_column + '11'] = 'microns_per_pixel'
+  sheet[meta_data_value_column + '11'] = meta_data['microns_per_pixel']
+
+  sheet[meta_data_name_column + '12'] = 'sub_pixel_search_increment'
+  sheet[meta_data_value_column + '12'] = meta_data['sub_pixel_search_increment']
+  
+  sheet[meta_data_name_column + '13'] = 'sub_pixel_refinement_radius'
+  sheet[meta_data_value_column + '13'] = meta_data['sub_pixel_refinement_radius']
+
 
   time_column = 'A'
   displacement_column = 'B'
   x_pos_column = 'C'
   y_pos_column = 'D'
-  rot_column = 'E'
+  angle_column = 'E'
   heading_row = 1
   data_row = 2
 
@@ -510,7 +553,7 @@ def resultsToCSVforUser(
   sheet[displacement_column + str(heading_row)] = 'XY Displacement'
   sheet[x_pos_column + str(heading_row)] = 'Template Match Center X'
   sheet[y_pos_column + str(heading_row)] = 'Template Match Center Y'
-  sheet[rot_column + str(heading_row)] = 'Template Match Angle (deg)'
+  sheet[angle_column + str(heading_row)] = 'Template Match Angle (deg)'
 
   # set the time and post displacement fields
   num_rows_to_write = len(tracking_results)
@@ -521,7 +564,7 @@ def resultsToCSVforUser(
       sheet[displacement_column + sheet_row] = float(tracking_result['XY_DISPLACEMENT'])
       sheet[x_pos_column + sheet_row] = float(tracking_result['TEMPLATE_MATCH_ORIGIN_X'])
       sheet[y_pos_column + sheet_row] = float(tracking_result['TEMPLATE_MATCH_ORIGIN_Y'])
-      sheet[rot_column + sheet_row] = float(tracking_result['TEMPLATE_MATCH_ROTATION'])
+      sheet[angle_column + sheet_row] = float(tracking_result['TEMPLATE_MATCH_ROTATION'])
   workbook.save(filename=path_to_output_file)
 
 
