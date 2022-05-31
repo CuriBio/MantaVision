@@ -273,14 +273,8 @@ def trackTemplate(
   )
 
 
-def boundingBoxEdges(
-  box_origin_x,
-  box_origin_y,
-  box_width,
-  box_height,
-  rotation_degrees
-) -> List[Tuple]:
-
+def boundingBoxEdges(box_origin_x, box_origin_y, box_width, box_height, rotation_degrees) -> List[Tuple]:
+  """ returns a list of (x, y) coordinate points for the corners of a box after rotation """
   # define the x & y points at the box corners
   box_origin_x = box_origin_x
   box_end_x = box_origin_x + box_width
@@ -324,7 +318,7 @@ def boundingBoxEdges(
 
 
 def rotatedPoint(xy_point_to_rotate, angle_radians, rotation_center=(0, 0), round_result=True) -> Tuple:
-    """ Rotate (x, y) point around rotation_center """
+    """ Rotate an (x, y) point around rotation_center """
     x_point_to_rotate, y_point_to_rotate = xy_point_to_rotate
     rotation_center_x, rotation_center_y = rotation_center
     x_point_to_rotate_centered = (x_point_to_rotate - rotation_center_x)
@@ -340,6 +334,7 @@ def rotatedPoint(xy_point_to_rotate, angle_radians, rotation_center=(0, 0), roun
 
 
 def rotatedImage(image_to_rotate, rotation_degrees, pivot_x, pivot_y):
+  """ returns the input image rotated by rotation_degrees around the point (pivot_x, pivot_y) """
   if pivot_x is None or pivot_y is None:
     return image_to_rotate
   scale_factor = 1.0
@@ -382,10 +377,6 @@ def displacementAdjustedResults(
       min_frame_number = max_frame_numbers[0]
       min_template_origin_x = max_x_origin[0]
       min_template_origin_y = max_x_origin[1]
-    # if contraction_moves_down:
-    #   min_template_origin_y = min_x_origin[1]
-    # else:
-    #   min_template_origin_y = max_x_origin[1]
   else:
     main_movement_axis = 'y'
     if contraction_moves_down:
@@ -396,12 +387,6 @@ def displacementAdjustedResults(
       min_frame_number = max_frame_numbers[1]
       min_template_origin_y = max_y_origin[1]
       min_template_origin_x = max_y_origin[0]
-    # if contraction_moves_right:
-    #   min_template_origin_x = min_y_origin[0]
-    # else:
-    #   min_template_origin_x = max_y_origin[0]
-
-  print(f'main axis of movement detected along {main_movement_axis}')
 
   adjusted_tracking_results = []
   for frame_info in results_to_adjust:
@@ -426,7 +411,7 @@ def inputImageSubRegion(
   sub_region_origin: Tuple[int, int],
   sub_region_padding: Tuple[int, int]
 ) -> Tuple[np.ndarray, Tuple[int, int]]:
-  ''' '''
+  """ Returns a sub region of the input image and the x, y coordinates of it's origin """
   sub_region_origin_x, sub_region_origin_y = sub_region_origin
   if sub_region_origin_x is None or sub_region_origin_y is None:
     return input_image, (0,0)
@@ -450,7 +435,7 @@ def inputImageSubRegion(
     sub_region_origin_y + sub_region_base_height + sub_region_padding_y
   ))
 
-  # crop out the new sub region and adjust the intensity
+  # crop out the new sub region
   sub_region = input_image[sub_region_start_y:sub_region_end_y, sub_region_start_x:sub_region_end_x]
 
   # return the new sub region and it's origin relateve to the input_image
@@ -463,8 +448,7 @@ def templateFromInputROI(
   max_frames_to_check: int,
   user_roi_selection: bool=False,
 ) -> Tuple[np.ndarray]:
-  '''
-  '''
+  """ Return a ROI from the input video that will be tracked """
 
   initial_frame_pos = video_to_search.framePosition()
   if initial_frame_pos != 0:
@@ -485,7 +469,7 @@ def templateFromInputROI(
       error_msg = "Error. No Frame returned during video capture in templateFromInputROI function. Exiting."
       raise RuntimeError(error_msg)
 
-    if user_roi_selection:
+    if user_roi_selection: # return the userl drawn roi from the first video frame
       print("Wating on user to manually select ROI...")
       roi = userDrawnROI(frame)
       if roi is None:
@@ -501,7 +485,7 @@ def templateFromInputROI(
           video_to_search.frameGray()[roi['y_start']:roi['y_end'], roi['x_start']:roi['x_end']],
         )
 
-    # track the template
+    # find the best match in the input video to the template passed in
     frame_adjusted = intensityAdjusted(video_to_search.frameGray())
     match_results = cv.matchTemplate(frame_adjusted, template_to_find, cv.TM_CCOEFF)
     _, match_measure, _, match_coordinates = cv.minMaxLoc(match_results)
@@ -568,8 +552,6 @@ def userDrawnROI(input_image: np.ndarray, title_text: str=None) -> Dict:
   }
 
 
-# TODO: need a switch that performs gamma adjustment or some other contrast adjustment
-#       and then add the switch to adjust contrast, gamma, or nothing etc.
 def intensityAdjusted(
   image_to_adjust: np.ndarray,
   adjust_with_gamma: bool=False
