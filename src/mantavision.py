@@ -203,6 +203,8 @@ def verifiedInputs(config: Dict) -> Tuple[str, List[Dict]]:
       elif config['template_guide_image_path'].lower() == 'draw':
         config['template_guide_image_path'] = ''
         user_roi_selection = True
+      elif config['template_guide_image_path'].lower() == '':
+        user_roi_selection = True        
       elif not os.path.isfile(config['template_guide_image_path']):
         error_msgs.append('Input template image file does not exist.')      
   else:
@@ -545,14 +547,14 @@ def config_from_cmdline(cmdline_args) -> dict:
   config = {}
   config['input_video_path'] = cmdline_args.input_video_path
   config['template_guide_image_path'] = cmdline_args.template_guide_image_path
-  config['output_path'] = cmdline_args.output_video_path
+  config['output_path'] = cmdline_args.output_path
   config['guide_match_search_seconds'] = cmdline_args.guide_match_search_seconds
   config['microns_per_pixel'] = cmdline_args.microns_per_pixel
   config['path_to_excel_template'] = cmdline_args.path_to_excel_template  
   return config
 
 
-if __name__ == '__main__':
+def main():
   # os.path.expanduser('~')
   # home_dir = pathlib.Path.home()
 
@@ -596,10 +598,12 @@ if __name__ == '__main__':
       help='conversion factor for pixel distances to microns',
   )
   raw_args = parser.parse_args()
-
   if raw_args.json_config_path is not None:
     config = config_from_json(raw_args.json_config_path)
   else:
     config = config_from_cmdline(raw_args)
-
   runTrackTemplate(config)
+
+
+if __name__ == '__main__':
+  main()
