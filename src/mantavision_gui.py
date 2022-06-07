@@ -54,20 +54,25 @@ def runMorphology(args):
         template_refinement_radius=args.template_refinement_radius,
         edge_finding_smoothing_radius=args.edge_finding_smoothing_radius,
         microns_per_pixel=args.morphology_microns_per_pixel,
-        write_result_images=args.write_result_images,
-        display_result_images=args.display_result_images
+        write_result_images=True,
+        display_result_images=False
     )
 
 @Gooey(
     program_name="Curibio Mantavision Toolkit",
-    fullscreen=True,
-    # navigation='TABBED',
-    optional_cols=2
+    optional_cols=3,
+    # navigation='TABBED',    
+    # fullscreen=True,
+    default_size=(1200, 900)    
 )
 def main():
     program_description = 'Track objects in videos/images'
     parser = GooeyParser(description=program_description)
     subs = parser.add_subparsers(help='Actions', dest='actions')
+    
+    # ########################################################
+    # Tracking UI
+    # ########################################################    
     track_template_parser = subs.add_parser(
         'Track',
         help='Track a user defined or template ROI through one or more videos'
@@ -93,28 +98,28 @@ def main():
         help='Vertical direction component of contration',
         choices=['up', 'down', 'none'],
         default='none'
-    )    
+    )
+    track_template_parser.add_argument(
+        '--template',
+        metavar='Template Path',        
+        help='path to an image with to be used as a template to track [Leave blank to draw a ROI to track]',
+        widget='FileChooser',
+        type=str,        
+        default=''
+    )
+    track_template_parser.add_argument(
+        '--output', 
+        metavar='Output Path',
+        help='dir path to store output of trcked video/s [Leave blank to use a sub dir of the input dir]',
+        widget='DirChooser',
+        type=str,
+        default=None
+    )
     track_template_parser.add_argument(
         '--output_frames',
         metavar='Output Frames',
         help=' Ouput individual tracking results frames',
         action='store_true',
-    )    
-    track_template_parser.add_argument(
-        '--template',
-        metavar='Template Path',        
-        help='path to an image with to be used as a template to track [Leave blank to draw a ROI.]',
-        widget='FileChooser',
-        type=str,        
-        default=''
-    )    
-    track_template_parser.add_argument(
-        '--output', 
-        metavar='Output Path',
-        help='dir path to store output of trcked video/s [Leave blank to leave results in sub dir of input.]',
-        widget='DirChooser',
-        type=str,
-        default=None
     )
     track_template_parser.add_argument(
         '--guide_match_search_seconds',
@@ -126,21 +131,21 @@ def main():
     track_template_parser.add_argument(
         '--max_translation_per_frame',
         metavar='Max Translation', 
-        help='limits search to this amount of translation in any direction. [Leave blank to search the entire frame]',
+        help='limits search to this amount of translation in any direction from the last frames results [Leave blank to search the entire frame]',
         type=float,
         default=100
     )
     track_template_parser.add_argument(
         '--max_rotation_per_frame',
         metavar='Max Rotation',        
-        help='limits search to this amount of rotation in either direction. [Leave blank to not search with rotation]',
+        help='limits search to this amount of rotation in either direction from the last frames results [Leave blank to ignore rotation]',
         type=float,
         default=3.0
     )
     track_template_parser.add_argument(
         '--output_conversion_factor',
         metavar='Conversion Factor',        
-        help='will apply this multiplier to all distance calulations',
+        help='apply this multiplier to all distance calulations',
         type=float,
         default=1.0
     )
@@ -151,6 +156,11 @@ def main():
         type=float,
         default=1.0
     )
+    track_template_parser.add_argument(
+        '--spacer_1',
+        default=None,
+        gooey_options={'visible': False}
+    )    
     track_template_parser.add_argument(
         '--tracking_sub_pixel_search_increment',
         metavar='Subpixel Search Increment',        
@@ -166,6 +176,8 @@ def main():
         default=None
     )    
 
+    # ########################################################
+    # Morphology UI
     # ########################################################
     morphology_parser = subs.add_parser(
         'Morphology',
@@ -230,18 +242,18 @@ def main():
         type=float,
         default=None
     )
-    morphology_parser.add_argument(
-        '--write_result_images',
-        metavar='Write Result Images',
-        help=' ouput individual results images with morphological markers drawn',
-        action='store_true',
-    )
-    morphology_parser.add_argument(
-        '--display_result_images',
-        metavar='Display Result Images',
-        help=' show individual results images with morphological markers drawn',
-        action='store_true',
-    )
+    # morphology_parser.add_argument(
+    #     '--write_result_images',
+    #     metavar='Write Result Images',
+    #     help=' ouput individual results images with morphological markers drawn',
+    #     action='store_true',
+    # )
+    # morphology_parser.add_argument(
+    #     '--display_result_images',
+    #     metavar='Display Result Images',
+    #     help=' show individual results images with morphological markers drawn',
+    #     action='store_true',
+    # )
 
     args = parser.parse_args()
     if args.actions == 'Track':
