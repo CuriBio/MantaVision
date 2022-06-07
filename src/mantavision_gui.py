@@ -1,11 +1,8 @@
-"""
-Example program to demonstrate Gooey's presentation of subparsers
-"""
 
-from typing import Dict
-from gooey import Gooey, GooeyParser
-from mantavision import runTrackTemplate
 from morphology import computeMorphologyMetrics
+from mantavision import runTrackTemplate
+from gooey import Gooey, GooeyParser
+from typing import Dict
 
 
 def runTracking(args):
@@ -38,25 +35,27 @@ def runTracking(args):
             'max_translation_per_frame': args.max_translation_per_frame,
             'max_rotation_per_frame': args.max_rotation_per_frame,
             'output_conversion_factor': args.output_conversion_factor,
-            'microns_per_pixel': args.microns_per_pixel,
-            'sub_pixel_search_increment': args.sub_pixel_search_increment,
-            'sub_pixel_refinement_radius': args.sub_pixel_refinement_radius
+            'microns_per_pixel': args.tracking_microns_per_pixel,
+            'sub_pixel_search_increment': args.tracking_sub_pixel_search_increment,
+            'sub_pixel_refinement_radius': args.tracking_sub_pixel_refinement_radius
         }
     )    
 
 def runMorphology(args):
     ''' Runs Morphology function with the arguments provided by the Gooey UI.'''    
     computeMorphologyMetrics(
-        {
-            # search_image_path=test_image_suite_dir,
-            # left_template_image_path=left_template_image_path,
-            # right_template_image_path=right_template_image_path,
-            # template_refinement_radius=40,
-            # edge_finding_smoothing_radius=10,
-            # microns_per_pixel=1.0,    
-            # display_result_images=True,
-            # write_result_images=True,            
-        }
+        search_image_path=args.search_image_path,
+        left_template_image_path=args.left_template_image_path,
+        right_template_image_path=args.right_template_image_path,
+        left_sub_template_image_path=None,
+        right_sub_template_image_path=None,
+        sub_pixel_search_increment=args.morphology_sub_pixel_search_increment,
+        sub_pixel_refinement_radius=args.morphology_sub_pixel_refinement_radius,
+        template_refinement_radius=args.template_refinement_radius,
+        edge_finding_smoothing_radius=args.edge_finding_smoothing_radius,
+        microns_per_pixel=args.morphology_microns_per_pixel,
+        write_result_images=args.write_result_images,
+        display_result_images=args.display_result_images
     )
 
 @Gooey(
@@ -95,12 +94,6 @@ def main():
         choices=['up', 'down', 'none'],
         default='none'
     )    
-    # track_template_parser.add_argument(
-    #     'output_frames',
-    #     help=' Ouput individual tracking results frames',
-    #     choices=['Yes', 'No'],
-    #     default='No'
-    # )
     track_template_parser.add_argument(
         '--output_frames',
         metavar='Output Frames',
@@ -152,21 +145,21 @@ def main():
         default=1.0
     )
     track_template_parser.add_argument(
-        '--microns_per_pixel',
+        '--tracking_microns_per_pixel',
         metavar='Microns per Pixel',        
         help='conversion from pixels to microns for distances in results',
         type=float,
         default=1.0
     )
     track_template_parser.add_argument(
-        '--sub_pixel_search_increment',
+        '--tracking_sub_pixel_search_increment',
         metavar='Subpixel Search Increment',        
         help='search will be sub pixel accurate to within +/- this value',
         type=float,
         default=None
     )
     track_template_parser.add_argument(
-        '--sub_pixel_refinement_radius',
+        '--tracking_sub_pixel_refinement_radius',
         metavar='Subpixel Refinement Radius',        
         help='sub pixel search will be limited to +/- this amount in each dimension',
         type=float,
@@ -176,20 +169,81 @@ def main():
     # ########################################################
     morphology_parser = subs.add_parser(
         'Morphology',
-        help='Description for Morphology action choice'
+        help='Compute Morphology Metrics in Images'
     )
     morphology_parser.add_argument(
-        'non_optional_argument',
-        help='description for non optional argument',
-        type=int
+        'search_image_path',
+        metavar='Input Dir Path',
+        help='path to a directory with the input images to analyze',
+        widget='DirChooser',
+        type=str,
+        gooey_options={'full_width': True}
     )
     morphology_parser.add_argument(
-        '--option_1',
-        help='description for option 1',
-        type=str
+        'left_template_image_path',
+        metavar='Left Template Path',
+        help='path to a template image of the left post',
+        widget='FileChooser',
+        type=str,
+        gooey_options={'full_width': True}
     )
-    args = parser.parse_args()
+    morphology_parser.add_argument(
+        'right_template_image_path',
+        metavar='Right Template Path',
+        help='path to a template image of the right post',
+        widget='FileChooser',
+        type=str,
+        gooey_options={'full_width': True}
+    )    
+    morphology_parser.add_argument(
+        '--template_refinement_radius',
+        metavar='Template Edge Refinement Radius',
+        help='search +/- this value at the inner edge of each template for a better edge match',
+        type=int,
+        default=40
+    )
+    morphology_parser.add_argument(
+        '--edge_finding_smoothing_radius',
+        metavar='Template Edge Smoothing Radius',
+        help='the top and bottom edges will be average-smoothed by this amount',
+        type=int,
+        default=10
+    )        
+    morphology_parser.add_argument(
+        '--morphology_microns_per_pixel',
+        metavar='Microns per Pixel',        
+        help='conversion from pixels to microns for distances in results',
+        type=float,
+        default=1.0
+    )
+    morphology_parser.add_argument(
+        '--morphology_sub_pixel_search_increment',
+        metavar='Subpixel Search Increment',        
+        help='search will be sub pixel accurate to within +/- this value',
+        type=float,
+        default=None
+    )
+    morphology_parser.add_argument(
+        '--morphology_sub_pixel_refinement_radius',
+        metavar='Subpixel Refinement Radius',        
+        help='sub pixel search will be limited to +/- this amount in each dimension',
+        type=float,
+        default=None
+    )
+    morphology_parser.add_argument(
+        '--write_result_images',
+        metavar='Write Result Images',
+        help=' ouput individual results images with morphological markers drawn',
+        action='store_true',
+    )
+    morphology_parser.add_argument(
+        '--display_result_images',
+        metavar='Display Result Images',
+        help=' show individual results images with morphological markers drawn',
+        action='store_true',
+    )
 
+    args = parser.parse_args()
     if args.actions == 'Track':
         runTracking(args)
     elif args.actions == 'Morphology':
