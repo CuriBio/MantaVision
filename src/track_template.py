@@ -566,7 +566,7 @@ def userDrawnROI(input_image: np.ndarray, title_text: str=None) -> Dict:
 
 def intensityAdjusted(
   image_to_adjust: np.ndarray,
-  adjust_with_gamma: bool=False
+  adjust_with_gamma: bool=True
 ) -> np.ndarray:
   '''
   Performs an automatic adjustment of the input intensity range to enhance contrast.
