@@ -179,23 +179,32 @@ def trackTemplate(
       frame_details['frame'] = input_image_sub_region_to_search
 
     # TODO: make matchResults return a dict instead of a tuple?
-    match_measure, match_coordinates = matchResults(
+    match_measure, match_coordinates, match_rotation = matchResults(
       search_set=search_set,
       template_to_match=template,
       sub_pixel_search_increment=sub_pixel_search_increment,
       sub_pixel_refinement_radius=sub_pixel_refinement_radius
     )
-    best_match_origin_x = match_coordinates[0] + input_image_sub_region_origin[0]
-    best_match_origin_y = match_coordinates[1] + input_image_sub_region_origin[1]
-    best_match_rotation = match_coordinates[2]
-    # because images are stored flipped ("upside down"), 
-    # in order for match rotations to appear as humans see them
-    # they need to be relative to the flipped image
-    flipped_image_best_match_rotation = -best_match_rotation
+    if match_coordinates is None:
+      match_sucess = False
+      best_match_origin_x = None
+      best_match_origin_y = None
+      best_match_rotation = None
+      flipped_image_best_match_rotation = None   
+    else:
+      match_sucess = True
+      best_match_origin_x = match_coordinates[0] + input_image_sub_region_origin[0]
+      best_match_origin_y = match_coordinates[1] + input_image_sub_region_origin[1]
+      best_match_rotation = match_rotation
+      # because images are stored flipped ("upside down"), 
+      # in order for match rotations to appear as humans see them
+      # they need to be relative to the flipped image
+      flipped_image_best_match_rotation = -best_match_rotation
     original_time_stamp = input_video_stream.timeStamp()
     time_stamp_in_seconds = original_time_stamp
     frame_number = input_video_stream.framePosition()
     tracking_results.append({
+      'MATCH_SUCCESS': match_sucess,
       'FRAME_NUMBER': frame_number,
       'TIME_STAMP': time_stamp_in_seconds,
       'MATCH_MEASURE': match_measure,
@@ -206,44 +215,45 @@ def trackTemplate(
       'TEMPLATE_MATCH_ORIGIN_Y': best_match_origin_y,
       'TEMPLATE_MATCH_ROTATION': flipped_image_best_match_rotation
     })
+    if match_coordinates is not None:
 
-    # update the min and max positions of the template origin for ALL frames
-    # using the position in the y dimension only as the reference measure
-    if best_match_origin_y < min_y_origin[1]:
-      min_y_origin = (best_match_origin_x, best_match_origin_y)
-      min_y_frame = frame_number
-    if best_match_origin_y > max_y_origin[1]:
-      max_y_origin = (best_match_origin_x, best_match_origin_y)
-      max_y_frame = frame_number
-    if best_match_origin_x < min_x_origin[0]:
-      min_x_origin = (best_match_origin_x, best_match_origin_y)
-      min_x_frame = frame_number
-    if best_match_origin_x > max_x_origin[0]:
-      max_x_origin = (best_match_origin_x, best_match_origin_y)
-      max_x_frame = frame_number
+      # update the min and max positions of the template origin for ALL frames
+      # using the position in the y dimension only as the reference measure
+      if best_match_origin_y < min_y_origin[1]:
+        min_y_origin = (best_match_origin_x, best_match_origin_y)
+        min_y_frame = frame_number
+      if best_match_origin_y > max_y_origin[1]:
+        max_y_origin = (best_match_origin_x, best_match_origin_y)
+        max_y_frame = frame_number
+      if best_match_origin_x < min_x_origin[0]:
+        min_x_origin = (best_match_origin_x, best_match_origin_y)
+        min_x_frame = frame_number
+      if best_match_origin_x > max_x_origin[0]:
+        max_x_origin = (best_match_origin_x, best_match_origin_y)
+        max_x_frame = frame_number
 
-    # mark the ROI on the frame where the template matched
-    if video_writer is not None:
-      frame = input_video_stream.frameVideoRGB()
+      # mark the ROI on the frame where the template matched
+      if video_writer is not None:
+        frame = input_video_stream.frameVideoRGB()
 
-      roi_edges = boundingBoxEdges(
-        box_origin_x=best_match_origin_x,
-        box_origin_y=best_match_origin_y,
-        box_width=template_width,
-        box_height=template_height,
-        rotation_degrees=flipped_image_best_match_rotation
-      )
-
-      grid_colour_bgr = (0, 255, 0)
-      for edge_point_a, edge_point_b in roi_edges:
-        cv.line(
-          img=frame,
-          pt1=edge_point_a,
-          pt2=edge_point_b,
-          color=grid_colour_bgr,
-          thickness=1,
-          lineType=cv.LINE_AA
+        roi_edges = boundingBoxEdges(
+          box_origin_x=best_match_origin_x,
+          box_origin_y=best_match_origin_y,
+          box_width=template_width,
+          box_height=template_height,
+          rotation_degrees=flipped_image_best_match_rotation
         )
+
+        grid_colour_bgr = (0, 255, 0)
+        for edge_point_a, edge_point_b in roi_edges:
+          cv.line(
+            img=frame,
+            pt1=edge_point_a,
+            pt2=edge_point_b,
+            color=grid_colour_bgr,
+            thickness=1,
+            lineType=cv.LINE_AA
+          )
 
       video_writer.writeFrame(frame, input_video_stream.frameVideoPTS())
 
@@ -390,6 +400,8 @@ def displacementAdjustedResults(
 
   adjusted_tracking_results = []
   for frame_info in results_to_adjust:
+    if frame_info['MATCH_SUCCESS'] == False:
+      continue
     # compute the x, y and xy displacements relative to the min of the main axis of movement
     x_displacement = (frame_info['TEMPLATE_MATCH_ORIGIN_X'] - min_template_origin_x)*float(microns_per_pixel)
     x_displacement *= float(output_conversion_factor)
@@ -527,7 +539,7 @@ def userDrawnROI(input_image: np.ndarray, title_text: str=None) -> Dict:
   if title_text is None:
     roi_selector_window_name = "DRAW RECTANGULAR ROI"
   else:
-    roi_selector_window_name = title_text    
+    roi_selector_window_name = title_text
   roi_gui_flags = cv.WINDOW_KEEPRATIO | cv.WINDOW_NORMAL  # can resize the window
   cv.namedWindow(roi_selector_window_name, flags=roi_gui_flags)
 
@@ -554,7 +566,7 @@ def userDrawnROI(input_image: np.ndarray, title_text: str=None) -> Dict:
 
 def intensityAdjusted(
   image_to_adjust: np.ndarray,
-  adjust_with_gamma: bool=False
+  adjust_with_gamma: bool=True
 ) -> np.ndarray:
   '''
   Performs an automatic adjustment of the input intensity range to enhance contrast.
@@ -602,14 +614,14 @@ def matchResults(
   sub_pixel_refinement_radius: int=None,
   sub_pixel_search_template: np.ndarray=None,
   sub_pixel_search_offset_right: bool=False
-) -> Tuple[float, List[float]]:
+) -> Tuple[float, List[float], float]:
   '''
     Computes the coordinates of the best match between the input image and template_to_match.
     Accuracy is +/-1 pixel if sub_pixel_search_increment is None or >= 1.0.
     Accuracy is +/-sub_pixel_search_increment if |sub_pixel_search_increment| < 1.0 and not None.
   '''
 
-  best_match_measure = 0.0
+  best_match_measure = -1.0
   best_match_coordinates = None
   best_match_rotation = None
   best_match_frame = None
@@ -626,7 +638,7 @@ def matchResults(
       best_match_frame = image_to_search
 
   if sub_pixel_search_increment is None:
-    return (best_match_measure, (best_match_coordinates[0], best_match_coordinates[1], best_match_rotation))
+    return (best_match_measure, best_match_coordinates, best_match_rotation)
 
   # refine the results with a sub pixel search
   if sub_pixel_refinement_radius is None:
@@ -672,7 +684,7 @@ def matchResults(
     sub_region_y_start + match_sub_coordinates[1],
     best_match_rotation
   ]
-  return (match_measure, match_coordinates)
+  return (best_match_measure, best_match_coordinates, best_match_rotation)
 
 
 def bestSubPixelMatch(

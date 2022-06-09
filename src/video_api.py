@@ -1,10 +1,10 @@
  
-from os import error
-from typing import Dict, List, Tuple
-from fractions import Fraction
 import numpy as np
-import nd2
-import av
+from typing import Dict
+from fractions import Fraction
+from av import open as OpenVideo
+from av import VideoFrame
+from nd2 import ND2File
 
 
 class VideoWriter:
@@ -52,7 +52,7 @@ class VideoWriter:
         if self.time_base is None:
             self.time_base = Fraction(1/1000)
 
-        self.container = av.open(self.path, mode='w')
+        self.container = OpenVideo(self.path, mode='w')
         self.video_stream = self.container.add_stream(
             self.codec,
             rate=str(round(self.fps, 2))  # NOTE: this must be a str (not a float) and can't be too long 
@@ -70,7 +70,7 @@ class VideoWriter:
         self.video_stream.width = self.width
 
     def writeFrame(self, frame_to_write: np.ndarray, frame_pts: float):
-        video_frame = av.VideoFrame.from_ndarray(frame_to_write, format='rgb24')
+        video_frame = VideoFrame.from_ndarray(frame_to_write, format='rgb24')
         video_frame.pts = frame_pts
         video_packet = self.video_stream.encode(video_frame)
         if video_packet:
@@ -193,7 +193,7 @@ class PYAVReader():
     def __init__(self, video_path: str, direction_sense: Dict = None):
         self.direction_sense = direction_sense
         self.video_path = video_path
-        self.container = av.open(self.video_path)
+        self.container = OpenVideo(self.video_path)
         self.video_stream = self.container.streams.video[0]
         self.num_frames = self.video_stream.frames
         self.video_frames = self.container.decode(video=0)
@@ -316,7 +316,7 @@ class ND2VideoReader():
     ''' Video reader interface using nd2 for ND2 files: https://github.com/tlambert03/nd2 '''
     def __init__(self, video_path: str, direction_sense: Dict = None):
         self.video_path = video_path
-        self.nd2_file = nd2.ND2File(self.video_path)
+        self.nd2_file = ND2File(self.video_path)
         self.is_rgb = self.nd2_file.is_rgb
         self.rgb_conversion = rgbConverter(type='eye')
         self.direction_sense = direction_sense

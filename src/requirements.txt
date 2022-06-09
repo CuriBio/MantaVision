@@ -8,4 +8,4 @@ nd2
 nd2[legacy]
 xarray
 openpyxl
-
+gooey

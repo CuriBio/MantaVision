@@ -17,60 +17,6 @@ from mantavision import getFilePathViaGUI, getDirPathViaGUI, contentsOfDir
 from track_template import matchResults, intensityAdjusted, userDrawnROI
 
 
-def roiInfoFromTemplates(
-  search_image: np.ndarray,
-  template_image_paths: Dict,
-  sub_pixel_search_increment: float=None,
-  sub_pixel_refinement_radius: float=None
-) -> Dict:
-  ''' Finds the best match ROI for templates within search_image,
-      and passes back the location information for all ROIs found.
-  '''
-  rois_info = {}
-  for template_position, template_path_details in template_image_paths.items():
-    outer_template_path = template_path_details['outer']
-    outer_template_image = cv.imread(outer_template_path)
-    if outer_template_image is None:
-      print(f'ERROR. Could not open the template image at path provided: {outer_template_path}. Exiting.')
-      return None
-    outer_template_image = cv.cvtColor(outer_template_image, cv.COLOR_BGR2GRAY)
-    outer_template_image = intensityAdjusted(outer_template_image)
-    if template_path_details['inner'] is not None:
-      inner_template_image_path = template_path_details['inner']
-      inner_template_image = cv.imread(inner_template_image_path)
-      inner_template_image = cv.cvtColor(inner_template_image, cv.COLOR_BGR2GRAY)
-      inner_template_image = intensityAdjusted(inner_template_image)
-      if sub_pixel_search_increment is None:
-        sub_pixel_search_increment = 1.0
-      if sub_pixel_refinement_radius is None:
-        sub_pixel_refinement_radius = 5
-    else:
-      inner_template_image = None
-    if template_position == 'left':
-      sub_pixel_search_offset_right = True
-    else:
-      sub_pixel_search_offset_right = False
-    _, match_coordinates = matchResults(
-      image_to_search=search_image,
-      template_to_match=outer_template_image,
-      sub_pixel_search_increment=sub_pixel_search_increment,
-      sub_pixel_refinement_radius=sub_pixel_refinement_radius,
-      sub_pixel_search_template=inner_template_image,
-      sub_pixel_search_offset_right=sub_pixel_search_offset_right
-    )
-    roi_origin_x, roi_origin_y = match_coordinates
-    roi_height = outer_template_image.shape[0]
-    roi_width = outer_template_image.shape[1]  
-    roi_parameters = {
-      'ORIGIN_X': int(roi_origin_x),
-      'ORIGIN_Y': int(roi_origin_y),
-      'WIDTH':  int(roi_width),
-      'HEIGHT': int(roi_height)
-    }
-    rois_info[template_position] = roi_parameters
-  return rois_info
-
-
 def computeMorphologyMetrics(
   search_image_path: str,
   left_template_image_path: str,
@@ -212,6 +158,68 @@ def smoothedHorizontally(input_image: np.ndarray, sigma: float) -> np.ndarray:
       mode='constant',
       axis=1
   )
+
+
+
+def roiInfoFromTemplates(
+  search_image: np.ndarray,
+  template_image_paths: Dict,
+  sub_pixel_search_increment: float=None,
+  sub_pixel_refinement_radius: float=None
+) -> Dict:
+  ''' Finds the best match ROI for templates within search_image,
+      and passes back the location information for all ROIs found.
+  '''
+  rois_info = {}
+  for template_position, template_path_details in template_image_paths.items():
+    outer_template_path = template_path_details['outer']
+    outer_template_image = cv.imread(outer_template_path)
+    if outer_template_image is None:
+      print(f'ERROR. Could not open the template image at path provided: {outer_template_path}. Exiting.')
+      return None
+    outer_template_image = cv.cvtColor(outer_template_image, cv.COLOR_BGR2GRAY)
+    outer_template_image = intensityAdjusted(outer_template_image)
+    if template_path_details['inner'] is not None:
+      inner_template_image_path = template_path_details['inner']
+      inner_template_image = cv.imread(inner_template_image_path)
+      inner_template_image = cv.cvtColor(inner_template_image, cv.COLOR_BGR2GRAY)
+      inner_template_image = intensityAdjusted(inner_template_image)
+      if sub_pixel_search_increment is None:
+        sub_pixel_search_increment = 1.0
+      if sub_pixel_refinement_radius is None:
+        sub_pixel_refinement_radius = 5
+    else:
+      inner_template_image = None
+    if template_position == 'left':
+      sub_pixel_search_offset_right = True
+    else:
+      sub_pixel_search_offset_right = False
+    search_set = [
+      {
+        'angle': 0.0,
+        'frame': search_image
+      }
+    ]
+    # match_measure, match_coordinates, match_rotation      
+    _, match_coordinates, _ = matchResults(
+      search_set=search_set,
+      template_to_match=outer_template_image,
+      sub_pixel_search_increment=sub_pixel_search_increment,
+      sub_pixel_refinement_radius=sub_pixel_refinement_radius,
+      sub_pixel_search_template=inner_template_image,
+      sub_pixel_search_offset_right=sub_pixel_search_offset_right
+    )
+    roi_origin_x, roi_origin_y = match_coordinates
+    roi_height = outer_template_image.shape[0]
+    roi_width = outer_template_image.shape[1]  
+    roi_parameters = {
+      'ORIGIN_X': int(roi_origin_x),
+      'ORIGIN_Y': int(roi_origin_y),
+      'WIDTH':  int(roi_width),
+      'HEIGHT': int(roi_height)
+    }
+    rois_info[template_position] = roi_parameters
+  return rois_info
 
 
 def morphologyMetricsForImage(
