@@ -343,7 +343,7 @@ def main():
     
     args = parser.parse_args()
     saveCurrentFieldValues(args, initial_values, mv_config_file_path)
-    if args.actions == 'Track':
+    if args.actions == 'Tracking':
         runTracking(args)
     elif args.actions == 'Morphology':
         runMorphology(args)
