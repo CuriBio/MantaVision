@@ -132,18 +132,21 @@ def ensureDefaultFieldValuesExist(prev_run_values_file_path: str):
     with open(prev_run_values_file_path, 'w') as outfile:
         writeJSON(default_field_values, outfile, indent=4)
 
+# in the user xlsx, have a pixel displacement column and converted displacement column
 
+GUI_WIDTH = 1200
+GUI_HEIGHT = 910
 @Gooey(
-    program_name="Curibio Mantavision Toolkit",
-    # fullscreen=True,
-    default_size=(1200, 900),
-    # navigation='TABBED',
+    program_name="Curibio MantaVision Toolkit",
+    default_size=(GUI_WIDTH, GUI_HEIGHT),
     optional_cols=3,
+    disable_progress_bar_animation=True,
+
 )
 def main():
     """ Mantavision (MV) GUI description/layout """
 
-    program_description = 'Track objects in videos/images'
+    program_description = 'Perform computer vision tasks on videos and images'
     parser = GooeyParser(description=program_description)
     subs = parser.add_subparsers(help='Actions', dest='actions')
 
@@ -156,95 +159,95 @@ def main():
     # Tracking UI #
     ###############
     track_template_parser = subs.add_parser(
-        'Track',
+        'Tracking',
         help='Track a user defined or template ROI through one or more videos'
     )
     track_template_parser.add_argument(
         'tracking_video_dir',
         metavar='Input Video Path',
-        help='path to a directory with the input videos',
+        help='path to a directory with videos',
         widget='DirChooser',
         type=str,
-        gooey_options={'full_width': True, 'initial_value': initial_values['tracking_video_dir']}  # ''
+        gooey_options={'full_width': True, 'initial_value': initial_values['tracking_video_dir']}
     )
     track_template_parser.add_argument(
         'tracking_horizontal_contraction_direction',
         metavar='Horizontal Contraction Direction',        
         help='Horizontal direction component of contration',
         choices=['left', 'right', 'none'],
-        default=initial_values['tracking_horizontal_contraction_direction']  # 'right'
+        default=initial_values['tracking_horizontal_contraction_direction']
     )
     track_template_parser.add_argument(
         'tracking_vertical_contraction_direction',
         metavar='Vertical Contraction Direction',
         help='Vertical direction component of contration',
         choices=['up', 'down', 'none'],
-        default=initial_values['tracking_vertical_contraction_direction']  # 'none'
+        default=initial_values['tracking_vertical_contraction_direction']
     )
     track_template_parser.add_argument(
         '--tracking_template_path',
         metavar='Template Path',        
-        help='path to an image with to be used as a template to track [Leave blank to draw a ROI to track]',
+        help='path to an image that is a template ROI to track\n[leave blank to draw a ROI]',
         widget='FileChooser',
         type=str,        
         default=None,
-        gooey_options={'initial_value': initial_values['tracking_template_path']} # None
+        gooey_options={'initial_value': initial_values['tracking_template_path']}
     )
     track_template_parser.add_argument(
         '--tracking_output_path', 
         metavar='Output Path',
-        help='dir path to store output of trcked video/s [Leave blank to use a sub dir of the input dir]',
+        help='directory to store output of trcked video/s\n[leave blank to use input directory]',
         widget='DirChooser',
         type=str,
         default=None,
-        gooey_options={'initial_value': initial_values['tracking_output_path']} # None
+        gooey_options={'initial_value': initial_values['tracking_output_path']}
     )
     track_template_parser.add_argument(
         '--tracking_output_frames',
         metavar='Output Frames',
         help=' Ouput individual tracking results frames',
         action='store_true',
-        default=initial_values['tracking_output_frames']  # False
+        default=initial_values['tracking_output_frames']
     )
     track_template_parser.add_argument(
         '--tracking_guide_match_search_seconds',
         metavar='Guide Search Time',
-        help='seconds of video to search for a match to the template guide ROI [Leave blank to use the template]',
+        help='search this many seconds of the video for a ROI that best matches the template image (e.g. 5.0)\n[leave blank to use the template]',
         type=float,
         default=None,
-        gooey_options={'initial_value': initial_values['tracking_guide_match_search_seconds']}  # 5.0
+        gooey_options={'initial_value': initial_values['tracking_guide_match_search_seconds']}
     )
     track_template_parser.add_argument(
         '--tracking_max_translation_per_frame',
-        metavar='Max Translation', 
-        help='limits search to this amount of translation in any direction from the last frames results [Leave blank to search the entire frame]',
+        metavar='Max Translation',
+        help='search +/- this amount of translation in any direction from the last frames results (e.g. 100)\n[leave blank to search the entire frame]',
         type=float,
         default=None,
-        gooey_options={'initial_value': initial_values['tracking_max_translation_per_frame']}  # 100
+        gooey_options={'initial_value': initial_values['tracking_max_translation_per_frame']}
     )
     track_template_parser.add_argument(
         '--tracking_max_rotation_per_frame',
-        metavar='Max Rotation',        
-        help='limits search to this amount of rotation in either direction from the last frames results [Leave blank to ignore rotation]',
+        metavar='Max Rotation',
+        help='search +/- this amount of rotation in either direction from the last frames results (e.g. 3.0)\n[leave blank to ignore rotation]',
         type=float,
         default=None,
-        gooey_options={'initial_value': initial_values['tracking_max_rotation_per_frame']}  # 3.0
+        gooey_options={'initial_value': initial_values['tracking_max_rotation_per_frame']}
     )
     track_template_parser.add_argument(
         '--tracking_output_conversion_factor',
         metavar='Conversion Factor',        
-        help='apply this multiplier to all distance calulations',
+        help='multiply all distance calulations by this value (e.g. 1.0 is no change)\n[leave blank for no change]',
         type=float,
         default=None,
-        gooey_options={'initial_value': initial_values['tracking_output_conversion_factor']}  # 1.0
+        gooey_options={'initial_value': initial_values['tracking_output_conversion_factor']}
     )
     track_template_parser.add_argument(
         '--tracking_microns_per_pixel',
-        metavar='Microns per Pixel',        
-        help='conversion from pixels to microns for distances in results',
+        metavar='Microns per Pixel',
+        help='report displacement values in microns using this value to convert from pixels\n[leave blank for 1:1]',
         type=float,
         default=None,
-        gooey_options={'initial_value': initial_values['tracking_microns_per_pixel']}  # 1.0
+        gooey_options={'initial_value': initial_values['tracking_microns_per_pixel']}
     )
     track_template_parser.add_argument(
         '--tracking_spacer_1',
@@ -252,20 +255,20 @@ def main():
     )    
     track_template_parser.add_argument(
         '--tracking_sub_pixel_search_increment',
-        metavar='Subpixel Search Increment',        
-        help='search will be sub pixel accurate to within +/- this value',
+        metavar='Subpixel Search Increment',
+        help='search will be sub pixel accurate to within +/- this fraction of a pixel (e.g. 0.5)\n[leave blank for no sub pixel accuracy]',
         type=float,
         default=None,
-        gooey_options={'initial_value': initial_values['tracking_sub_pixel_search_increment']}  # None
+        gooey_options={'initial_value': initial_values['tracking_sub_pixel_search_increment']}
     )
     track_template_parser.add_argument(
         '--tracking_sub_pixel_refinement_radius',
-        metavar='Subpixel Refinement Radius',        
-        help='sub pixel search will be limited to +/- this amount in each dimension',
+        metavar='Subpixel Refinement Radius',
+        help='sub pixel search will be limited to +/- this amount in each dimension (e.g. 2.0)\n[leave blank for no sub pixel accuracy]',
         type=float,
         default=None,
-        gooey_options={'initial_value': initial_values['tracking_sub_pixel_refinement_radius']}  # None        
-    )    
+        gooey_options={'initial_value': initial_values['tracking_sub_pixel_refinement_radius']}        
+    )
     #################
     # Morphology UI #
     #################
@@ -276,10 +279,10 @@ def main():
     morphology_parser.add_argument(
         'morphology_search_image_path',
         metavar='Input Dir Path',
-        help='path to a directory with the input images to analyze',
+        help='path to a directory with images to analyze',
         widget='DirChooser',
         type=str,
-        gooey_options={'full_width': True, 'initial_value': initial_values['morphology_search_image_path']}  # ''
+        gooey_options={'full_width': True, 'initial_value': initial_values['morphology_search_image_path']}
     )
     morphology_parser.add_argument(
         'morphology_left_template_image_path',
@@ -287,7 +290,7 @@ def main():
         help='path to a template image of the left post',
         widget='FileChooser',
         type=str,
-        gooey_options={'full_width': True, 'initial_value': initial_values['morphology_left_template_image_path']}  # ''
+        gooey_options={'full_width': True, 'initial_value': initial_values['morphology_left_template_image_path']}
     )
     morphology_parser.add_argument(
         'morphology_right_template_image_path',
@@ -295,47 +298,47 @@ def main():
         help='path to a template image of the right post',
         widget='FileChooser',
         type=str,
-        gooey_options={'full_width': True, 'initial_value': initial_values['morphology_right_template_image_path']}  # ''
+        gooey_options={'full_width': True, 'initial_value': initial_values['morphology_right_template_image_path']}
     )    
     morphology_parser.add_argument(
         '--morphology_template_refinement_radius',
         metavar='Template Edge Refinement Radius',
-        help='search +/- this value at the inner edge of each template for a better edge match',
+        help='search +/- this value at the inner edge of each template for a better match (e.g. 40)\n[leave blank for no refinement]',
         type=int,
         default=None,
-        gooey_options={'initial_value': initial_values['morphology_template_refinement_radius']}  # 40
+        gooey_options={'initial_value': initial_values['morphology_template_refinement_radius']}
     )
     morphology_parser.add_argument(
         '--morphology_edge_finding_smoothing_radius',
-        metavar='Template Edge Smoothing Radius',
-        help='the top and bottom edges will be average-smoothed by this amount',
+        metavar='Tissue Edge Smoothing Window',
+        help='smooth tissue edges with a windowed rolling average of this many pixels (e.g. 10)\n[leave blank for no smoothing]',
         type=int,
         default=None,
-        gooey_options={'initial_value': initial_values['morphology_edge_finding_smoothing_radius']}  # 10
+        gooey_options={'initial_value': initial_values['morphology_edge_finding_smoothing_radius']}
     )        
     morphology_parser.add_argument(
         '--morphology_microns_per_pixel',
-        metavar='Microns per Pixel',        
-        help='conversion from pixels to microns for distances in results',
+        metavar='Microns per Pixel',
+        help='report displacement values in microns using this value to convert from pixels\n[leave blank for 1:1]',
         type=float,
         default=None,
-        gooey_options={'initial_value': initial_values['morphology_microns_per_pixel']}  # 1.0
+        gooey_options={'initial_value': initial_values['morphology_microns_per_pixel']}
     )
     morphology_parser.add_argument(
         '--morphology_sub_pixel_search_increment',
-        metavar='Subpixel Search Increment',        
-        help='search will be sub pixel accurate to within +/- this value',
+        metavar='Subpixel Search Increment',
+        help='search will be sub pixel accurate to within +/- this fraction of a pixel (e.g. 0.5)\n[leave blank for no sub pixel accuracy]',
         type=float,
         default=None,
-        gooey_options={'initial_value': initial_values['morphology_sub_pixel_search_increment']}  # None
+        gooey_options={'initial_value': initial_values['morphology_sub_pixel_search_increment']}
     )
     morphology_parser.add_argument(
         '--morphology_sub_pixel_refinement_radius',
-        metavar='Subpixel Refinement Radius',        
-        help='sub pixel search will be limited to +/- this amount in each dimension',
+        metavar='Subpixel Refinement Radius',
+        help='sub pixel search will be limited to +/- this amount in each dimension (e.g. 2.0)\n[leave blank for no sub pixel accuracy]',
         type=float,
         default=None,
-        gooey_options={'initial_value': initial_values['morphology_sub_pixel_refinement_radius']}  # None
+        gooey_options={'initial_value': initial_values['morphology_sub_pixel_refinement_radius']}
     )
     
     args = parser.parse_args()

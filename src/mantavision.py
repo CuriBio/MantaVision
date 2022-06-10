@@ -513,13 +513,13 @@ def resultsToCSVforUser(tracking_results: List[Dict], meta_data: Dict, path_to_o
   # heading fields
   heading_row = 1
   time_column = 'A'
-  sheet[time_column + str(heading_row)] = 'Time'
+  sheet[time_column + str(heading_row)] = 'Time (s)'
   displacement_column = 'B'
   sheet[displacement_column + str(heading_row)] = 'Displacement From Min'
   x_pos_column = 'C'
-  sheet[x_pos_column + str(heading_row)] = 'Template Match Center X'
+  sheet[x_pos_column + str(heading_row)] = 'Template Match Center X (pixel pos)'
   y_pos_column = 'D'
-  sheet[y_pos_column + str(heading_row)] = 'Template Match Center Y'
+  sheet[y_pos_column + str(heading_row)] = 'Template Match Center Y (pixel pos)'
   angle_column = 'E'
   sheet[angle_column + str(heading_row)] = 'Template Match Angle (deg)'
 
