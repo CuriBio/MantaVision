@@ -2,9 +2,9 @@ name: Package Mantavision exe with PyInstaller - Windows
 
 on:
   push:
-    branches: [ release ]
+    branches: [ main ]
   pull_request:
-    branches: [ release ]
+    branches: [ main ]
 
 jobs:
   build:
