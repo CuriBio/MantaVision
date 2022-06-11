@@ -6,7 +6,7 @@ gooey_root = os.path.dirname(gooey.__file__)
 block_cipher = None
 
 a = Analysis(['mantavision_gui.py'],  # replace me with your path
-             pathex=['dist'],
+             pathex=['src/mantavision_gui.py'],
              binaries=[],
              datas=[],
              hiddenimports=[],
