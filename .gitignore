@@ -1,5 +1,6 @@
 *.zip
 __pycache__
+build/
 *.mp4
 *.avi
 *.mov
