@@ -13,7 +13,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
-    - name: PyInstaller Windows
+    
+    - name: Mantavision
       uses: JackMcKew/pyinstaller-action-windows@main
       with:
         path: src
