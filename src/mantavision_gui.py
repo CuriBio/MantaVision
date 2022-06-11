@@ -76,7 +76,7 @@ def saveCurrentFieldValues(
     """ write the current ui values to prev_run_values_file_path """
     
     current_field_values = previous_field_values
-    if args.actions == 'Track':
+    if args.actions == 'Tracking':
         current_field_values['tracking_video_dir'] = args.tracking_video_dir
         current_field_values['tracking_horizontal_contraction_direction'] = args.tracking_horizontal_contraction_direction
         current_field_values['tracking_vertical_contraction_direction'] = args.tracking_vertical_contraction_direction
@@ -132,6 +132,8 @@ def ensureDefaultFieldValuesExist(prev_run_values_file_path: str):
     with open(prev_run_values_file_path, 'w') as outfile:
         writeJSON(default_field_values, outfile, indent=4)
 
+# TODO: use path to find absolute location of the current exe because saving previous results isnt' working
+#       or, use some local db
 # in the user xlsx, have a pixel displacement column and converted displacement column
 
 GUI_WIDTH = 1200

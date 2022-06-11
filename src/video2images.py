@@ -98,5 +98,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # convert the video to a sequence of jpegs
-    conversion_status = video2image(args.input_video_path, args.output_dir_path, args.enhance_contrast)
+    conversion_status = video2images(args.input_video_path, args.output_dir_path, args.enhance_contrast)
     sys.exit(conversion_status)
