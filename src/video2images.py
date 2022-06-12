@@ -1,7 +1,7 @@
 import os
 import sys
 import argparse
-from cv2 import cv2 as cv
+import cv2 as cv
 from video_api import VideoReader
 from track_template import intensityAdjusted
 
