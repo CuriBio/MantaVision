@@ -8,7 +8,7 @@ from typing import Dict
 
 
 def runTracking(args: Dict):
-    ''' Runs TrackTemplate function with the arguments provided by the Gooey UI.'''
+    """ Runs TrackTemplate function with the arguments provided by the Gooey UI. """
     if args.tracking_output_frames == 'Yes':
         output_frames = True
     else:
@@ -46,7 +46,7 @@ def runTracking(args: Dict):
 
 
 def runMorphology(args: Dict):
-    ''' Runs Morphology function with the arguments provided by the Gooey UI.'''
+    """ Runs Morphology function with the arguments provided by the Gooey UI. """
     computeMorphologyMetrics(
         search_image_path=args.morphology_search_image_path,
         left_template_image_path=args.morphology_left_template_image_path,
@@ -75,32 +75,32 @@ def saveCurrentFieldValues(
 ):
     """ write the current ui values to prev_run_values_file_path """
     
-    current_field_values = previous_field_values
+    field_values = previous_field_values
     if args.actions == 'Tracking':
-        current_field_values['tracking_video_dir'] = args.tracking_video_dir
-        current_field_values['tracking_horizontal_contraction_direction'] = args.tracking_horizontal_contraction_direction
-        current_field_values['tracking_vertical_contraction_direction'] = args.tracking_vertical_contraction_direction
-        current_field_values['tracking_template_path'] = args.tracking_template_path
-        current_field_values['tracking_output_path'] = args.tracking_output_path
-        current_field_values['tracking_output_frames'] = args.tracking_output_frames
-        current_field_values['tracking_guide_match_search_seconds'] = args.tracking_guide_match_search_seconds
-        current_field_values['tracking_max_translation_per_frame'] = args.tracking_max_translation_per_frame
-        current_field_values['tracking_max_rotation_per_frame'] = args.tracking_max_rotation_per_frame
-        current_field_values['tracking_output_conversion_factor'] = args.tracking_output_conversion_factor
-        current_field_values['tracking_microns_per_pixel'] = args.tracking_microns_per_pixel
-        current_field_values['tracking_sub_pixel_search_increment'] = args.tracking_sub_pixel_search_increment
-        current_field_values['tracking_sub_pixel_refinement_radius'] = args.tracking_sub_pixel_refinement_radius
+        field_values['tracking_video_dir'] = args.tracking_video_dir
+        field_values['tracking_horizontal_contraction_direction'] = args.tracking_horizontal_contraction_direction
+        field_values['tracking_vertical_contraction_direction'] = args.tracking_vertical_contraction_direction
+        field_values['tracking_template_path'] = args.tracking_template_path
+        field_values['tracking_output_path'] = args.tracking_output_path
+        field_values['tracking_output_frames'] = args.tracking_output_frames
+        field_values['tracking_guide_match_search_seconds'] = args.tracking_guide_match_search_seconds
+        field_values['tracking_max_translation_per_frame'] = args.tracking_max_translation_per_frame
+        field_values['tracking_max_rotation_per_frame'] = args.tracking_max_rotation_per_frame
+        field_values['tracking_output_conversion_factor'] = args.tracking_output_conversion_factor
+        field_values['tracking_microns_per_pixel'] = args.tracking_microns_per_pixel
+        field_values['tracking_sub_pixel_search_increment'] = args.tracking_sub_pixel_search_increment
+        field_values['tracking_sub_pixel_refinement_radius'] = args.tracking_sub_pixel_refinement_radius
     elif args.actions == 'Morphology':
-        current_field_values['morphology_search_image_path'] = args.morphology_search_image_path
-        current_field_values['morphology_left_template_image_path'] = args.morphology_left_template_image_path
-        current_field_values['morphology_right_template_image_path'] = args.morphology_right_template_image_path
-        current_field_values['morphology_template_refinement_radius'] = args.morphology_template_refinement_radius
-        current_field_values['morphology_edge_finding_smoothing_radius'] = args.morphology_edge_finding_smoothing_radius
-        current_field_values['morphology_microns_per_pixel'] = args.morphology_microns_per_pixel
-        current_field_values['morphology_sub_pixel_search_increment'] = args.morphology_sub_pixel_search_increment
-        current_field_values['morphology_sub_pixel_refinement_radius'] = args.morphology_sub_pixel_refinement_radius
+        field_values['morphology_search_image_path'] = args.morphology_search_image_path
+        field_values['morphology_left_template_image_path'] = args.morphology_left_template_image_path
+        field_values['morphology_right_template_image_path'] = args.morphology_right_template_image_path
+        field_values['morphology_template_refinement_radius'] = args.morphology_template_refinement_radius
+        field_values['morphology_edge_finding_smoothing_radius'] = args.morphology_edge_finding_smoothing_radius
+        field_values['morphology_microns_per_pixel'] = args.morphology_microns_per_pixel
+        field_values['morphology_sub_pixel_search_increment'] = args.morphology_sub_pixel_search_increment
+        field_values['morphology_sub_pixel_refinement_radius'] = args.morphology_sub_pixel_refinement_radius
     with open(current_field_values_file_path, 'w') as outfile:
-        writeJSON(current_field_values, outfile, indent=4)
+        writeJSON(field_values, outfile, indent=4)
 
 
 def ensureDefaultFieldValuesExist(prev_run_values_file_path: str):
@@ -114,8 +114,8 @@ def ensureDefaultFieldValuesExist(prev_run_values_file_path: str):
         'tracking_output_path': None,
         'tracking_output_frames': False,
         'tracking_guide_match_search_seconds': 5.0,
-        'tracking_max_translation_per_frame': 100,
-        'tracking_max_rotation_per_frame': 3.0,
+        'tracking_max_translation_per_frame': 50,
+        'tracking_max_rotation_per_frame': 1.0,
         'tracking_output_conversion_factor': 1.0,
         'tracking_microns_per_pixel': 1.0,
         'tracking_sub_pixel_search_increment': None,
@@ -132,14 +132,13 @@ def ensureDefaultFieldValuesExist(prev_run_values_file_path: str):
     with open(prev_run_values_file_path, 'w') as outfile:
         writeJSON(default_field_values, outfile, indent=4)
 
-# TODO: use path to find absolute location of the current exe because saving previous results isnt' working
-#       or, use some local db
-# in the user xlsx, have a pixel displacement column and converted displacement column
 
 GUI_WIDTH = 1200
 GUI_HEIGHT = 910
+
+
 @Gooey(
-    program_name="Curibio MantaVision Toolkit",
+    program_name="CuriBio MantaVision Toolkit",
     default_size=(GUI_WIDTH, GUI_HEIGHT),
     optional_cols=3,
     disable_progress_bar_animation=True,
@@ -351,6 +350,7 @@ def main():
         runMorphology(args)
     else:
         raise RuntimeError('Invalid Action Chosen')
+
 
 if __name__ == '__main__':
     main()

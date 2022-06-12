@@ -1,8 +1,10 @@
 
 # required packages # 
 
+scipy
 numpy
 opencv-python
+scikit-image
 av
 nd2
 nd2[legacy]
