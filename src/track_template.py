@@ -160,7 +160,7 @@ def trackTemplate(
                 )
                 rotation_angle += rotation_increment
 
-        # crop out a smaller sub region to search if required
+        # crop out a smaller subregion to search if required
         if max_translation_per_frame is None:
             sub_region_padding = None
         else:
@@ -479,7 +479,7 @@ def templateFromInputROI(
             raise RuntimeError(error_msg)
 
         if template_to_find is None:  # return the user drawn roi from the first video frame
-            print("Waiting on user to manually select ROI...")
+            print("Waiting on user to manually select ROI ...")
             roi = userDrawnROI(frame)
             if roi is None:
                 print("...No ROI selected")
@@ -625,16 +625,21 @@ def matchResults(
 
     for frame_details in search_set:
         image_to_search = frame_details['frame']
+        frame_rotation = frame_details['angle']
         # find the best match for template_to_match in image_to_search
         match_results = cv.matchTemplate(image_to_search, template_to_match, cv.TM_CCOEFF_NORMED)
         _, match_measure, _, match_coordinates = cv.minMaxLoc(match_results)
         if match_measure is None:
             continue
-        if match_measure > best_match_measure:
-            best_match_measure = match_measure
-            best_match_coordinates = match_coordinates
-            best_match_rotation = frame_details['angle']
-            best_match_frame = image_to_search
+        if match_measure < best_match_measure:
+            continue
+        if math.isclose(match_measure, best_match_measure, rel_tol=1e-6):
+            if math.fabs(frame_rotation) > math.fabs(best_match_rotation):
+                continue
+        best_match_measure = match_measure
+        best_match_coordinates = match_coordinates
+        best_match_rotation = frame_rotation
+        best_match_frame = image_to_search
 
     if sub_pixel_search_increment is None:
         return best_match_measure, best_match_coordinates, best_match_rotation

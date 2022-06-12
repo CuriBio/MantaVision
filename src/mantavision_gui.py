@@ -134,7 +134,7 @@ def ensureDefaultFieldValuesExist(prev_run_values_file_path: str):
 
 
 GUI_WIDTH = 1200
-GUI_HEIGHT = 910
+GUI_HEIGHT = 950
 
 
 @Gooey(
