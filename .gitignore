@@ -8,3 +8,4 @@ build
 *mv_initial_values*
 .idea
 venv
+*ipynb_checkpoints*
