@@ -8,7 +8,7 @@ from nd2 import ND2File
 
 
 class VideoWriter:
-    ''' Unified interface for writing videos'''
+    """ Unified interface for writing videos """
     def __init__(
         self,
         path: str,
@@ -17,8 +17,8 @@ class VideoWriter:
         time_base: Fraction,        
         fps: float,
         bitrate: float,
-        codec: str=None,
-        pixel_format: str=None
+        codec: str = None,
+        pixel_format: str = None
     ):
         self.path = path
         self.width = width
@@ -31,12 +31,12 @@ class VideoWriter:
 
         if self.width % 2 != 0:
             error_message = 'ERROR in constructing VideoWriter object.'
-            error_message += '\nDimensions of a video are required to be a multple of 2.'
+            error_message += '\nDimensions of a video are required to be a multiple of 2.'
             error_message += '\nThe requested width of ' + str(self.width) + ' is not a multiple of 2'
             raise ValueError(error_message)
         if self.height % 2 != 0:
             error_message = 'ERROR in constructing VideoWriter object.'
-            error_message += '\nDimensions of a video are required to be a multple of 2.'
+            error_message += '\nDimensions of a video are required to be a multiple of 2.'
             error_message += '\nThe requested height of ' + str(self.height) + ' is not a multiple of 2'
             raise ValueError(error_message)
 
@@ -89,8 +89,8 @@ class VideoWriter:
 
 
 class VideoReader:
-    ''' Unified interface for reading videos of various formats ND2, mp4/avi ... '''
-    def __init__(self, video_path: str, reader_api: str=None, direction_sense: Dict = None):
+    """ Unified interface for reading videos of various formats ND2, mp4/avi ... """
+    def __init__(self, video_path: str, reader_api: str = None, direction_sense: Dict = None):
         self.video_path = video_path
         self.reader = self._set_reader(reader_api, direction_sense)
 
@@ -189,7 +189,7 @@ class VideoReader:
 
 
 class PYAVReader():
-    ''' Video reader interface using pyav for mp4, avi, mov etc (anything other than ND2)'''
+    """ Video reader interface using pyav for mp4, avi, mov etc (anything other than ND2) """
     def __init__(self, video_path: str, direction_sense: Dict = None):
         self.direction_sense = direction_sense
         self.video_path = video_path
@@ -228,7 +228,7 @@ class PYAVReader():
 
     def frameVideoRGB(self) -> np.ndarray:
         # unlike nd2 files, video files won't ever need to have
-        # thier width or height adjusted to be a multple of 2,
+        # their width or height adjusted to be a multiple of 2,
         # so we just use the same frameRGB()) method
         return self.frameRGB()
 
@@ -264,7 +264,7 @@ class PYAVReader():
         return self.video_stream.pix_fmt
 
     def bitRate(self):
-        '''bit rate in kpbs'''
+        """ bit rate in kpbs """
         return self.video_stream.bit_rate
 
     def isOpened(self) -> bool:
@@ -313,7 +313,7 @@ class PYAVReader():
 
 
 class ND2VideoReader():
-    ''' Video reader interface using nd2 for ND2 files: https://github.com/tlambert03/nd2 '''
+    """ Video reader interface using nd2 for ND2 files: https://github.com/tlambert03/nd2 """
     def __init__(self, video_path: str, direction_sense: Dict = None):
         self.video_path = video_path
         self.nd2_file = ND2File(self.video_path)
@@ -333,9 +333,13 @@ class ND2VideoReader():
         self.width = int(self.nd2_file.sizes['X'])
         self.height = int(self.nd2_file.sizes['Y'])
         self.num_frames = int(self.nd2_file.sizes['T'])
-        self.nd2_frames = self.nd2_file.to_xarray(delayed=True)
+        self.nd2_frames = self.nd2_file.to_xarray(delayed=False)
+        # if delayed is set to true, the xarray will be backed by a memmapped dask array
+        # which might be necessary BUT,
+        # it then prints something that seems like the frame or z slice i.e. (1,) (2,)
+        # and I have no idea why or how to stop it from doing that
 
-        self.time_base = Fraction(1,1000)  # is always milliseconds for nd2 files
+        self.time_base = Fraction(1, 1000)  # is always milliseconds for nd2 files
         self.time_steps = self.timeStamps()
         self.duration = float(self.time_steps[-1])
         self.avg_fps = float(self.num_frames)/self.duration
@@ -372,41 +376,34 @@ class ND2VideoReader():
             new_height += 1
         new_width = self.width
         if self.width % 2 != 0:
-             new_width += 1
+            new_width += 1
         if self.is_rgb:
             old_frame = self.nd2_frames[self.frame_num].to_numpy()
         else:
             old_frame = grayToRGB(self.nd2_frames[self.frame_num].to_numpy())
         frame_to_return = np.zeros((new_height, new_width, 3), dtype=np.uint8)
-        frame_to_return[0:old_frame.shape[0], 0:old_frame.shape[1],:] = old_frame
-        return orientedFrame(
-            frame_to_return,
-            self.direction_sense
-        )        
+        frame_to_return[0:old_frame.shape[0], 0:old_frame.shape[1], :] = old_frame
+        return orientedFrame(frame_to_return, self.direction_sense)
 
     def frameGray(self) -> np.ndarray:
+        current_frame = self.nd2_frames[self.frame_num].to_numpy()
         if self.is_rgb:
-            current_frame = rgbToGray(self.nd2_frames[self.frame_num].to_numpy(), self.rgb_conversion)
-        else:
-            current_frame = self.nd2_frames[self.frame_num].to_numpy()
-        return orientedFrame(
-            current_frame,
-            self.direction_sense
-        )
+            current_frame = rgbToGray(current_frame, self.rgb_conversion)
+        return orientedFrame(current_frame, self.direction_sense)
 
-    def framePTS(self, frame_num: int=None) -> int:
+    def framePTS(self, frame_num: int = None) -> int:
         if frame_num is None:
             frame_num = self.frame_num
         _chs = self.nd2_file._rdr._frame_metadata(frame_num).get('channels')
         time_stamp = _chs[0]['time']['relativeTimeMs']
         return time_stamp
 
-    def frameVideoPTS(self, frame_num: int=None) -> int:
+    def frameVideoPTS(self, frame_num: int = None) -> int:
         if frame_num is None:
             frame_num = self.frame_num        
         return self.framePTS(frame_num) - self.framePTS(0)
 
-    def timeStamp(self, frame_num: int=None) -> float:
+    def timeStamp(self, frame_num: int = None) -> float:
         if frame_num is None:
             frame_num = self.frame_num
         return self.frameVideoPTS(frame_num)*self.time_base
@@ -433,13 +430,13 @@ class ND2VideoReader():
         # the user wants to copy the input stream metadata
         return 'yuv420p'  # 'yuv444p'  # 'rgb24'
 
-    def bitRate(self, for_rgb: bool=True) -> float:
-        ''' estimated kpbs '''
+    def bitRate(self) -> float:
+        """ estimated kpbs """
         bits_per_pixel = self.nd2_file.attributes.bitsPerComponentInMemory
         pixels_per_frame = self.width * self.height
         bits_per_frame = float(bits_per_pixel * pixels_per_frame)
         kilobits_per_frame = bits_per_frame / 1024.0
-        # max_kbps = float(2**16)
+        # max_kbps = float(2**16 - 1)
         max_kbps = float(2**32 - 1)
         kbps = kilobits_per_frame * self.avg_fps
         return min(kbps, max_kbps)
@@ -457,16 +454,16 @@ class ND2VideoReader():
         return self.height
 
     def frameVideoWidth(self) -> int:
-        ''' report a width that is increased if necessary to be multiple of 2 because 
-            frameVideoRGB increases the width if necessary to be a multiple of 2 '''
+        """ report a width that is increased if necessary to be multiple of 2 because
+            frameVideoRGB increases the width if necessary to be a multiple of 2 """
         return self.width + (self.width % 2)
 
     def frameVideoHeight(self) -> int:
-        ''' report a height that is increased if necessary to be multiple of 2 because 
-            frameVideoRGB increases the height if necessary to be a multiple of 2 '''
+        """ report a height that is increased if necessary to be multiple of 2 because
+            frameVideoRGB increases the height if necessary to be a multiple of 2 """
         return self.height + (self.height % 2)
 
-    def framesPerSecond(self) -> float:  # TODO:
+    def framesPerSecond(self) -> float:
         return self.avgFPS()
 
     def avgFPS(self):
@@ -492,16 +489,16 @@ def orientedFrame(current_frame, direction_sense: Dict) -> np.ndarray:
             flip_directions.append(0)
         if direction_sense['x'] < 0:
             flip_directions.append(1)
-        # NOTE: the copy() that follows is necesarry because
+        # NOTE: the copy() that follows is necessary because
         # openCV can't use the "view" returned by np.flip()
         current_frame = np.flip(current_frame, flip_directions).copy()
     return current_frame
 
 
-def rgbConverter(type: str='eye') -> np.ndarray:
-    if type =='eye':
+def rgbConverter(type: str = 'eye') -> np.ndarray:
+    if type == 'eye':
         return np.asarray([0.2989, 0.5870, 0.1140])
-    if type =='sensor':
+    if type == 'sensor':
         return np.asarray([0.25, 0.5, 0.25])
     else:
         return np.asarray([1.0, 1.0, 1.0])/3.0
@@ -519,7 +516,7 @@ def asUINT8(array_to_convert: np.ndarray) -> np.ndarray:
 
 
 def rgbToGray(array_to_convert: np.ndarray, rgb_conversion: np.ndarray) -> np.ndarray:
-    return np.dot(array_to_convert[...,:3], rgb_conversion)
+    return np.dot(array_to_convert[..., :3], rgb_conversion)
 
 
 def grayToRGB(array_to_convert: np.ndarray) -> np.ndarray:

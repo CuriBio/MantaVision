@@ -658,36 +658,28 @@ def matchResults(
         if sub_pixel_search_offset_right:
             match_coordinates_origin_x -= template_to_match.shape[1]
 
-    sub_region_y_start = max(
-        match_coordinates_origin_y - sub_pixel_search_radius,
-        0
-    )
+    sub_region_y_start = max(match_coordinates_origin_y - sub_pixel_search_radius, 0)
     sub_region_y_end = min(
-        match_coordinates_origin_y + template_to_match.shape[0] + sub_pixel_search_radius,
-        best_match_frame.shape[0]
+        match_coordinates_origin_y + template_to_match.shape[0] + sub_pixel_search_radius, best_match_frame.shape[0]
     )
-    sub_region_x_start = max(
-        match_coordinates_origin_x - sub_pixel_search_radius,
-        0
-    )
+    sub_region_x_start = max(match_coordinates_origin_x - sub_pixel_search_radius, 0)
     sub_region_x_end = min(
-        match_coordinates_origin_x + template_to_match.shape[1] + sub_pixel_search_radius,
-        best_match_frame.shape[1]
+        match_coordinates_origin_x + template_to_match.shape[1] + sub_pixel_search_radius, best_match_frame.shape[1]
     )
-    match_measure, match_sub_coordinates = bestSubPixelMatch(
+    best_match_measure, best_match_sub_coordinates = bestSubPixelMatch(
         image_to_search=best_match_frame[
-                        sub_region_y_start:sub_region_y_end,
-                        sub_region_x_start:sub_region_x_end
-                        ],
+            int(math.floor(sub_region_y_start)):int(math.ceil(sub_region_y_end)),
+            int(math.floor(sub_region_x_start)):int(math.ceil(sub_region_x_end))
+        ],
         template_to_match=template_to_match,
         search_increment=sub_pixel_search_increment
     )
+    best_match_sub_coordinates = [
+        sub_region_x_start + best_match_sub_coordinates[0],
+        sub_region_y_start + best_match_sub_coordinates[1]
+    ]
 
-    return (
-        sub_region_x_start + match_sub_coordinates[0],
-        sub_region_y_start + match_sub_coordinates[1],
-        best_match_rotation
-    )
+    return best_match_measure, best_match_sub_coordinates, best_match_rotation
 
 
 def bestSubPixelMatch(
@@ -700,8 +692,8 @@ def bestSubPixelMatch(
     template_dim_y, template_dim_x = template_to_match.shape
     search_length_y = input_dim_y - template_dim_y
     search_length_x = input_dim_x - template_dim_x
-    max_match_measure = 0.0
-    max_coordinates = [0.0, 0.0]
+    best_match_measure = -1.0
+    best_match_coordinates = None
     shifted_input = np.ndarray(shape=[template_dim_y + 1, template_dim_x + 1], dtype=np.float32)
     for y_origin in np.arange(search_increment, search_length_y, search_increment):
         for x_origin in np.arange(search_increment, search_length_x, search_increment):
@@ -710,18 +702,18 @@ def bestSubPixelMatch(
             sub_region_start_x = math.floor(x_origin)
             sub_region_end_x = sub_region_start_x + template_dim_x + 1
             sub_image_to_shift = image_to_search[
-                                 sub_region_start_y:sub_region_end_y,
-                                 sub_region_start_x:sub_region_end_x,
-                                 ]
+                sub_region_start_y:sub_region_end_y,
+                sub_region_start_x:sub_region_end_x,
+            ]
             shift(input=sub_image_to_shift, shift=[-y_origin, -x_origin], output=shifted_input)
             input_to_match = shifted_input[:template_dim_y, :template_dim_x]
-            match_results = cv.matchTemplate(input_to_match, template_to_match, cv.TM_CCOEFF)
+            match_results = cv.matchTemplate(input_to_match, template_to_match, cv.TM_CCOEFF_NORMED)
             _, match_measure, _, _ = cv.minMaxLoc(match_results)
-            if match_measure > max_match_measure:
-                max_match_measure = match_measure
-                max_coordinates = [x_origin, y_origin]
+            if match_measure > best_match_measure:
+                best_match_measure = match_measure
+                best_match_coordinates = [x_origin, y_origin]
 
-    return max_match_measure, max_coordinates
+    return best_match_measure, best_match_coordinates
 
 
 def fourccNum(c1, c2, c3, c4) -> int:
