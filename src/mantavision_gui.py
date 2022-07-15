@@ -1,10 +1,23 @@
 
-from morphology import computeMorphologyMetrics
+from ca2_analysis import analyzeCa2Data
 from mantavision import runTrackTemplate
+from morphology import computeMorphologyMetrics
+
 from gooey import Gooey, GooeyParser
 from json import dump as writeJSON, load as readJSON
 from pathlib import Path 
 from typing import Dict
+
+
+def runCa2Analysis(args: Dict):
+    """ Runs analyzeCa2Data function with the arguments provided by the Gooey UI. """
+    ca2_analysis_display_results = False
+    analyzeCa2Data(
+        path_to_data=args.ca2_analysis_path_to_data,
+        expected_frequency_hz=args.ca2_analysis_expected_frequency_hz,
+        save_result_plots=args.ca2_analysis_save_result_plots,
+        display_results=ca2_analysis_display_results
+    )
 
 
 def runTracking(args: Dict):
@@ -99,6 +112,10 @@ def saveCurrentFieldValues(
         field_values['morphology_microns_per_pixel'] = args.morphology_microns_per_pixel
         field_values['morphology_sub_pixel_search_increment'] = args.morphology_sub_pixel_search_increment
         field_values['morphology_sub_pixel_refinement_radius'] = args.morphology_sub_pixel_refinement_radius
+    elif args.actions == 'Ca2+Analysis':
+        field_values['ca2_analysis_path_to_data'] = args.ca2_analysis_path_to_data
+        field_values['ca2_analysis_expected_frequency_hz'] = args.ca2_analysis_expected_frequency_hz
+        field_values['ca2_analysis_save_result_plots'] = args.ca2_analysis_save_result_plots
     with open(current_field_values_file_path, 'w') as outfile:
         writeJSON(field_values, outfile, indent=4)
 
@@ -127,7 +144,10 @@ def ensureDefaultFieldValuesExist(prev_run_values_file_path: str):
         'morphology_edge_finding_smoothing_radius': 10,
         'morphology_microns_per_pixel': 1.0,
         'morphology_sub_pixel_search_increment': None,
-        'morphology_sub_pixel_refinement_radius': None
+        'morphology_sub_pixel_refinement_radius': None,
+        'ca2_analysis_path_to_data': None,
+        'ca2_analysis_expected_frequency_hz': 1.0,
+        'ca2_analysis_save_result_plots': False
     }
     with open(prev_run_values_file_path, 'w') as outfile:
         writeJSON(default_field_values, outfile, indent=4)
@@ -341,13 +361,43 @@ def main():
         default=None,
         gooey_options={'initial_value': initial_values['morphology_sub_pixel_refinement_radius']}
     )
-    
+    ####################
+    # Ca2+ Analysis UI #
+    ####################
+    ca2_analysis_parser = subs.add_parser(
+        'Ca2+Analysis',
+        help='Analyze Ca2+ Videos'
+    )
+    ca2_analysis_parser.add_argument(
+        'ca2_analysis_path_to_data',
+        metavar='Input Dir Path',
+        help='path to a directory with videos to analyze',
+        widget='DirChooser',
+        type=str,
+        gooey_options={'full_width': True, 'initial_value': initial_values['ca2_analysis_path_to_data']}
+    )
+    ca2_analysis_parser.add_argument(
+        'ca2_analysis_expected_frequency_hz',
+        metavar='Expected Frequency Hz',
+        help='Ca2+ signal will be determined by searching the expected frequency +/- 0.5Hz',
+        type=float,
+        gooey_options={'initial_value': initial_values['ca2_analysis_expected_frequency_hz']}
+    )
+    ca2_analysis_parser.add_argument(
+        '--ca2_analysis_save_result_plots',
+        metavar='Save Signal Plots',
+        help=' Save Plots of the estimated signal with peaks and troughs indicated',
+        action='store_true',
+        default=initial_values['ca2_analysis_save_result_plots']
+    )
     args = parser.parse_args()
     saveCurrentFieldValues(args, initial_values, mv_config_file_path)
     if args.actions == 'Tracking':
         runTracking(args)
     elif args.actions == 'Morphology':
         runMorphology(args)
+    elif args.actions == 'Ca2+Analysis':
+        runCa2Analysis(args)
     else:
         raise RuntimeError('Invalid Action Chosen')
 
