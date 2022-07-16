@@ -16,10 +16,6 @@ pd.set_option("display.precision", 2)
 pd.set_option("display.expand_frame_repr", False)
 
 
-# TODO: create a function that will open a video and iterate over each frame and
-#       compute the average pixel intensity and then save the data from all frames
-#       in the same format returned by ca2Data() and then run:
-
 # TODO: perhaps perform some kind of auto background subtraction on each frame
 #       simple otsu/triangle etc is likely to work.
 #       we can compute the mean intensity from the foreground pixels only, or we could
@@ -75,11 +71,6 @@ pd.set_option("display.expand_frame_repr", False)
 #       compute enough splines to for the resolution we need computationally very expensive
 
 
-def frameSignalMeasure(input_frame: np.ndarray) -> float:
-    """ returns a measure of the intensity signal in the input data/frame """
-    return np.sum(input_frame)
-
-
 def signalDataFromVideo(input_video_path: str, background_subtraction: str = 'None') -> Tuple[np.ndarray, np.ndarray]:
     """ """
     input_video_stream = VideoReader(input_video_path)
@@ -89,23 +80,45 @@ def signalDataFromVideo(input_video_path: str, background_subtraction: str = 'No
     signal_values = []
     while input_video_stream.next():
         current_frame = input_video_stream.frameGray()
-        signal_values.append(frameSignalMeasure(current_frame))
+        signal_values.append(np.sum(current_frame))
         time_stamps.append(input_video_stream.timeStamp())
 
     time_stamps = np.array(time_stamps, dtype=float)
     signal_values = np.array(signal_values, dtype=float)
-    if background_subtraction.lower() == 'auto':
-        intensity_sum = np.sum(signal_values)
-        frame_width = int(input_video_stream.frameWidth())
-        frame_height = int(input_video_stream.frameHeight())
-        num_frames = signal_values.shape[0]
-        num_pixels = frame_width*frame_height*num_frames
-        mean_intensity = intensity_sum/num_pixels
-        signal_values -= mean_intensity
-        signal_values[signal_values < 0] = 0
+
+    if background_subtraction.lower() == 'none':
+        input_video_stream.close()
+        return time_stamps, signal_values
+
+    # compute the mean of the entire video stream intensity
+    intensity_sum = np.sum(signal_values)
+    frame_width = int(input_video_stream.frameWidth())
+    frame_height = int(input_video_stream.frameHeight())
+    num_frames = signal_values.shape[0]
+    num_pixels = frame_width*frame_height*num_frames
+    mean_intensity = intensity_sum/num_pixels
+    # subtract the intensity mean from each pixel (clipping to > 0)
+    # and then compute the mean of each frame as the signal
+    adjusted_signal_values = []
+
+    # #################### START TODO: ########################
+    # TODO: figure out why stream initialisation doesn't work
+    # input_video_stream.initialiseStream()
+    input_video_stream.close()
+    input_video_stream = VideoReader(input_video_path)
+    if not input_video_stream.isOpened():
+        return
+    # #################### END TODO: ########################
+
+    while input_video_stream.next():
+        current_frame = input_video_stream.frameGray()
+        adjusted_frame = current_frame - mean_intensity
+        adjusted_frame[adjusted_frame < 0] = 0
+        adjusted_signal_values.append(np.mean(adjusted_frame))
     input_video_stream.close()
 
-    return time_stamps, signal_values
+    adjusted_signal_values = np.array(adjusted_signal_values, dtype=float)
+    return time_stamps, adjusted_signal_values
 
 
 def analyzeCa2Data(
