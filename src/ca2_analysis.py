@@ -77,43 +77,52 @@ pd.set_option("display.expand_frame_repr", False)
 
 def frameSignalMeasure(input_frame: np.ndarray) -> float:
     """ returns a measure of the intensity signal in the input data/frame """
-    # return np.mean(input_frame)
     return np.sum(input_frame)
 
 
-def signalDataFromVideo(input_video_path: str) -> Tuple[np.ndarray, np.ndarray]:
+def signalDataFromVideo(input_video_path: str, background_subtraction: str = 'None') -> Tuple[np.ndarray, np.ndarray]:
     """ """
-
     input_video_stream = VideoReader(input_video_path)
     if not input_video_stream.isOpened():
         return
-    # frame_width = int(input_video_stream.frameWidth())
-    # frame_height = int(input_video_stream.frameHeight())
-    # frames_per_second = input_video_stream.avgFPS()
     time_stamps = []
     signal_values = []
     while input_video_stream.next():
         current_frame = input_video_stream.frameGray()
         signal_values.append(frameSignalMeasure(current_frame))
         time_stamps.append(input_video_stream.timeStamp())
+
+    time_stamps = np.array(time_stamps, dtype=float)
+    signal_values = np.array(signal_values, dtype=float)
+    if background_subtraction.lower() == 'auto':
+        intensity_sum = np.sum(signal_values)
+        frame_width = int(input_video_stream.frameWidth())
+        frame_height = int(input_video_stream.frameHeight())
+        num_frames = signal_values.shape[0]
+        num_pixels = frame_width*frame_height*num_frames
+        mean_intensity = intensity_sum/num_pixels
+        signal_values -= mean_intensity
+        signal_values[signal_values < 0] = 0
     input_video_stream.close()
 
-    return np.array(time_stamps, dtype=float), np.array(signal_values, dtype=float)
+    return time_stamps, signal_values
 
 
 def analyzeCa2Data(
     path_to_data: str,
     expected_frequency_hz: float,
-    display_results: bool = False,
+    background_subtraction: str = 'None',
     save_result_plots: bool = False,
+    display_results: bool = False,
     expected_min_peak_width: int = None,
     expected_min_peak_height: float = None
 ):
     """ """
+
     if path_to_data.lower() == 'select_file':
-        path_to_data = getFilePathViaGUI(window_title = 'Select the file to analyze')
+        path_to_data = getFilePathViaGUI(window_title='Select the file to analyze')
     elif path_to_data.lower() == 'select_dir':
-        path_to_data = getDirPathViaGUI(window_title = 'Select the directory with files to analyze')
+        path_to_data = getDirPathViaGUI(window_title='Select the directory with files to analyze')
 
     # base_dir, files_to_analyze = contentsOfDir(dir_path=path_to_data, search_terms=['.xlsx'])
     base_dir, files_to_analyze = contentsOfDir(dir_path=path_to_data, search_terms=['*.*'])
@@ -125,7 +134,7 @@ def analyzeCa2Data(
         # signal_data_file_path = os.path.join(base_dir, file_name + file_extension)
         # time_stamps, input_signal = signalDataFromXLSX(signal_data_file_path)
         input_video_file_path = os.path.join(base_dir, file_name + file_extension)
-        time_stamps, input_signal = signalDataFromVideo(input_video_file_path)
+        time_stamps, input_signal = signalDataFromVideo(input_video_file_path, background_subtraction)
 
         ca2_analysis = ca2Analysis(
             input_signal,
@@ -537,9 +546,9 @@ def resultsToCSV(
 
 if __name__ == '__main__':
     analyzeCa2Data(
-        # path_to_data="select_dir",
-        path_to_data="/home/positimothy/dev/repo/curibio/test_data/videos/ca2/to_track/",
+        path_to_data='select_dir',
         expected_frequency_hz=1.5,
+        background_subtraction=None,
         save_result_plots=True,
         display_results=False
     )

@@ -11,12 +11,11 @@ from typing import Dict
 
 def runCa2Analysis(args: Dict):
     """ Runs analyzeCa2Data function with the arguments provided by the Gooey UI. """
-    ca2_analysis_display_results = False
     analyzeCa2Data(
         path_to_data=args.ca2_analysis_path_to_data,
         expected_frequency_hz=args.ca2_analysis_expected_frequency_hz,
         save_result_plots=args.ca2_analysis_save_result_plots,
-        display_results=ca2_analysis_display_results
+        background_subtraction=args.ca2_analysis_background_subtraction
     )
 
 
@@ -78,7 +77,15 @@ def runMorphology(args: Dict):
 
 def previousFieldValues(prev_field_values_file_path: str) -> Dict:
     """ load all the field values form the previous run """
-    return readJSON(open(prev_field_values_file_path))
+    previous_field_values = readJSON(open(prev_field_values_file_path))
+    # add any missing field values to an existing field value file
+    # which can happen if a new version of this app adds some new fields
+    # that won't yet be in the previous saved field values file
+    default_field_values = defaultFieldValues()
+    for default_field_key, default_field_value in default_field_values.items():
+        if default_field_key not in previous_field_values:
+            previous_field_values[default_field_key] = default_field_value
+    return previous_field_values
 
 
 def saveCurrentFieldValues(
@@ -112,18 +119,17 @@ def saveCurrentFieldValues(
         field_values['morphology_microns_per_pixel'] = args.morphology_microns_per_pixel
         field_values['morphology_sub_pixel_search_increment'] = args.morphology_sub_pixel_search_increment
         field_values['morphology_sub_pixel_refinement_radius'] = args.morphology_sub_pixel_refinement_radius
-    elif args.actions == 'Ca2+Analysis':
+    elif args.actions == 'Ca2+_Analysis':
         field_values['ca2_analysis_path_to_data'] = args.ca2_analysis_path_to_data
         field_values['ca2_analysis_expected_frequency_hz'] = args.ca2_analysis_expected_frequency_hz
         field_values['ca2_analysis_save_result_plots'] = args.ca2_analysis_save_result_plots
+        field_values['ca2_analysis_background_subtraction'] = args.ca2_analysis_background_subtraction
     with open(current_field_values_file_path, 'w') as outfile:
         writeJSON(field_values, outfile, indent=4)
 
 
-def ensureDefaultFieldValuesExist(prev_run_values_file_path: str):
-    if Path(prev_run_values_file_path).is_file():
-        return
-    default_field_values = {
+def defaultFieldValues() -> Dict:
+    return {
         'tracking_video_dir': '',
         'tracking_horizontal_contraction_direction': 'right',
         'tracking_vertical_contraction_direction': 'none',
@@ -136,7 +142,7 @@ def ensureDefaultFieldValuesExist(prev_run_values_file_path: str):
         'tracking_output_conversion_factor': 1.0,
         'tracking_microns_per_pixel': 1.0,
         'tracking_sub_pixel_search_increment': None,
-        'tracking_sub_pixel_refinement_radius': None,    
+        'tracking_sub_pixel_refinement_radius': None,
         'morphology_search_image_path': '',
         'morphology_left_template_image_path': '',
         'morphology_right_template_image_path': '',
@@ -147,10 +153,16 @@ def ensureDefaultFieldValuesExist(prev_run_values_file_path: str):
         'morphology_sub_pixel_refinement_radius': None,
         'ca2_analysis_path_to_data': None,
         'ca2_analysis_expected_frequency_hz': 1.0,
-        'ca2_analysis_save_result_plots': False
+        'ca2_analysis_save_result_plots': False,
+        'ca2_analysis_background_subtraction': None,
     }
+
+
+def ensureDefaultFieldValuesExist(prev_run_values_file_path: str):
+    if Path(prev_run_values_file_path).is_file():
+        return
     with open(prev_run_values_file_path, 'w') as outfile:
-        writeJSON(default_field_values, outfile, indent=4)
+        writeJSON(defaultFieldValues(), outfile, indent=4)
 
 
 GUI_WIDTH = 1200
@@ -365,7 +377,7 @@ def main():
     # Ca2+ Analysis UI #
     ####################
     ca2_analysis_parser = subs.add_parser(
-        'Ca2+Analysis',
+        'Ca2+_Analysis',
         help='Analyze Ca2+ Videos'
     )
     ca2_analysis_parser.add_argument(
@@ -379,9 +391,16 @@ def main():
     ca2_analysis_parser.add_argument(
         'ca2_analysis_expected_frequency_hz',
         metavar='Expected Frequency Hz',
-        help='Ca2+ signal will be determined by searching the expected frequency +/- 0.5Hz',
+        help='Signal can be +/- 0.5Hz from this value',
         type=float,
         gooey_options={'initial_value': initial_values['ca2_analysis_expected_frequency_hz']}
+    )
+    ca2_analysis_parser.add_argument(
+        'ca2_analysis_background_subtraction',
+        metavar='Background Subtraction',
+        help='Estimate Background and Subtract From Signal',
+        choices=['None', 'Auto'],  # add in , 'ROI' if/when that gets implemented
+        default=initial_values['ca2_analysis_background_subtraction']
     )
     ca2_analysis_parser.add_argument(
         '--ca2_analysis_save_result_plots',
@@ -396,7 +415,7 @@ def main():
         runTracking(args)
     elif args.actions == 'Morphology':
         runMorphology(args)
-    elif args.actions == 'Ca2+Analysis':
+    elif args.actions == 'Ca2+_Analysis':
         runCa2Analysis(args)
     else:
         raise RuntimeError('Invalid Action Chosen')
