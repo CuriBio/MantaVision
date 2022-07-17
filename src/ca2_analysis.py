@@ -1,3 +1,4 @@
+import math
 import os
 import glob
 import openpyxl
@@ -6,6 +7,7 @@ import pandas as pd
 from datetime import datetime
 from typing import Tuple, Dict, List
 from numpy.polynomial.polynomial import polyfit, Polynomial
+from scipy.ndimage import gaussian_filter
 from scipy.signal import find_peaks, butter, sosfilt
 from tkinter import Tk as tk
 from tkinter.filedialog import askopenfilename, askdirectory
@@ -16,13 +18,9 @@ pd.set_option("display.precision", 2)
 pd.set_option("display.expand_frame_repr", False)
 
 
-# TODO: perhaps perform some kind of auto background subtraction on each frame
-#       simple otsu/triangle etc is likely to work.
-#       we can compute the mean intensity from the foreground pixels only, or we could
-#       compute the mean background value and then subtract it from each frame and clip values at min of 0,
-#       and then compute the mean intensity value.
-#       or we could compute a gaussian mixture model with 2 gaussians and only use pixels with values
-#       within +/- say 3 stddevs of the highest intensity gaussian.
+# TODO: figure out why stream initialisation doesn't work
+
+# TODO: figure out why T50 is larger than T90 which makes no sense
 
 # TODO: create a function that will iterate over each frame and compute the sum of all pixel values
 #       then the frame with the highest count will be the frame with max contraction
@@ -35,9 +33,9 @@ pd.set_option("display.expand_frame_repr", False)
 #       then subtracting the mean background intensity value from each pixel in the foreground ROI, and then
 #       computing the mean intensity value of the foreground ROI from the "background adjusted" foreground ROI.
 
-# TODO: make the Ca2+ analysis code take a directory of videos but if the user selects to
-#       do the ROI background subtraction, then let them to that up front on all the videos
-#       and then save the details and use them to perform
+# TODO: if the user selects to do background subtraction using a ROI,
+#       then let them select the ROI's for all the videos up front
+#       and then save the details and use them to perform the analysis
 
 # TODO: check there are no double peaks or troughs.
 #       would need to use the peak and trough indicies
@@ -75,50 +73,29 @@ def signalDataFromVideo(input_video_path: str, background_subtraction: str = 'No
     """ """
     input_video_stream = VideoReader(input_video_path)
     if not input_video_stream.isOpened():
-        return
+        return None, None
+
     time_stamps = []
     signal_values = []
     while input_video_stream.next():
-        current_frame = input_video_stream.frameGray()
-        signal_values.append(np.sum(current_frame))
         time_stamps.append(input_video_stream.timeStamp())
-
-    time_stamps = np.array(time_stamps, dtype=float)
-    signal_values = np.array(signal_values, dtype=float)
-
-    if background_subtraction.lower() == 'none':
-        input_video_stream.close()
-        return time_stamps, signal_values
-
-    # compute the mean of the entire video stream intensity
-    intensity_sum = np.sum(signal_values)
-    frame_width = int(input_video_stream.frameWidth())
-    frame_height = int(input_video_stream.frameHeight())
-    num_frames = signal_values.shape[0]
-    num_pixels = frame_width*frame_height*num_frames
-    mean_intensity = intensity_sum/num_pixels
-    # subtract the intensity mean from each pixel (clipping to > 0)
-    # and then compute the mean of each frame as the signal
-    adjusted_signal_values = []
-
-    # #################### START TODO: ########################
-    # TODO: figure out why stream initialisation doesn't work
-    # input_video_stream.initialiseStream()
-    input_video_stream.close()
-    input_video_stream = VideoReader(input_video_path)
-    if not input_video_stream.isOpened():
-        return
-    # #################### END TODO: ########################
-
-    while input_video_stream.next():
         current_frame = input_video_stream.frameGray()
-        adjusted_frame = current_frame - mean_intensity
-        adjusted_frame[adjusted_frame < 0] = 0
-        adjusted_signal_values.append(np.mean(adjusted_frame))
-    input_video_stream.close()
+        if background_subtraction.lower() == 'none':
+            signal_values.append(np.sum(current_frame))
+            continue
+        if background_subtraction.lower() == 'lowpass':
+            background_subtractor = gaussian_filter(current_frame.astype(float), sigma=8, mode='reflect')
+        else:  # background_subtraction.lower() == 'mean':
+            background_subtractor = np.mean(current_frame)
+        adjusted_frame = current_frame - background_subtractor
 
-    adjusted_signal_values = np.array(adjusted_signal_values, dtype=float)
-    return time_stamps, adjusted_signal_values
+        # clip pixels to > 0 and use the mean of all pixels as the signal
+        adjusted_frame[adjusted_frame < 0] = 0
+        adjusted_frame_mean = np.mean(adjusted_frame)
+        signal_values.append(adjusted_frame_mean)
+
+    input_video_stream.close()
+    return np.array(time_stamps, dtype=float), np.array(signal_values, dtype=float)
 
 
 def analyzeCa2Data(
@@ -148,6 +125,8 @@ def analyzeCa2Data(
         # time_stamps, input_signal = signalDataFromXLSX(signal_data_file_path)
         input_video_file_path = os.path.join(base_dir, file_name + file_extension)
         time_stamps, input_signal = signalDataFromVideo(input_video_file_path, background_subtraction)
+        if input_signal is None or time_stamps is None:
+            raise RuntimeError("Error. Signal from video could not be extracted")
 
         ca2_analysis = ca2Analysis(
             input_signal,
@@ -250,7 +229,7 @@ def ca2Analysis(
 
     # compute a measure of average frequency
     peak_times = time_stamps[peak_indices]
-    avg_frequency = np.mean(np.diff(peak_times))
+    avg_frequency = 1.0/np.mean(np.diff(peak_times))
 
     return {
         'peak_indices': peak_indices,

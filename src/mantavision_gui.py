@@ -398,8 +398,8 @@ def main():
     ca2_analysis_parser.add_argument(
         'ca2_analysis_background_subtraction',
         metavar='Background Subtraction',
-        help='Estimate Background and Subtract From Signal',
-        choices=['None', 'Auto'],  # add in , 'ROI' if/when that gets implemented
+        help='Method to Estimate Background and Subtract From Signal',
+        choices=['None', 'Mean', 'Lowpass'],  # add in , 'ROI' if/when that gets implemented
         default=initial_values['ca2_analysis_background_subtraction']
     )
     ca2_analysis_parser.add_argument(
@@ -409,6 +409,10 @@ def main():
         action='store_true',
         default=initial_values['ca2_analysis_save_result_plots']
     )
+    # TODO: add an option to output the background subtracted video
+    #       this is particularly useful when developing methods for background subtraction
+    #       to ensure the results are sensible
+
     args = parser.parse_args()
     saveCurrentFieldValues(args, initial_values, mv_config_file_path)
     if args.actions == 'Tracking':
