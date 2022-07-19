@@ -10,7 +10,7 @@ MS Windows:
 
 > pip install -r \path\to\src\requirements.txt
 
-MacOs, Linux:
+macOS, Linux:
 
 > pip install -r /path/to/src/requirements.txt
 
@@ -20,6 +20,6 @@ MS Windows:
 
 > python \path\to\src\mantavision_gui.py
 
-MacOs, Linux:
+macOS, Linux:
 
 > python /path/to/src/mantavision_gui.py
