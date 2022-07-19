@@ -1,9 +1,6 @@
 #! /usr/bin/env python
 
 import os
-from pathlib import Path
-from platform import system as os_name
-from distutils.log import warn
 from datetime import datetime
 import openpyxl
 import numpy as np
@@ -13,7 +10,7 @@ from numpy.polynomial.polynomial import Polynomial
 from matplotlib import pyplot as plt
 from scipy import ndimage as ndifilters
 from skimage import filters as skimagefilters
-from mantavision import getFilePathViaGUI, getDirPathViaGUI, contentsOfDir
+from optical_tracking import getFilePathViaGUI, getDirPathViaGUI, contentsOfDir
 from track_template import matchResults, intensityAdjusted, userDrawnROI
 
 

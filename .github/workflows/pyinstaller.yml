@@ -1,0 +1,24 @@
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        #os: ['windows-latest', 'ubuntu-latest, 'macos-latest']
+        os: ['windows-latest']
+
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions/setup-python@v2
+      with:
+        python-version: 3.9.13
+
+    - run: pip install -r src/requirements.txt pyinstaller
+    - run: pyinstaller -i app/icon/curibio.ico -F --windowed src/mantavision.py
+    - uses: actions/upload-artifact@v2
+      with:
+        path: dist/*

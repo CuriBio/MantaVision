@@ -2,7 +2,6 @@
 __pycache__
 build
 dist
-app
 *.mp4
 *.avi
 *.mov
