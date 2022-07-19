@@ -1,10 +1,22 @@
 
-from morphology import computeMorphologyMetrics
+from ca2_analysis import analyzeCa2Data
 from mantavision import runTrackTemplate
+from morphology import computeMorphologyMetrics
+
 from gooey import Gooey, GooeyParser
 from json import dump as writeJSON, load as readJSON
 from pathlib import Path 
 from typing import Dict
+
+
+def runCa2Analysis(args: Dict):
+    """ Runs analyzeCa2Data function with the arguments provided by the Gooey UI. """
+    analyzeCa2Data(
+        path_to_data=args.ca2_analysis_path_to_data,
+        expected_frequency_hz=args.ca2_analysis_expected_frequency_hz,
+        save_result_plots=args.ca2_analysis_save_result_plots,
+        bg_subtraction_method=args.ca2_analysis_bg_subtraction_method
+    )
 
 
 def runTracking(args: Dict):
@@ -65,7 +77,15 @@ def runMorphology(args: Dict):
 
 def previousFieldValues(prev_field_values_file_path: str) -> Dict:
     """ load all the field values form the previous run """
-    return readJSON(open(prev_field_values_file_path))
+    previous_field_values = readJSON(open(prev_field_values_file_path))
+    # add any missing field values to an existing field value file
+    # which can happen if a new version of this app adds some new fields
+    # that won't yet be in the previous saved field values file
+    default_field_values = defaultFieldValues()
+    for default_field_key, default_field_value in default_field_values.items():
+        if default_field_key not in previous_field_values:
+            previous_field_values[default_field_key] = default_field_value
+    return previous_field_values
 
 
 def saveCurrentFieldValues(
@@ -99,14 +119,17 @@ def saveCurrentFieldValues(
         field_values['morphology_microns_per_pixel'] = args.morphology_microns_per_pixel
         field_values['morphology_sub_pixel_search_increment'] = args.morphology_sub_pixel_search_increment
         field_values['morphology_sub_pixel_refinement_radius'] = args.morphology_sub_pixel_refinement_radius
+    elif args.actions == 'Ca2+_Analysis':
+        field_values['ca2_analysis_path_to_data'] = args.ca2_analysis_path_to_data
+        field_values['ca2_analysis_expected_frequency_hz'] = args.ca2_analysis_expected_frequency_hz
+        field_values['ca2_analysis_save_result_plots'] = args.ca2_analysis_save_result_plots
+        field_values['ca2_analysis_bg_subtraction_method'] = args.ca2_analysis_bg_subtraction_method
     with open(current_field_values_file_path, 'w') as outfile:
         writeJSON(field_values, outfile, indent=4)
 
 
-def ensureDefaultFieldValuesExist(prev_run_values_file_path: str):
-    if Path(prev_run_values_file_path).is_file():
-        return
-    default_field_values = {
+def defaultFieldValues() -> Dict:
+    return {
         'tracking_video_dir': '',
         'tracking_horizontal_contraction_direction': 'right',
         'tracking_vertical_contraction_direction': 'none',
@@ -119,7 +142,7 @@ def ensureDefaultFieldValuesExist(prev_run_values_file_path: str):
         'tracking_output_conversion_factor': 1.0,
         'tracking_microns_per_pixel': 1.0,
         'tracking_sub_pixel_search_increment': None,
-        'tracking_sub_pixel_refinement_radius': None,    
+        'tracking_sub_pixel_refinement_radius': None,
         'morphology_search_image_path': '',
         'morphology_left_template_image_path': '',
         'morphology_right_template_image_path': '',
@@ -127,10 +150,19 @@ def ensureDefaultFieldValuesExist(prev_run_values_file_path: str):
         'morphology_edge_finding_smoothing_radius': 10,
         'morphology_microns_per_pixel': 1.0,
         'morphology_sub_pixel_search_increment': None,
-        'morphology_sub_pixel_refinement_radius': None
+        'morphology_sub_pixel_refinement_radius': None,
+        'ca2_analysis_path_to_data': None,
+        'ca2_analysis_expected_frequency_hz': 1.0,
+        'ca2_analysis_save_result_plots': False,
+        'ca2_analysis_bg_subtraction_method': None,
     }
+
+
+def ensureDefaultFieldValuesExist(prev_run_values_file_path: str):
+    if Path(prev_run_values_file_path).is_file():
+        return
     with open(prev_run_values_file_path, 'w') as outfile:
-        writeJSON(default_field_values, outfile, indent=4)
+        writeJSON(defaultFieldValues(), outfile, indent=4)
 
 
 GUI_WIDTH = 1200
@@ -341,13 +373,54 @@ def main():
         default=None,
         gooey_options={'initial_value': initial_values['morphology_sub_pixel_refinement_radius']}
     )
-    
+    ####################
+    # Ca2+ Analysis UI #
+    ####################
+    ca2_analysis_parser = subs.add_parser(
+        'Ca2+_Analysis',
+        help='Analyze Ca2+ Videos'
+    )
+    ca2_analysis_parser.add_argument(
+        'ca2_analysis_path_to_data',
+        metavar='Input Dir Path',
+        help='path to a directory with videos to analyze',
+        widget='DirChooser',
+        type=str,
+        gooey_options={'full_width': True, 'initial_value': initial_values['ca2_analysis_path_to_data']}
+    )
+    ca2_analysis_parser.add_argument(
+        'ca2_analysis_expected_frequency_hz',
+        metavar='Expected Frequency Hz',
+        help='Signal can be +/- 0.5Hz from this value',
+        type=float,
+        gooey_options={'initial_value': initial_values['ca2_analysis_expected_frequency_hz']}
+    )
+    ca2_analysis_parser.add_argument(
+        'ca2_analysis_bg_subtraction_method',
+        metavar='Background Subtraction',
+        help='Method to Estimate Background and Subtract From Signal',
+        choices=['None', 'ROI', 'Mean', 'Lowpass'],
+        default=initial_values['ca2_analysis_bg_subtraction_method']
+    )
+    ca2_analysis_parser.add_argument(
+        '--ca2_analysis_save_result_plots',
+        metavar='Save Signal Plots',
+        help=' Save Plots of the estimated signal with peaks and troughs indicated',
+        action='store_true',
+        default=initial_values['ca2_analysis_save_result_plots']
+    )
+    # TODO: add an option to output the background subtracted video
+    #       this is particularly useful when developing methods for background subtraction
+    #       to ensure the results are sensible
+
     args = parser.parse_args()
     saveCurrentFieldValues(args, initial_values, mv_config_file_path)
     if args.actions == 'Tracking':
         runTracking(args)
     elif args.actions == 'Morphology':
         runMorphology(args)
+    elif args.actions == 'Ca2+_Analysis':
+        runCa2Analysis(args)
     else:
         raise RuntimeError('Invalid Action Chosen')
 

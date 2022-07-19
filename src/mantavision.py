@@ -16,6 +16,7 @@ from tkinter import Tk as tk
 from tkinter.filedialog import askopenfilename, askdirectory
 from video2images import video2images
 from track_template import trackTemplate
+from video_api import supported_file_extensions
 
 
 # TODO: in the user xlsx, have a pixel displacement column and converted displacement column
@@ -235,7 +236,6 @@ def verifiedInputs(config: Dict) -> Tuple[str, List[Dict]]:
         sys.exit(1)
 
     template_guide_image_path = config['template_guide_image_path']
-    supported_file_extensions = ['.mp4', '.avi', '.mov', '.nd2']
     base_dir, video_files = contentsOfDir(dir_path=config['input_video_path'], search_terms=supported_file_extensions)
     if video_files is None:
         return None, {'errors': {'input dir empty'}}
