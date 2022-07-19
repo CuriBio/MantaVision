@@ -18,11 +18,11 @@ macOS, Linux:
 ## Running Mantavision  ##
 MS Windows:
 
-> python \path\to\src\mantavision_gui.py
+> python \path\to\src\mantavision.py
 
 macOS, Linux:
 
-> python /path/to/src/mantavision_gui.py
+> python /path/to/src/mantavision.py
 
 </br></br>
 ## Issues  ##
