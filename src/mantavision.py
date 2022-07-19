@@ -1,6 +1,6 @@
 
 from ca2_analysis import analyzeCa2Data
-from mantavision import runTrackTemplate
+from optical_tracking import runTrackTemplate
 from morphology import computeMorphologyMetrics
 
 from gooey import Gooey, GooeyParser
