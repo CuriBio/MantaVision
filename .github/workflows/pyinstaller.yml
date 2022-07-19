@@ -1,6 +1,6 @@
 on:
   push:
-    branches: [gui_builder_action]
+    branches: [main]
 
 jobs:
   build:
