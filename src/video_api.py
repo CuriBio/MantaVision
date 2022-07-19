@@ -7,6 +7,11 @@ from av import VideoFrame
 from nd2 import ND2File
 
 
+supported_file_extensions = ['.mp4', '.avi', '.mov', '.nd2']
+
+
+# TODO: figure out why stream initialisation doesn't work
+
 class VideoWriter:
     """ Unified interface for writing videos """
     def __init__(
@@ -255,7 +260,7 @@ class PYAVReader():
         return self.video_stream.time_base
 
     def duration(self) -> float:
-        self.duration = float(self.video_stream.duration * self.timeBase())
+        return float(self.video_stream.duration * self.timeBase())
 
     def codecName(self):
         return self.video_stream.codec_context.name

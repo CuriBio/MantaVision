@@ -11,34 +11,16 @@ from scipy.ndimage import gaussian_filter
 from scipy.signal import find_peaks, butter, sosfilt
 from tkinter import Tk as tk
 from tkinter.filedialog import askopenfilename, askdirectory
-from video_api import VideoReader
+from video_api import VideoReader, supported_file_extensions
+from track_template import userDrawnROI
 
 import matplotlib.pyplot as plt
 pd.set_option("display.precision", 2)
 pd.set_option("display.expand_frame_repr", False)
 
 
-# TODO: figure out why stream initialisation doesn't work
-
-# TODO: figure out why T50 is larger than T90 which makes no sense
-
-# TODO: create a function that will iterate over each frame and compute the sum of all pixel values
-#       then the frame with the highest count will be the frame with max contraction
-#       (although given there is decay, I presume we'll get the very first peak max contraction)
-#       we use that frame to present a multi ROI selector, the user selects 2 ROIs
-#       we then compute the sum of the intensity values of each ROI, the one with the smallest sum
-#       must be the background ROI and the other must be the foreground ROI. Then, we
-#       compute the mean "background adjusted" foreground intensity of the foreground ROI by
-#       first computing the mean intensity value of the background ROI,
-#       then subtracting the mean background intensity value from each pixel in the foreground ROI, and then
-#       computing the mean intensity value of the foreground ROI from the "background adjusted" foreground ROI.
-
-# TODO: if the user selects to do background subtraction using a ROI,
-#       then let them select the ROI's for all the videos up front
-#       and then save the details and use them to perform the analysis
-
 # TODO: check there are no double peaks or troughs.
-#       would need to use the peak and trough indicies
+#       would need to use the peak and trough indices
 #       find if the peak or trough is first
 #       then oscillate between peaks and troughs ensuring
 #       the values in time_stamps of the alternating sequence
@@ -59,8 +41,8 @@ pd.set_option("display.expand_frame_repr", False)
 #       then 0.01 second between the points we narrowed it to
 #       then 0.001 between the subsequent points we narrow it to, etc
 #       if the fit still fails, we'd have to find the two closest time points that the
-#       metric parameter lives between, and linear iteropolate between those two points
-#       to find the point the metric is for. this would clearly be inferiour since
+#       metric parameter lives between, and linear interpolate between those two points
+#       to find the point the metric is for. this would clearly be inferior since
 #       we know most of these signals have exponential or polynomial shape and
 #       a linear interpolation between two points (even if close) isn't a great fit.
 #       or, 
@@ -69,7 +51,20 @@ pd.set_option("display.expand_frame_repr", False)
 #       compute enough splines to for the resolution we need computationally very expensive
 
 
-def signalDataFromVideo(input_video_path: str, background_subtraction: str = 'None') -> Tuple[np.ndarray, np.ndarray]:
+def dataMode(input_data: np.ndarray) -> float:
+    data_min = np.floor(np.min(input_data))
+    data_max = np.ceil(np.max(input_data))
+    histogram_range = range(int(data_min) + 1, int(data_max) + 1)
+    data_histogram = np.histogram(input_data, bins=histogram_range, range=(data_min, data_max))[0]
+    histogram_peak = np.argmax(data_histogram)
+    return data_min + histogram_peak
+
+
+def signalDataFromVideo(
+        input_video_path: str,
+        bg_subtraction_method: str = 'None',
+        bg_subtraction_rois: Dict = None
+) -> Tuple[np.ndarray, np.ndarray]:
     """ """
     input_video_stream = VideoReader(input_video_path)
     if not input_video_stream.isOpened():
@@ -80,12 +75,23 @@ def signalDataFromVideo(input_video_path: str, background_subtraction: str = 'No
     while input_video_stream.next():
         time_stamps.append(input_video_stream.timeStamp())
         current_frame = input_video_stream.frameGray()
-        if background_subtraction.lower() == 'none':
+        if bg_subtraction_method.lower() == 'none':
             signal_values.append(np.sum(current_frame))
             continue
-        if background_subtraction.lower() == 'lowpass':
+        if bg_subtraction_method.lower() == 'roi':
+            bg_roi = current_frame[
+                bg_subtraction_rois['bg_roi']['y_start']:bg_subtraction_rois['bg_roi']['y_end'],
+                bg_subtraction_rois['bg_roi']['x_start']:bg_subtraction_rois['bg_roi']['x_end']
+            ]
+            background_subtractor = np.mean(bg_roi)
+            # NOTE: cutting out a new current_frame from the fg_roi has to go AFTER bg_roi extraction
+            current_frame = current_frame[
+                bg_subtraction_rois['fg_roi']['y_start']:bg_subtraction_rois['fg_roi']['y_end'],
+                bg_subtraction_rois['fg_roi']['x_start']:bg_subtraction_rois['fg_roi']['x_end']
+            ]
+        elif bg_subtraction_method.lower() == 'lowpass':
             background_subtractor = gaussian_filter(current_frame.astype(float), sigma=8, mode='reflect')
-        else:  # background_subtraction.lower() == 'mean':
+        else:  # bg_subtraction_method.lower() == 'mean':
             background_subtractor = np.mean(current_frame)
         adjusted_frame = current_frame - background_subtractor
 
@@ -98,10 +104,32 @@ def signalDataFromVideo(input_video_path: str, background_subtraction: str = 'No
     return np.array(time_stamps, dtype=float), np.array(signal_values, dtype=float)
 
 
+def videoBGSubtractionROIs(video_file_path: str, max_seconds_to_search: float = None) -> Dict:
+    input_video_stream = VideoReader(video_file_path)
+    if not input_video_stream.isOpened():
+        return None, None
+    if max_seconds_to_search is None:
+        max_seconds_to_search = input_video_stream.duration()
+    max_intensity_sum: float = 0.0
+    max_intensity_sum_frame: np.ndarray = None
+    while input_video_stream.next():
+        current_frame = input_video_stream.frameGray()
+        current_frame_intensity_sum: float = np.sum(current_frame)
+        if current_frame_intensity_sum > max_intensity_sum:
+            max_intensity_sum = current_frame_intensity_sum
+            max_intensity_sum_frame = current_frame
+        if input_video_stream.timeStamp() > max_seconds_to_search:
+            break
+    return {
+        'bg_roi': userDrawnROI(max_intensity_sum_frame, "Select the Background ROI"),
+        'fg_roi': userDrawnROI(max_intensity_sum_frame, "Select the Foreground/Signal ROI"),
+    }
+
+
 def analyzeCa2Data(
     path_to_data: str,
     expected_frequency_hz: float,
-    background_subtraction: str = 'None',
+    bg_subtraction_method: str = 'None',
     save_result_plots: bool = False,
     display_results: bool = False,
     expected_min_peak_width: int = None,
@@ -114,17 +142,37 @@ def analyzeCa2Data(
     elif path_to_data.lower() == 'select_dir':
         path_to_data = getDirPathViaGUI(window_title='Select the directory with files to analyze')
 
-    # base_dir, files_to_analyze = contentsOfDir(dir_path=path_to_data, search_terms=['.xlsx'])
-    base_dir, files_to_analyze = contentsOfDir(dir_path=path_to_data, search_terms=['*.*'])
+    # TODO: figure out why we can't limit directory contents searches to specific file extension types
+    # base_dir, files_to_analyze = contentsOfDir(dir_path=path_to_data, search_terms=supported_file_extensions)
+    base_dir, files_to_analyze = contentsOfDir(dir_path=path_to_data, search_terms=["*.*"])
     results_dir_name = "results_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    results_dir = os.path.join(base_dir, results_dir_name) 
+    results_dir = os.path.join(base_dir, results_dir_name)
     os.mkdir(results_dir)
 
+    if bg_subtraction_method.lower() == 'roi':
+        # collect fg & bg ROIs for all the videos to be analyzed, up front, so that
+        # all the videos can then be processed automatically without any user interaction
+        video_rois = {}
+        expected_frequency_hz_tolerance = 0.5
+        seconds_for_period = 1.0/(expected_frequency_hz - expected_frequency_hz_tolerance)
+        bg_subtraction_roi_search_seconds = 2.0*seconds_for_period
+        for file_name, file_extension in files_to_analyze:
+            input_video_file_path = os.path.join(base_dir, file_name + file_extension)
+            video_rois[file_name] = videoBGSubtractionROIs(input_video_file_path, bg_subtraction_roi_search_seconds)
+    else:
+        video_rois = None
+
     for file_name, file_extension in files_to_analyze:
-        # signal_data_file_path = os.path.join(base_dir, file_name + file_extension)
-        # time_stamps, input_signal = signalDataFromXLSX(signal_data_file_path)
+        if video_rois is None:
+            bg_subtraction_rois = None
+        else:
+            bg_subtraction_rois = video_rois[file_name]
         input_video_file_path = os.path.join(base_dir, file_name + file_extension)
-        time_stamps, input_signal = signalDataFromVideo(input_video_file_path, background_subtraction)
+        time_stamps, input_signal = signalDataFromVideo(
+            input_video_file_path,
+            bg_subtraction_method,
+            bg_subtraction_rois
+        )
         if input_signal is None or time_stamps is None:
             raise RuntimeError("Error. Signal from video could not be extracted")
 
@@ -175,7 +223,7 @@ def ca2Analysis(
     expected_min_peak_width: int=None,
     expected_min_peak_height: float=None    
 ) -> Dict:
-
+    """ """
     peak_indices, trough_indices = peakAndTroughIndices(
         value_data,
         time_stamps,
@@ -540,7 +588,7 @@ if __name__ == '__main__':
     analyzeCa2Data(
         path_to_data='select_dir',
         expected_frequency_hz=1.5,
-        background_subtraction=None,
+        bg_subtraction_method=None,
         save_result_plots=True,
         display_results=False
     )

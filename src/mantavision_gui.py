@@ -15,7 +15,7 @@ def runCa2Analysis(args: Dict):
         path_to_data=args.ca2_analysis_path_to_data,
         expected_frequency_hz=args.ca2_analysis_expected_frequency_hz,
         save_result_plots=args.ca2_analysis_save_result_plots,
-        background_subtraction=args.ca2_analysis_background_subtraction
+        bg_subtraction_method=args.ca2_analysis_bg_subtraction_method
     )
 
 
@@ -123,7 +123,7 @@ def saveCurrentFieldValues(
         field_values['ca2_analysis_path_to_data'] = args.ca2_analysis_path_to_data
         field_values['ca2_analysis_expected_frequency_hz'] = args.ca2_analysis_expected_frequency_hz
         field_values['ca2_analysis_save_result_plots'] = args.ca2_analysis_save_result_plots
-        field_values['ca2_analysis_background_subtraction'] = args.ca2_analysis_background_subtraction
+        field_values['ca2_analysis_bg_subtraction_method'] = args.ca2_analysis_bg_subtraction_method
     with open(current_field_values_file_path, 'w') as outfile:
         writeJSON(field_values, outfile, indent=4)
 
@@ -154,7 +154,7 @@ def defaultFieldValues() -> Dict:
         'ca2_analysis_path_to_data': None,
         'ca2_analysis_expected_frequency_hz': 1.0,
         'ca2_analysis_save_result_plots': False,
-        'ca2_analysis_background_subtraction': None,
+        'ca2_analysis_bg_subtraction_method': None,
     }
 
 
@@ -396,11 +396,11 @@ def main():
         gooey_options={'initial_value': initial_values['ca2_analysis_expected_frequency_hz']}
     )
     ca2_analysis_parser.add_argument(
-        'ca2_analysis_background_subtraction',
+        'ca2_analysis_bg_subtraction_method',
         metavar='Background Subtraction',
         help='Method to Estimate Background and Subtract From Signal',
-        choices=['None', 'Mean', 'Lowpass'],  # add in , 'ROI' if/when that gets implemented
-        default=initial_values['ca2_analysis_background_subtraction']
+        choices=['None', 'ROI', 'Mean', 'Lowpass'],
+        default=initial_values['ca2_analysis_bg_subtraction_method']
     )
     ca2_analysis_parser.add_argument(
         '--ca2_analysis_save_result_plots',
