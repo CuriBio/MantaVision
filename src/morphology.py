@@ -1,9 +1,6 @@
 #! /usr/bin/env python
 
 import os
-from pathlib import Path
-from platform import system as os_name
-from distutils.log import warn
 from datetime import datetime
 import openpyxl
 import numpy as np
