@@ -11,3 +11,4 @@ nd2[legacy]
 xarray
 openpyxl
 gooey
+matplotlib
