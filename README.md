@@ -1,56 +1,18 @@
 # README #
 
-Scripts for performing optical tracking of well magnets in Mantarray.
+Computer Vision tool for Mantarray that includes:
+- optical tracking in vidoes for tissue contraction analysis (e.g. well post magnet tracking)
+- morphological measurements of tissue images
+- Ca2+ signal extraction and analysis of floresence images
 
-## Using the notebook interface on windows ##
+## Installing the required packages ##
+MS Windows:
+> pip install -r \path\to\src\requirements.txt
+MacOs, Linux:
+> pip install -r /path/to/src/requirements.txt
 
-One way to run the notebook interface is to download the anaconda package
-
-https://www.anaconda.com/products/individual
-
-Once that has been installed, there are two options to install all the required packages.
-
-Option 1) open install_requirements.ipynb and run it.
-
-Option 2) from the windows menu open spyder (anaconda).
-From the main (top) menu in spyder select view -> window layouts -> spyder default.
-Then in the sub window at the top right you will see some tabs at the botoom of that sub window,
-one of those tabs is 'Files', select this tab and navigate to the mantavision directory.
-This sets the console sub window below it to the directory you just navigated to.
-In the Console (1/A) sub window in the bottom right, type following commands to install some required packages:
-
-
-> pip install --user spyder-notebook
-
-> pip install --user -r ./requirements.txt
-
-
-Close spyder.
-
-You can now run the notebook from either spyder or jupyter.
-
-To run with jupyter (recommended):
-from the windows menu open Jupyter (anaconda),
-navigate to the mantavision directory and select the mantavision_ui.ipynb file.
-You can now run this notebook by pressing Shift and Enter.
-
-To run with spyder: 
-(Note: you still need to have closed spyder from the previous step):
-Re-open spyder, from the windows menu open spyder (anaconda).
-You will now see that in the main window there are two tabs, Editor and Notebook.
-Select the Notebook tab. In the top right hand corner of the notebook sub window 
-you will so 3 horizontal stripes, click this and select open. Navigate to the 
-mantavision_ui.ipynb file and select it.
-
-You can now run the notebook by pressing Shift and Enter.
-
-## Using the command line interface ##
-
-### Install Required Packages ###
-> pip install -r ./requirements.txt
-
-### run template tracking with all args ###
-> track_template.py -h for all required and optional args
-
-### run template tracking with from a json config file ###
-> track_template.py --json_config /path/to/config.json
+## Running Mantavision  ##
+MS Windows:
+> python \path\to\src\mantavision_gui.py
+MacOs, Linux:
+> python /path/to/src/mantavision_gui.py
