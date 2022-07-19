@@ -1,611 +1,428 @@
-#! /usr/bin/env python
 
-import argparse
-import os
-import glob
-import shutil
-import sys
-import json
-import time
-from typing import Tuple, List, Dict
-import zipfile
-import openpyxl  # pip install --user openpyxl
-import cv2 as cv  # pip install --user opencv-python
-from datetime import datetime
-from tkinter import Tk as tk
-from tkinter.filedialog import askopenfilename, askdirectory
-from video2images import video2images
-from track_template import trackTemplate
-from video_api import supported_file_extensions
+from ca2_analysis import analyzeCa2Data
+from mantavision import runTrackTemplate
+from morphology import computeMorphologyMetrics
+
+from gooey import Gooey, GooeyParser
+from json import dump as writeJSON, load as readJSON
+from pathlib import Path 
+from typing import Dict
 
 
-# TODO: in the user xlsx, have a pixel displacement column and converted displacement column
+def runCa2Analysis(args: Dict):
+    """ Runs analyzeCa2Data function with the arguments provided by the Gooey UI. """
+    analyzeCa2Data(
+        path_to_data=args.ca2_analysis_path_to_data,
+        expected_frequency_hz=args.ca2_analysis_expected_frequency_hz,
+        save_result_plots=args.ca2_analysis_save_result_plots,
+        bg_subtraction_method=args.ca2_analysis_bg_subtraction_method
+    )
 
 
-def runTrackTemplate(config: Dict):
-    track_templates_start_time = time.time()
-    dirs, args = verifiedInputs(config)
-
-    if 'errors' in args:
-        if 'input dir empty' in args['errors']:
-            print('WARNING. The selected directory is empty. Nothing to do. Exiting')
-            return
-
-    # make all the dirs that are needed for writing the results and barf if any dirs already exist
-    dirs_exist_error_message = ''
-    if os.path.isdir(dirs['results_dir_path']):
-        dirs_exist_error_message += "results dir already exists. Cannot overwrite.\n"
-    if os.path.isdir(dirs['results_json_dir_path']):
-        dirs_exist_error_message += "json results dir already exists. Cannot overwrite.\n"
-    if os.path.isdir(dirs['results_xlsx_dir_path']):
-        dirs_exist_error_message += "xlsx results dir already exists. Cannot overwrite.\n"
-    if os.path.isdir(dirs['results_video_dir_path']):
-        dirs_exist_error_message += "video results dir already exists. Cannot overwrite.\n"
-    if os.path.isdir(dirs['results_template_dir_path']):
-        dirs_exist_error_message += "template results dir already exists. Cannot overwrite.\n"
-    if len(dirs_exist_error_message) > 0:
-        dirs_exist_error_message = "ERROR.\n" + dirs_exist_error_message + "Nothing Tracked."
-        print(dirs_exist_error_message)
-        sys.exit(1)
-    os.mkdir(dirs['results_dir_path'])
-    os.mkdir(dirs['results_json_dir_path'])
-    os.mkdir(dirs['results_xlsx_dir_path'])
-    os.mkdir(dirs['results_video_dir_path'])
-    os.mkdir(dirs['results_template_dir_path'])
-    os.mkdir(dirs['results_video_min_frames_dir_path'])
-    if next(iter(args))['output_frames']:
-        os.mkdir(dirs['results_video_frames_dir_path'])
-
-    # run the tracking routine on each input video
-    # and write out the results
-    print("\nTemplate Tracker running...")
-    total_tracking_time = 0
-    for input_args in args:
-        print(f'processing: {input_args["input_video_path"]}')
-        video_tracking_start_time = time.time()
-        messages, tracking_results, frames_per_second, template, min_frame_number = trackTemplate(
-            input_args['input_video_path'],
-            input_args['template_guide_image_path'],
-            input_args['output_video_path'],
-            input_args['guide_match_search_seconds'],
-            input_args['microns_per_pixel'],
-            input_args['output_conversion_factor'],
-            input_args['sub_pixel_search_increment'],
-            input_args['sub_pixel_refinement_radius'],
-            input_args['user_roi_selection'],
-            input_args['max_translation_per_frame'],
-            input_args['max_rotation_per_frame'],
-            input_args['contraction_vector']
-        )
-        total_tracking_time += (time.time() - video_tracking_start_time)
-
-        # check for any errors
-        warning_msg, error_msg = messages
-        if warning_msg is not None:
-            print(warning_msg)
-        if error_msg is not None:
-            print(error_msg)
-            sys.exit(1)
-
-        # write the template used for tracking to the results dir
-        cv.imwrite(input_args['results_template_filename'], template)
-
-        # write out the frame with the min movement position
-        video2images(
-            input_video_path=input_args['input_video_path'],
-            output_dir_path=dirs['results_video_min_frames_dir_path'],
-            enhance_contrast=False,
-            frame_number_to_write=min_frame_number,
-            image_extension='tiff'
-        )
-
-        # write out the results video as frames if requested
-        if input_args['output_frames']:
-            os.mkdir(input_args['output_video_frames_dir_path'])
-            video2images(
-                input_video_path=input_args['output_video_path'],
-                output_dir_path=input_args['output_video_frames_dir_path'],
-                enhance_contrast=False,
-                image_extension='jpg'  # don't need high quality images for this
-            )
-
-        # write results to xlsx files
-        meta_data = {
-            'Well Name': input_args['well_name'],
-            'Date Stamp': input_args['date_stamp'],
-            'Frames Per Second': frames_per_second,
-            'User ROI Selection': input_args['user_roi_selection'],
-            'Max Translation Per Frame': input_args['max_translation_per_frame'],
-            'Max Rotation Per Frame': input_args['max_rotation_per_frame'],
-            'Contraction Vector': input_args['contraction_vector'],
-            'Microns Per Pixel': input_args['microns_per_pixel'],
-            'Output Conversion Factor': input_args['output_conversion_factor'],
-            'Sub Pixel Search Increment': input_args['sub_pixel_search_increment'],
-            'Sub Pixel Refinement Radius': input_args['sub_pixel_refinement_radius']
-        }
-        # fill in missing values in meta_data
-        for md_key, md_value in meta_data.items():
-            if md_value is None:
-                meta_data[md_key] = 'None'
-        resultsToCSVforUser(
-            tracking_results,
-            meta_data,
-            input_args['path_to_user_excel_results']
-        )
-        resultsToCSVforSDK(
-            tracking_results,
-            meta_data,
-            input_args['path_to_excel_template'],
-            input_args['path_to_sdk_excel_results']
-        )
-
-        # write the run config and results as json
-        if input_args['output_json_path'] is not None:
-            tracking_results_complete = {
-                "INPUT_ARGS": input_args,
-                "ERROR_MSGS": error_msg,
-                "WARNING_MSGS": warning_msg,
-                "RESULTS": tracking_results,
-            }
-            with open(input_args['output_json_path'], 'w') as outfile:
-                json.dump(tracking_results_complete, outfile, indent=4)
-
-    # create a zip archive and write all the xlsx files to it
-    xlsx_archive_file_path = os.path.join(dirs['results_dir_path'], 'xlsx-results.zip')
-    xlsx_archive = zipfile.ZipFile(xlsx_archive_file_path, 'w')
-    for dir_name, _, file_names in os.walk(dirs['results_xlsx_dir_path']):
-        for file_name in file_names:
-            if 'sdk' in file_name:  # only include the xlsx files intended for the sdk
-                file_path = os.path.join(dir_name, file_name)
-                xlsx_archive.write(file_path, os.path.basename(file_path))
-    xlsx_archive.close()
-
-    num_videos_processed = len(args)
-    track_templates_runtime = time.time() - track_templates_start_time
-    per_video_tracking_time: float = float(total_tracking_time) / float(num_videos_processed)
-    print(f'...Template Tracker completed in {round(track_templates_runtime, 2)}s')
-    total_tracking_time = round(total_tracking_time, 2)
-    per_video_tracking_time = round(per_video_tracking_time, 2)
-    print(f'\nActual tracking time for {num_videos_processed} videos: {total_tracking_time}s')
-    print(f'{per_video_tracking_time}s per video')
-
-
-def verifiedInputs(config: Dict) -> Tuple[str, List[Dict]]:
-    """ """
-    error_msgs = []
-    # check the dir path to input videos
-    open_video_dir_dialog = False
-    if 'input_video_path' in config:
-        if config['input_video_path'] is None:
-            open_video_dir_dialog = True
-        else:
-            if config['input_video_path'].lower() == 'select_dir':
-                open_video_dir_dialog = True
-            elif not os.path.isdir(config['input_video_path']):
-                error_msgs.append('Input path to video/s does not exist.')
+def runTracking(args: Dict):
+    """ Runs TrackTemplate function with the arguments provided by the Gooey UI. """
+    if args.tracking_output_frames == 'Yes':
+        output_frames = True
     else:
-        open_video_dir_dialog = True
-    # pop up a dialog to select the dir for videos if required
-    if open_video_dir_dialog:
-        print()
-        print("waiting for user input (video dir) via pop up dialog box...")
-        dir_path_via_gui = getDirPathViaGUI(window_title='Select Directory With Videos To Track')
-        if dir_path_via_gui == () or dir_path_via_gui == '':
-            error_msgs.append('No input path to video/s was provided.')
-        else:
-            config['input_video_path'] = dir_path_via_gui
-        print("...user input obtained from pop up dialog box.")
-
-    # check the file path to the template image
-    user_roi_selection = False
-    open_template_dir_dialog = False
-    if 'template_guide_image_path' in config:
-        if config['template_guide_image_path'] is None:
-            config['template_guide_image_path'] = ''
-            user_roi_selection = True
-        else:
-            if config['template_guide_image_path'].lower() == 'select_file':
-                open_template_dir_dialog = True
-            elif config['template_guide_image_path'].lower() == 'draw':
-                config['template_guide_image_path'] = ''
-                user_roi_selection = True
-            elif config['template_guide_image_path'].lower() == '':
-                user_roi_selection = True
-            elif not os.path.isfile(config['template_guide_image_path']):
-                error_msgs.append('Input template image file does not exist.')
-    else:
-        user_roi_selection = True
-    # pop up a dialog to select the template file if required
-    if open_template_dir_dialog:
-        print()
-        print("waiting for user input (template to use) via pop up dialog box...")
-        file_path_via_gui = getFilePathViaGUI(window_title='Select File With Template To Track')
-        if file_path_via_gui == () or file_path_via_gui == '':
-            error_msgs.append('No input template image path was provided.')
-        else:
-            config['template_guide_image_path'] = file_path_via_gui
-        print("...user input obtained from pop up dialog box.")
-
-    # barf if there was an error with either the input video dir path or template file path
-    if len(error_msgs) > 0:
-        error_msg = 'ERROR.'
-        for error_string in error_msgs:
-            error_msg = error_msg + ' ' + error_string
-        error_msg += ' Nothing to do. Exiting.'
-        print(error_msg)
-        sys.exit(1)
-
-    template_guide_image_path = config['template_guide_image_path']
-    base_dir, video_files = contentsOfDir(dir_path=config['input_video_path'], search_terms=supported_file_extensions)
-    if video_files is None:
-        return None, {'errors': {'input dir empty'}}
-    else:
-        num_videos_in_dir = len(video_files)
-        if num_videos_in_dir < 1:
-            return None, {'errors': {'input dir empty'}}
-
-    unique_name = "results_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    results_dir_path = os.path.join(base_dir, unique_name)
-    results_json_dir_path = os.path.join(results_dir_path, 'json')
-    results_xlsx_dir_path = os.path.join(results_dir_path, 'xlsx')
-    results_video_dir_path = os.path.join(results_dir_path, 'video')
-    results_template_dir_path = os.path.join(results_dir_path, 'template')
-    results_video_frames_dir_path = os.path.join(results_video_dir_path, 'frames')
-    results_video_min_frames_dir_path = os.path.join(results_dir_path, 'min_frame')
-
-    dirs = {
-        'base_dir': base_dir,
-        'results_dir_path': results_dir_path,
-        'results_json_dir_path': results_json_dir_path,
-        'results_xlsx_dir_path': results_xlsx_dir_path,
-        'results_video_dir_path': results_video_dir_path,
-        'results_template_dir_path': results_template_dir_path,
-        'results_video_frames_dir_path': results_video_frames_dir_path,
-        'results_video_min_frames_dir_path': results_video_min_frames_dir_path
-    }
-
-    if 'path_to_excel_template' not in config:
-        path_to_excel_template = None
-    else:
-        path_to_excel_template = config['path_to_excel_template']
-
-    if 'guide_match_search_seconds' not in config:
-        guide_match_search_seconds = None
-    else:
-        guide_match_search_seconds = config['guide_match_search_seconds']
-
-    if 'microns_per_pixel' not in config:
-        microns_per_pixel = None
-    else:
-        microns_per_pixel = config['microns_per_pixel']
-
-    if 'output_conversion_factor' not in config:
-        output_conversion_factor = None
-    else:
-        output_conversion_factor = config['output_conversion_factor']
-
-    if 'sub_pixel_search_increment' not in config:
-        sub_pixel_search_increment = None
-    else:
-        sub_pixel_search_increment = config['sub_pixel_search_increment']
-
-    if 'sub_pixel_refinement_radius' not in config:
-        sub_pixel_refinement_radius = None
-    else:
-        sub_pixel_refinement_radius = config['sub_pixel_refinement_radius']
-    if sub_pixel_search_increment is None and sub_pixel_refinement_radius is not None:
-        print('WARNING. sub_pixel_refinement_radius ignored because sub_pixel_search_increment not provided')
-        sub_pixel_refinement_radius = None
-
-    if 'max_translation_per_frame' not in config:
-        max_translation_per_frame = None
-    else:
-        max_translation_per_frame = (config['max_translation_per_frame'], config['max_translation_per_frame'])
-
-    if 'max_rotation_per_frame' not in config:
-        max_rotation_per_frame = None
-    else:
-        max_rotation_per_frame = config['max_rotation_per_frame']
-
-    if 'output_frames' not in config:
         output_frames = False
+    if args.tracking_vertical_contraction_direction == 'down':
+        tracking_vertical_contraction_direction = -1
+    elif args.tracking_vertical_contraction_direction == 'up':
+        tracking_vertical_contraction_direction = 1
     else:
-        output_frames = config['output_frames']
-
-    if 'contraction_vector' not in config:
-        contraction_vector = None
+        tracking_vertical_contraction_direction = 0
+    if args.tracking_horizontal_contraction_direction == 'left':
+        tracking_horizontal_contraction_direction = -1
+    elif args.tracking_horizontal_contraction_direction == 'right':
+        tracking_horizontal_contraction_direction = 1
     else:
-        contraction_vector = config['contraction_vector']
+        tracking_horizontal_contraction_direction = 0
+    contraction_vector = (tracking_horizontal_contraction_direction, tracking_vertical_contraction_direction)
 
-    # set all the values needed to run template matching on each input video
-    configs = []
-    for file_name, input_file_extension in video_files:
-
-        # check the file name conforms to minimum requirements
-        num_chars_in_datestamp = len('yyyy-mm-dd')
-        num_chars_in_well_name = len('A001')
-        min_num_chars_in_file_name = num_chars_in_datestamp + num_chars_in_well_name
-        if len(file_name) < min_num_chars_in_file_name:
-            print(f'ERROR. the input video {file_name} does not have a valid name.')
-            print(
-                'The pattern must have a datestamp as the first 10 characters and a wellname as the last 4 characters')
-            print('i.e. 1010-01-01 any other characters A001')
-            sys.exit(1)
-
-        # make sure a valid well name can be extracted from the file name
-        file_name_length = len(file_name)
-        well_name = file_name[file_name_length - num_chars_in_well_name:]
-        well_name_valid = True
-        well_name_letter_part = well_name[0]
-        if not well_name_letter_part.isalpha():
-            well_name_valid = False
-        well_name_number_part = well_name[1:]
-        if not well_name_number_part.isdigit():
-            well_name_valid = False
-        if not well_name_valid:
-            print("ERROR. An input video file does not contain a valid well name as expected as the last word.")
-            print(f"The last word of the filename is: {well_name}")
-            print("The last word of the file name must be a letter followed by a zero padded 3 digit number')")
-            print(" i.e. A001 or D006")
-            sys.exit(1)
-
-        # make sure a valid date stamp can be extacted from the file name
-        date_stamp = file_name[:num_chars_in_datestamp]
-        date_stamp_parsed = date_stamp.split("-")
-        num_parts_in_date = 3
-        date_stamp_valid = True
-        if len(date_stamp_parsed) != num_parts_in_date:
-            date_stamp_valid = False
-        else:
-            for date_part in date_stamp_parsed:
-                if not date_part.isdigit():
-                    date_stamp_valid = False
-        if not date_stamp_valid:
-            print("ERROR. An input video file does not contain a valid date stamp as expected for the first word.")
-            print(f"The first word of the filename is: {date_stamp}")
-            print("The first word of the file name must be of the form yyyy-mm-dd i.e. 1010-01-01")
-            sys.exit(1)
-
-        # set all the required path values
-        input_video_path = os.path.join(base_dir, file_name + input_file_extension)
-        output_video_frames_dir_path = os.path.join(results_video_frames_dir_path, file_name)
-        output_json_path = os.path.join(results_json_dir_path, file_name + '-results.json')
-        path_to_user_excel_results = os.path.join(results_xlsx_dir_path, file_name + '-reslts_user.xlsx')
-        path_to_sdk_excel_results = os.path.join(results_xlsx_dir_path, file_name + '-reslts_sdk.xlsx')
-        output_file_extension = '.mp4'
-        output_video_path = os.path.join(results_video_dir_path, file_name + '-results' + output_file_extension)
-        results_template_filename = os.path.join(results_template_dir_path, file_name + '-template.tiff')
-
-        configs.append({
-            'input_video_path': input_video_path,
-            'template_guide_image_path': template_guide_image_path,
-            'results_template_filename': results_template_filename,
-            'user_roi_selection': user_roi_selection,
-            'output_video_path': output_video_path,
-            'output_video_frames_dir_path': output_video_frames_dir_path,
-            'output_json_path': output_json_path,
-            'path_to_excel_template': path_to_excel_template,
-            'path_to_sdk_excel_results': path_to_sdk_excel_results,
-            'path_to_user_excel_results': path_to_user_excel_results,
-            'guide_match_search_seconds': guide_match_search_seconds,
-            'microns_per_pixel': microns_per_pixel,
-            'output_conversion_factor': output_conversion_factor,
-            'sub_pixel_search_increment': sub_pixel_search_increment,
-            'sub_pixel_refinement_radius': sub_pixel_refinement_radius,
-            'max_translation_per_frame': max_translation_per_frame,
-            'max_rotation_per_frame': max_rotation_per_frame,
-            'output_frames': output_frames,
+    runTrackTemplate(
+        {
+            'input_video_path': args.tracking_video_dir,
             'contraction_vector': contraction_vector,
-            'well_name': well_name,
-            'date_stamp': date_stamp,
-        })
+            'output_frames': output_frames,
+            'template_guide_image_path': args.tracking_template_path,
+            'output_video_path': args.tracking_output_path,
+            'guide_match_search_seconds': args.tracking_guide_match_search_seconds,
+            'max_translation_per_frame': args.tracking_max_translation_per_frame,
+            'max_rotation_per_frame': args.tracking_max_rotation_per_frame,
+            'output_conversion_factor': args.tracking_output_conversion_factor,
+            'microns_per_pixel': args.tracking_microns_per_pixel,
+            'sub_pixel_search_increment': args.tracking_sub_pixel_search_increment,
+            'sub_pixel_refinement_radius': args.tracking_sub_pixel_refinement_radius
+        }
+    )    
 
-    return (dirs, configs)
 
-
-def getDirPathViaGUI(window_title: str = '') -> str:
-    """ Display an "Open" dialog box and return the path to a selected directory """
-    window = tk()
-    window.withdraw()
-    window.lift()
-    window.overrideredirect(True)
-    window.call('wm', 'attributes', '.', '-topmost', True)
-    return askdirectory(
-        initialdir='./',
-        title=window_title
+def runMorphology(args: Dict):
+    """ Runs Morphology function with the arguments provided by the Gooey UI. """
+    computeMorphologyMetrics(
+        search_image_path=args.morphology_search_image_path,
+        left_template_image_path=args.morphology_left_template_image_path,
+        right_template_image_path=args.morphology_right_template_image_path,
+        left_sub_template_image_path=None,
+        right_sub_template_image_path=None,
+        sub_pixel_search_increment=args.morphology_sub_pixel_search_increment,
+        sub_pixel_refinement_radius=args.morphology_sub_pixel_refinement_radius,
+        template_refinement_radius=args.morphology_template_refinement_radius,
+        edge_finding_smoothing_radius=args.morphology_edge_finding_smoothing_radius,
+        microns_per_pixel=args.morphology_microns_per_pixel,
+        write_result_images=True,
+        display_result_images=False
     )
 
 
-def getFilePathViaGUI(window_title: str = '') -> str:
-    """ Display an "Open" dialog box and return the path to a selected file """
-    window = tk()
-    window.withdraw()
-    window.lift()
-    window.overrideredirect(True)
-    window.call('wm', 'attributes', '.', '-topmost', True)
-    return askopenfilename(
-        initialdir='./',
-        title=window_title
-    )
+def previousFieldValues(prev_field_values_file_path: str) -> Dict:
+    """ load all the field values form the previous run """
+    previous_field_values = readJSON(open(prev_field_values_file_path))
+    # add any missing field values to an existing field value file
+    # which can happen if a new version of this app adds some new fields
+    # that won't yet be in the previous saved field values file
+    default_field_values = defaultFieldValues()
+    for default_field_key, default_field_value in default_field_values.items():
+        if default_field_key not in previous_field_values:
+            previous_field_values[default_field_key] = default_field_value
+    return previous_field_values
 
 
-def contentsOfDir(
-        dir_path: str,
-        search_terms: List[str],
-        search_extension_only: bool = True
-) -> Tuple[List[str], List[Tuple[str]]]:
-    all_files_found = []
-    if os.path.isdir(dir_path):
-        base_dir = dir_path
-        for search_term in search_terms:
-            glob_search_term = '*' + search_term
-            if not search_extension_only:
-                glob_search_term += '*'
-            files_found = glob.glob(os.path.join(dir_path, glob_search_term))
-            if len(files_found) > 0:
-                all_files_found.extend(files_found)
-    else:
-        # presume it's actually a single file path
-        base_dir = os.path.dirname(dir_path)
-        all_files_found = [dir_path]
-    if len(all_files_found) < 1:
-        return None, None
-
-    files = []
-    for file_path in all_files_found:
-        file_name, file_extension = os.path.splitext(os.path.basename(file_path))
-        files.append((file_name, file_extension))
-    return base_dir, files
-
-
-def resultsToCSVforSDK(
-        tracking_results: List[Dict],
-        meta_data: Dict,
-        path_to_template_file: str,
-        path_to_output_file,
+def saveCurrentFieldValues(
+    args,
+    previous_field_values: Dict,
+    current_field_values_file_path: str
 ):
-    # create a file from scratch or template
-    if path_to_template_file is None:
-        workbook = openpyxl.Workbook()  # open a blank workbook
-    else:  # open the template workbook
-        shutil.copyfile(path_to_template_file, path_to_output_file)
-        workbook = openpyxl.load_workbook(filename=path_to_output_file)
-    sheet = workbook.active
-
-    # add meta data
-    well_name = meta_data['Well Name']
-    if well_name is None:
-        well_name = 'Z01'
-    sheet['E2'] = well_name
-    date_stamp = meta_data['Date Stamp']
-    sheet['E3'] = date_stamp + ' 00:00:00'
-    sheet['E4'] = 'NA'  # plate barcode
-    frames_per_second = meta_data['Frames Per Second']
-    sheet['E5'] = frames_per_second
-    sheet['E6'] = 'y'  # do twiches point up
-    sheet['E7'] = 'NA'  # microscope name
-
-    # add runtime data (time, displacement etc)
-    template_start_row = 2
-    time_column = 'A'
-    displacement_column = 'B'
-    num_rows_to_write = len(tracking_results)
-    for results_row in range(num_rows_to_write):
-        tracking_result = tracking_results[results_row]
-        sheet_row = str(results_row + template_start_row)
-        sheet[time_column + sheet_row] = float(tracking_result['TIME_STAMP'])
-        sheet[displacement_column + sheet_row] = float(tracking_result['XY_DISPLACEMENT'])
-    workbook.save(filename=path_to_output_file)
-
-
-def resultsToCSVforUser(tracking_results: List[Dict], meta_data: Dict, path_to_output_file: str):
-    workbook = openpyxl.Workbook()
-    sheet = workbook.active
-
-    # add meta data
-    meta_data_name_column = 'G'
-    meta_data_value_column = 'H'
-    meta_data_row_number = 1
-    sheet[meta_data_value_column + str(meta_data_row_number)] = 'Runtime Meta Data'
-    for column_name, column_value in meta_data.items():
-        meta_data_row_number += 1
-        sheet[meta_data_name_column + str(meta_data_row_number)] = column_name
-        if isinstance(column_value, (int, float)):
-            sheet[meta_data_value_column + str(meta_data_row_number)] = column_value
-        else:
-            sheet[meta_data_value_column + str(meta_data_row_number)] = f"{column_value}"
-
-    # add runtime data
-    # heading fields
-    heading_row = 1
-    time_column = 'A'
-    sheet[time_column + str(heading_row)] = 'Time (s)'
-    displacement_column = 'B'
-    sheet[displacement_column + str(heading_row)] = 'Displacement From Min'
-    x_pos_column = 'C'
-    sheet[x_pos_column + str(heading_row)] = 'Template Match Center X (pixel pos)'
-    y_pos_column = 'D'
-    sheet[y_pos_column + str(heading_row)] = 'Template Match Center Y (pixel pos)'
-    angle_column = 'E'
-    sheet[angle_column + str(heading_row)] = 'Template Match Angle (deg)'
-
-    # time, displacement from ref position, absolute position and angle fields
-    data_row = heading_row + 1
-    num_rows_to_write = len(tracking_results)
-    for results_row in range(num_rows_to_write):
-        tracking_result = tracking_results[results_row]
-        sheet_row = str(results_row + data_row)
-        sheet[time_column + sheet_row] = float(tracking_result['TIME_STAMP'])
-        sheet[displacement_column + sheet_row] = float(tracking_result['XY_DISPLACEMENT'])
-        sheet[x_pos_column + sheet_row] = float(tracking_result['TEMPLATE_MATCH_ORIGIN_X'])
-        sheet[y_pos_column + sheet_row] = float(tracking_result['TEMPLATE_MATCH_ORIGIN_Y'])
-        sheet[angle_column + sheet_row] = float(tracking_result['TEMPLATE_MATCH_ROTATION'])
-    workbook.save(filename=path_to_output_file)
+    """ write the current ui values to prev_run_values_file_path """
+    
+    field_values = previous_field_values
+    if args.actions == 'Tracking':
+        field_values['tracking_video_dir'] = args.tracking_video_dir
+        field_values['tracking_horizontal_contraction_direction'] = args.tracking_horizontal_contraction_direction
+        field_values['tracking_vertical_contraction_direction'] = args.tracking_vertical_contraction_direction
+        field_values['tracking_template_path'] = args.tracking_template_path
+        field_values['tracking_output_path'] = args.tracking_output_path
+        field_values['tracking_output_frames'] = args.tracking_output_frames
+        field_values['tracking_guide_match_search_seconds'] = args.tracking_guide_match_search_seconds
+        field_values['tracking_max_translation_per_frame'] = args.tracking_max_translation_per_frame
+        field_values['tracking_max_rotation_per_frame'] = args.tracking_max_rotation_per_frame
+        field_values['tracking_output_conversion_factor'] = args.tracking_output_conversion_factor
+        field_values['tracking_microns_per_pixel'] = args.tracking_microns_per_pixel
+        field_values['tracking_sub_pixel_search_increment'] = args.tracking_sub_pixel_search_increment
+        field_values['tracking_sub_pixel_refinement_radius'] = args.tracking_sub_pixel_refinement_radius
+    elif args.actions == 'Morphology':
+        field_values['morphology_search_image_path'] = args.morphology_search_image_path
+        field_values['morphology_left_template_image_path'] = args.morphology_left_template_image_path
+        field_values['morphology_right_template_image_path'] = args.morphology_right_template_image_path
+        field_values['morphology_template_refinement_radius'] = args.morphology_template_refinement_radius
+        field_values['morphology_edge_finding_smoothing_radius'] = args.morphology_edge_finding_smoothing_radius
+        field_values['morphology_microns_per_pixel'] = args.morphology_microns_per_pixel
+        field_values['morphology_sub_pixel_search_increment'] = args.morphology_sub_pixel_search_increment
+        field_values['morphology_sub_pixel_refinement_radius'] = args.morphology_sub_pixel_refinement_radius
+    elif args.actions == 'Ca2+_Analysis':
+        field_values['ca2_analysis_path_to_data'] = args.ca2_analysis_path_to_data
+        field_values['ca2_analysis_expected_frequency_hz'] = args.ca2_analysis_expected_frequency_hz
+        field_values['ca2_analysis_save_result_plots'] = args.ca2_analysis_save_result_plots
+        field_values['ca2_analysis_bg_subtraction_method'] = args.ca2_analysis_bg_subtraction_method
+    with open(current_field_values_file_path, 'w') as outfile:
+        writeJSON(field_values, outfile, indent=4)
 
 
-def config_from_json(json_config_path) -> Tuple[str, List[Dict]]:
-    json_file = open(json_config_path)
-    config = json.load(json_file)
-    return config
-
-
-def config_from_cmdline(cmdline_args) -> dict:
+def defaultFieldValues() -> Dict:
     return {
-        'input_video_path': cmdline_args.input_video_path,
-        'template_guide_image_path': cmdline_args.template_guide_image_path,
-        'output_path': cmdline_args.output_path,
-        'guide_match_search_seconds': cmdline_args.guide_match_search_seconds,
-        'microns_per_pixel': cmdline_args.microns_per_pixel,
-        'path_to_excel_template': cmdline_args.path_to_excel_template
+        'tracking_video_dir': '',
+        'tracking_horizontal_contraction_direction': 'right',
+        'tracking_vertical_contraction_direction': 'none',
+        'tracking_template_path': None,
+        'tracking_output_path': None,
+        'tracking_output_frames': False,
+        'tracking_guide_match_search_seconds': 5.0,
+        'tracking_max_translation_per_frame': 50,
+        'tracking_max_rotation_per_frame': 1.0,
+        'tracking_output_conversion_factor': 1.0,
+        'tracking_microns_per_pixel': 1.0,
+        'tracking_sub_pixel_search_increment': None,
+        'tracking_sub_pixel_refinement_radius': None,
+        'morphology_search_image_path': '',
+        'morphology_left_template_image_path': '',
+        'morphology_right_template_image_path': '',
+        'morphology_template_refinement_radius': 40,
+        'morphology_edge_finding_smoothing_radius': 10,
+        'morphology_microns_per_pixel': 1.0,
+        'morphology_sub_pixel_search_increment': None,
+        'morphology_sub_pixel_refinement_radius': None,
+        'ca2_analysis_path_to_data': None,
+        'ca2_analysis_expected_frequency_hz': 1.0,
+        'ca2_analysis_save_result_plots': False,
+        'ca2_analysis_bg_subtraction_method': None,
     }
 
 
+def ensureDefaultFieldValuesExist(prev_run_values_file_path: str):
+    if Path(prev_run_values_file_path).is_file():
+        return
+    with open(prev_run_values_file_path, 'w') as outfile:
+        writeJSON(defaultFieldValues(), outfile, indent=4)
+
+
+GUI_WIDTH = 1200
+GUI_HEIGHT = 950
+
+
+@Gooey(
+    program_name="CuriBio MantaVision Toolkit",
+    default_size=(GUI_WIDTH, GUI_HEIGHT),
+    optional_cols=3,
+    disable_progress_bar_animation=True,
+
+)
 def main():
-    # read in a config file & parse the input args
-    parser = argparse.ArgumentParser(
-        description='Tracks a template image through each frame of a video.',
+    """ Mantavision (MV) GUI description/layout """
+
+    program_description = 'Perform computer vision tasks on videos and images'
+    parser = GooeyParser(description=program_description)
+    subs = parser.add_subparsers(help='Actions', dest='actions')
+
+    mv_config_file_path = ".mv_initial_values.json"
+    ensureDefaultFieldValuesExist(mv_config_file_path)
+
+    initial_values = previousFieldValues(mv_config_file_path)
+    
+    ###############
+    # Tracking UI #
+    ###############
+    track_template_parser = subs.add_parser(
+        'Tracking',
+        help='Track a user defined or template ROI through one or more videos'
     )
-    parser.add_argument(
-        '--input_video_path',
+    track_template_parser.add_argument(
+        'tracking_video_dir',
+        metavar='Input Video Path',
+        help='path to a directory with videos',
+        widget='DirChooser',
+        type=str,
+        gooey_options={'full_width': True, 'initial_value': initial_values['tracking_video_dir']}
+    )
+    track_template_parser.add_argument(
+        'tracking_horizontal_contraction_direction',
+        metavar='Horizontal Contraction Direction',        
+        help='Horizontal direction component of contration',
+        choices=['left', 'right', 'none'],
+        default=initial_values['tracking_horizontal_contraction_direction']
+    )
+    track_template_parser.add_argument(
+        'tracking_vertical_contraction_direction',
+        metavar='Vertical Contraction Direction',
+        help='Vertical direction component of contration',
+        choices=['up', 'down', 'none'],
+        default=initial_values['tracking_vertical_contraction_direction']
+    )
+    track_template_parser.add_argument(
+        '--tracking_template_path',
+        metavar='Template Path',        
+        help='path to an image that is a template ROI to track\n[leave blank to draw a ROI]',
+        widget='FileChooser',
+        type=str,        
         default=None,
-        help='Path of input video/s to track a template.',
+        gooey_options={'initial_value': initial_values['tracking_template_path']}
     )
-    parser.add_argument(
-        '--template_guide_image_path',
+    track_template_parser.add_argument(
+        '--tracking_output_path', 
+        metavar='Output Path',
+        help='directory to store output of trcked video/s\n[leave blank to use input directory]',
+        widget='DirChooser',
+        type=str,
         default=None,
-        help='Path to an image that will be used as a template to match.',
+        gooey_options={'initial_value': initial_values['tracking_output_path']}
     )
-    parser.add_argument(
-        '--path_to_excel_template',
+    track_template_parser.add_argument(
+        '--tracking_output_frames',
+        metavar='Output Frames',
+        help=' Ouput individual tracking results frames',
+        action='store_true',
+        default=initial_values['tracking_output_frames']
+    )
+    track_template_parser.add_argument(
+        '--tracking_guide_match_search_seconds',
+        metavar='Guide Search Time',
+        help='search this many seconds of the video for a ROI that best matches the template image (e.g. 5.0)\n[leave blank to use the template]',
+        type=float,
         default=None,
-        help='path to exel spread sheet used as a template to write the results into',
+        gooey_options={'initial_value': initial_values['tracking_guide_match_search_seconds']}
     )
-    parser.add_argument(
-        '--json_config_path',
+    track_template_parser.add_argument(
+        '--tracking_max_translation_per_frame',
+        metavar='Max Translation',
+        help='search +/- this amount of translation in any direction from the last frames results (e.g. 100)\n[leave blank to search the entire frame]',
+        type=float,
         default=None,
-        help='Path of a json file with run config parameters'
+        gooey_options={'initial_value': initial_values['tracking_max_translation_per_frame']}
     )
-    parser.add_argument(
-        '--output_path',
+    track_template_parser.add_argument(
+        '--tracking_max_rotation_per_frame',
+        metavar='Max Rotation',
+        help='search +/- this amount of rotation in either direction from the last frames results (e.g. 3.0)\n[leave blank to ignore rotation]',
+        type=float,
         default=None,
-        help='Path to write tracking results.',
+        gooey_options={'initial_value': initial_values['tracking_max_rotation_per_frame']}
     )
-    parser.add_argument(
-        '--guide_match_search_seconds',
+    track_template_parser.add_argument(
+        '--tracking_output_conversion_factor',
+        metavar='Conversion Factor',        
+        help='multiply all distance calulations by this value (e.g. 1.0 is no change)\n[leave blank for no change]',
+        type=float,
         default=None,
-        help='number of seconds to search the video for the best match with the guide template.',
+        gooey_options={'initial_value': initial_values['tracking_output_conversion_factor']}
     )
-    parser.add_argument(
-        '--microns_per_pixel',
+    track_template_parser.add_argument(
+        '--tracking_microns_per_pixel',
+        metavar='Microns per Pixel',
+        help='report displacement values in microns using this value to convert from pixels\n[leave blank for 1:1]',
+        type=float,
         default=None,
-        help='conversion factor for pixel distances to microns',
+        gooey_options={'initial_value': initial_values['tracking_microns_per_pixel']}
     )
-    raw_args = parser.parse_args()
-    if raw_args.json_config_path is not None:
-        config = config_from_json(raw_args.json_config_path)
+    track_template_parser.add_argument(
+        '--tracking_spacer_1',
+        gooey_options={'visible': False}
+    )    
+    track_template_parser.add_argument(
+        '--tracking_sub_pixel_search_increment',
+        metavar='Subpixel Search Increment',
+        help='search will be sub pixel accurate to within +/- this fraction of a pixel (e.g. 0.5)\n[leave blank for no sub pixel accuracy]',
+        type=float,
+        default=None,
+        gooey_options={'initial_value': initial_values['tracking_sub_pixel_search_increment']}
+    )
+    track_template_parser.add_argument(
+        '--tracking_sub_pixel_refinement_radius',
+        metavar='Subpixel Refinement Radius',
+        help='sub pixel search will be limited to +/- this amount in each dimension (e.g. 2.0)\n[leave blank for no sub pixel accuracy]',
+        type=float,
+        default=None,
+        gooey_options={'initial_value': initial_values['tracking_sub_pixel_refinement_radius']}        
+    )
+    #################
+    # Morphology UI #
+    #################
+    morphology_parser = subs.add_parser(
+        'Morphology',
+        help='Compute Morphology Metrics in Images'
+    )
+    morphology_parser.add_argument(
+        'morphology_search_image_path',
+        metavar='Input Dir Path',
+        help='path to a directory with images to analyze',
+        widget='DirChooser',
+        type=str,
+        gooey_options={'full_width': True, 'initial_value': initial_values['morphology_search_image_path']}
+    )
+    morphology_parser.add_argument(
+        'morphology_left_template_image_path',
+        metavar='Left Template Path',
+        help='path to a template image of the left post',
+        widget='FileChooser',
+        type=str,
+        gooey_options={'full_width': True, 'initial_value': initial_values['morphology_left_template_image_path']}
+    )
+    morphology_parser.add_argument(
+        'morphology_right_template_image_path',
+        metavar='Right Template Path',
+        help='path to a template image of the right post',
+        widget='FileChooser',
+        type=str,
+        gooey_options={'full_width': True, 'initial_value': initial_values['morphology_right_template_image_path']}
+    )    
+    morphology_parser.add_argument(
+        '--morphology_template_refinement_radius',
+        metavar='Template Edge Refinement Radius',
+        help='search +/- this value at the inner edge of each template for a better match (e.g. 40)\n[leave blank for no refinement]',
+        type=int,
+        default=None,
+        gooey_options={'initial_value': initial_values['morphology_template_refinement_radius']}
+    )
+    morphology_parser.add_argument(
+        '--morphology_edge_finding_smoothing_radius',
+        metavar='Tissue Edge Smoothing Window',
+        help='smooth tissue edges with a windowed rolling average of this many pixels (e.g. 10)\n[leave blank for no smoothing]',
+        type=int,
+        default=None,
+        gooey_options={'initial_value': initial_values['morphology_edge_finding_smoothing_radius']}
+    )        
+    morphology_parser.add_argument(
+        '--morphology_microns_per_pixel',
+        metavar='Microns per Pixel',
+        help='report displacement values in microns using this value to convert from pixels\n[leave blank for 1:1]',
+        type=float,
+        default=None,
+        gooey_options={'initial_value': initial_values['morphology_microns_per_pixel']}
+    )
+    morphology_parser.add_argument(
+        '--morphology_sub_pixel_search_increment',
+        metavar='Subpixel Search Increment',
+        help='search will be sub pixel accurate to within +/- this fraction of a pixel (e.g. 0.5)\n[leave blank for no sub pixel accuracy]',
+        type=float,
+        default=None,
+        gooey_options={'initial_value': initial_values['morphology_sub_pixel_search_increment']}
+    )
+    morphology_parser.add_argument(
+        '--morphology_sub_pixel_refinement_radius',
+        metavar='Subpixel Refinement Radius',
+        help='sub pixel search will be limited to +/- this amount in each dimension (e.g. 2.0)\n[leave blank for no sub pixel accuracy]',
+        type=float,
+        default=None,
+        gooey_options={'initial_value': initial_values['morphology_sub_pixel_refinement_radius']}
+    )
+    ####################
+    # Ca2+ Analysis UI #
+    ####################
+    ca2_analysis_parser = subs.add_parser(
+        'Ca2+_Analysis',
+        help='Analyze Ca2+ Videos'
+    )
+    ca2_analysis_parser.add_argument(
+        'ca2_analysis_path_to_data',
+        metavar='Input Dir Path',
+        help='path to a directory with videos to analyze',
+        widget='DirChooser',
+        type=str,
+        gooey_options={'full_width': True, 'initial_value': initial_values['ca2_analysis_path_to_data']}
+    )
+    ca2_analysis_parser.add_argument(
+        'ca2_analysis_expected_frequency_hz',
+        metavar='Expected Frequency Hz',
+        help='Signal can be +/- 0.5Hz from this value',
+        type=float,
+        gooey_options={'initial_value': initial_values['ca2_analysis_expected_frequency_hz']}
+    )
+    ca2_analysis_parser.add_argument(
+        'ca2_analysis_bg_subtraction_method',
+        metavar='Background Subtraction',
+        help='Method to Estimate Background and Subtract From Signal',
+        choices=['None', 'ROI', 'Mean', 'Lowpass'],
+        default=initial_values['ca2_analysis_bg_subtraction_method']
+    )
+    ca2_analysis_parser.add_argument(
+        '--ca2_analysis_save_result_plots',
+        metavar='Save Signal Plots',
+        help=' Save Plots of the estimated signal with peaks and troughs indicated',
+        action='store_true',
+        default=initial_values['ca2_analysis_save_result_plots']
+    )
+    # TODO: add an option to output the background subtracted video
+    #       this is particularly useful when developing methods for background subtraction
+    #       to ensure the results are sensible
+
+    args = parser.parse_args()
+    saveCurrentFieldValues(args, initial_values, mv_config_file_path)
+    if args.actions == 'Tracking':
+        runTracking(args)
+    elif args.actions == 'Morphology':
+        runMorphology(args)
+    elif args.actions == 'Ca2+_Analysis':
+        runCa2Analysis(args)
     else:
-        config = config_from_cmdline(raw_args)
-    runTrackTemplate(config)
+        raise RuntimeError('Invalid Action Chosen')
 
 
 if __name__ == '__main__':
