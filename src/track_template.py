@@ -3,7 +3,7 @@
 import numpy as np
 from scipy.ndimage import shift
 import math
-import cv2 as cv  # pip install --user opencv-python
+import cv2 as cv
 from video_api import VideoReader, VideoWriter
 from typing import Tuple, List, Dict
 

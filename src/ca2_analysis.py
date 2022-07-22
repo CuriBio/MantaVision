@@ -1,6 +1,4 @@
-import math
 import os
-import glob
 import openpyxl
 import numpy as np
 import pandas as pd
@@ -9,15 +7,27 @@ from typing import Tuple, Dict, List
 from numpy.polynomial.polynomial import polyfit, Polynomial
 from scipy.ndimage import gaussian_filter
 from scipy.signal import find_peaks, butter, sosfilt
-from tkinter import Tk as tk
-from tkinter.filedialog import askopenfilename, askdirectory
-from video_api import VideoReader, supported_file_extensions
+from video_api import VideoReader, VideoWriter, supported_file_extensions
 from track_template import userDrawnROI
+from optical_tracking import getDirPathViaGUI, getFilePathViaGUI, contentsOfDir
+import cv2 as cv
 
 import matplotlib.pyplot as plt
 pd.set_option("display.precision", 2)
 pd.set_option("display.expand_frame_repr", False)
 
+
+# TODO: for contraction measurements of regular videos
+#       we can use tracking to determine the smallest min and largest max positions
+#       that way we'd have a good approximation of where the relaxation and contractions should be
+#       and we can then pick out the time stamps of frames where there is a local min/max that is
+#       within some small margin of error (say +/-10% of the difference in (largest max - smallest min)
+#       using these time stamps for known min/max, we can plot the peaks and troughs and estimate
+#       the frequency etc.
+
+# TODO: we could also allow people to select a "shape" parameter i.e. sinusoid, exponential, sawtooth, square etc
+#       and then perform regression to determine the parameters of those shapes that best fits the data points
+#       we extract from a contraction (calcium or regular) video
 
 # TODO: check there are no double peaks or troughs.
 #       would need to use the peak and trough indices
@@ -61,17 +71,33 @@ def dataMode(input_data: np.ndarray) -> float:
 
 
 def signalDataFromVideo(
-        input_video_path: str,
-        bg_subtraction_method: str = 'None',
-        bg_subtraction_rois: Dict = None
-) -> Tuple[np.ndarray, np.ndarray]:
+    input_video_path: str,
+    output_video_path: str = None,
+    bg_subtraction_method: str = 'None',
+    bg_subtraction_rois: Dict = None
+) -> Dict:
     """ """
     input_video_stream = VideoReader(input_video_path)
     if not input_video_stream.isOpened():
-        return None, None
+        return None
+
+    # open an output (writable) video stream if required
+    if output_video_path is not None:
+        video_writer = VideoWriter(
+            path=output_video_path,
+            width=input_video_stream.frameVideoWidth(),
+            height=input_video_stream.frameVideoHeight(),
+            time_base=input_video_stream.timeBase(),
+            fps=input_video_stream.avgFPS(),
+            bitrate=input_video_stream.bitRate()
+        )
+    else:
+        video_writer = None
 
     time_stamps = []
     signal_values = []
+    fg_means = []
+    bg_means = []
     while input_video_stream.next():
         time_stamps.append(input_video_stream.timeStamp())
         current_frame = input_video_stream.frameGray()
@@ -93,6 +119,8 @@ def signalDataFromVideo(
             background_subtractor = gaussian_filter(current_frame.astype(float), sigma=8, mode='reflect')
         else:  # bg_subtraction_method.lower() == 'mean':
             background_subtractor = np.mean(current_frame)
+        bg_means.append(background_subtractor)
+        fg_means.append(np.mean(current_frame))
         adjusted_frame = current_frame - background_subtractor
 
         # clip pixels to > 0 and use the mean of all pixels as the signal
@@ -100,16 +128,59 @@ def signalDataFromVideo(
         adjusted_frame_mean = np.mean(adjusted_frame)
         signal_values.append(adjusted_frame_mean)
 
+        if video_writer is not None:
+            # mark the fg & bg ROIs on the output video frame
+            frame = input_video_stream.frameVideoRGB()
+            for roi in [bg_subtraction_rois['bg_roi'], bg_subtraction_rois['fg_roi']]:
+                top_left_point = (roi['x_start'], roi['y_start'])
+                top_right_point = (roi['x_end'], roi['y_start'])
+                bottom_left_point = (roi['x_start'], roi['y_end'])
+                bottom_right_point = (roi['x_end'], roi['y_end'])
+                roi_edges = [
+                    (top_left_point, top_right_point),
+                    (bottom_left_point, bottom_right_point),
+                    (top_left_point, bottom_left_point),
+                    (bottom_right_point, top_right_point),
+                ]
+
+                grid_colour_bgr = (0, 255, 0)
+                for edge_point_a, edge_point_b in roi_edges:
+                    cv.line(
+                        img=frame,
+                        pt1=edge_point_a,
+                        pt2=edge_point_b,
+                        color=grid_colour_bgr,
+                        thickness=1,
+                        lineType=cv.LINE_AA
+                    )
+            video_writer.writeFrame(frame, input_video_stream.frameVideoPTS())
+
+    if video_writer is not None:
+        video_writer.close()
     input_video_stream.close()
-    return np.array(time_stamps, dtype=float), np.array(signal_values, dtype=float)
+
+    return {
+        'time_stamps': np.array(time_stamps, dtype=float),
+        'signal_values': np.array(signal_values, dtype=float),
+        'fg_means': np.array(fg_means, dtype=float),
+        'bg_means': np.array(bg_means, dtype=float)
+    }
 
 
-def videoBGSubtractionROIs(video_file_path: str, max_seconds_to_search: float = None) -> Dict:
+def videoBGSubtractionROIs(
+    video_file_path: str,
+    max_seconds_to_search: float = None
+) -> Dict:
     input_video_stream = VideoReader(video_file_path)
     if not input_video_stream.isOpened():
         return None, None
+
+    input_video_duration = input_video_stream.duration()
     if max_seconds_to_search is None:
-        max_seconds_to_search = input_video_stream.duration()
+        max_seconds_to_search = input_video_duration
+    if max_seconds_to_search < 0 or max_seconds_to_search > input_video_duration:
+        max_seconds_to_search = input_video_duration
+
     max_intensity_sum: float = 0.0
     max_intensity_sum_frame: np.ndarray = None
     while input_video_stream.next():
@@ -136,15 +207,7 @@ def analyzeCa2Data(
     expected_min_peak_height: float = None
 ):
     """ """
-
-    if path_to_data.lower() == 'select_file':
-        path_to_data = getFilePathViaGUI(window_title='Select the file to analyze')
-    elif path_to_data.lower() == 'select_dir':
-        path_to_data = getDirPathViaGUI(window_title='Select the directory with files to analyze')
-
-    # TODO: figure out why we can't limit directory contents searches to specific file extension types
-    # base_dir, files_to_analyze = contentsOfDir(dir_path=path_to_data, search_terms=supported_file_extensions)
-    base_dir, files_to_analyze = contentsOfDir(dir_path=path_to_data, search_terms=["*.*"])
+    base_dir, files_to_analyze = contentsOfDir(dir_path=path_to_data, search_terms=supported_file_extensions)
     results_dir_name = "results_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     results_dir = os.path.join(base_dir, results_dir_name)
     os.mkdir(results_dir)
@@ -154,7 +217,8 @@ def analyzeCa2Data(
         # all the videos can then be processed automatically without any user interaction
         video_rois = {}
         expected_frequency_hz_tolerance = 0.5
-        seconds_for_period = 1.0/(expected_frequency_hz - expected_frequency_hz_tolerance)
+        frequency_epsilon = 0.01
+        seconds_for_period = 1.0/(expected_frequency_hz - expected_frequency_hz_tolerance + frequency_epsilon)
         bg_subtraction_roi_search_seconds = 2.0*seconds_for_period
         for file_name, file_extension in files_to_analyze:
             input_video_file_path = os.path.join(base_dir, file_name + file_extension)
@@ -165,16 +229,40 @@ def analyzeCa2Data(
     for file_name, file_extension in files_to_analyze:
         if video_rois is None:
             bg_subtraction_rois = None
+            output_video_path = None
         else:
             bg_subtraction_rois = video_rois[file_name]
+            output_video_file_name = file_name + "-with_rois" + file_extension
+            output_video_path = os.path.join(results_dir, output_video_file_name)
         input_video_file_path = os.path.join(base_dir, file_name + file_extension)
-        time_stamps, input_signal = signalDataFromVideo(
+        signal_data = signalDataFromVideo(
             input_video_file_path,
+            output_video_path,
             bg_subtraction_method,
             bg_subtraction_rois
         )
-        if input_signal is None or time_stamps is None:
+        if signal_data is None:
             raise RuntimeError("Error. Signal from video could not be extracted")
+        time_stamps = signal_data['time_stamps']
+        input_signal = signal_data['signal_values']
+        fg_means = signal_data['fg_means']
+        bg_means = signal_data['bg_means']
+
+        signal_data_file_path = os.path.join(results_dir, file_name + '-signal_data.xlsx')
+        signalDataToCSV(
+            time_stamps,
+            input_signal,
+            fg_means,
+            bg_means,
+            signal_data_file_path
+        )
+
+        signal_data_for_sdk_file_path = os.path.join(results_dir, file_name + '-signal_data_for_sdk.xlsx')
+        signalDataForSDK(
+            time_stamps,
+            input_signal,
+            signal_data_for_sdk_file_path
+        )
 
         ca2_analysis = ca2Analysis(
             input_signal,
@@ -183,11 +271,18 @@ def analyzeCa2Data(
             expected_min_peak_width=expected_min_peak_width,
             expected_min_peak_height=expected_min_peak_height
         )
+        if ca2_analysis is None:
+            print("\n")
+            print("Error. Could not extract sensible peaks/troughs from data")
+            print("Was expected frequency set to +/- 0.5Hz of expected frequency?")
+            print("No analysis results were written")
+            print("\n")
+            continue
 
-        path_to_results_file = os.path.join(results_dir, file_name + '-results.xlsx')
-        resultsToCSV(
+        path_to_ca2_analysis_results_file = os.path.join(results_dir, file_name + '-results.xlsx')
+        ca2AnalysisResultsToCSV(
             ca2_analysis,
-            path_to_results_file,
+            path_to_ca2_analysis_results_file,
         )
 
         if display_results:
@@ -245,15 +340,18 @@ def ca2Analysis(
     num_peaks = len(peak_indices)
     num_useable_troughs = len(trough_indices) - trough_sequence_start
     num_peaks_to_use = min(num_peaks, num_useable_troughs)
-    peak_to_trough_metrics = pointToPointMetrics(
-        start_point_indices=peak_indices[peak_sequence_start: peak_sequence_start + num_peaks_to_use],
-        end_point_indices=trough_indices[trough_sequence_start: trough_sequence_start + num_peaks_to_use],
-        point_values=value_data,
-        point_times=time_stamps,
-        endpoint_value_fractions=p2t_value_fractions
-    )
-    peak_to_trough_metrics['p2p_order'] = 'peak_to_trough'
-    peak_to_trough_metrics['metrics_labels'] = ['T50R', 'T90R', 'T100R']
+    try:
+        peak_to_trough_metrics = pointToPointMetrics(
+            start_point_indices=peak_indices[peak_sequence_start: peak_sequence_start + num_peaks_to_use],
+            end_point_indices=trough_indices[trough_sequence_start: trough_sequence_start + num_peaks_to_use],
+            point_values=value_data,
+            point_times=time_stamps,
+            endpoint_value_fractions=p2t_value_fractions
+        )
+        peak_to_trough_metrics['p2p_order'] = 'peak_to_trough'
+        peak_to_trough_metrics['metrics_labels'] = ['T50R', 'T90R', 'T100R']
+    except IndexError:
+        return None
 
     # compute the trough to peak metrics
     t2p_value_fractions = np.zeros(0, dtype=np.float32)
@@ -265,15 +363,18 @@ def ca2Analysis(
     num_troughs = len(trough_indices)
     num_useable_peaks = len(peak_indices) - peak_sequence_start
     num_troughs_to_use = min(num_troughs, num_useable_peaks)
-    trough_to_peak_metrics = pointToPointMetrics(
-        start_point_indices=trough_indices[trough_sequence_start: trough_sequence_start + num_troughs_to_use],
-        end_point_indices=peak_indices[peak_sequence_start: peak_sequence_start + num_troughs_to_use],
-        point_values=value_data,
-        point_times=time_stamps,
-        endpoint_value_fractions=t2p_value_fractions        
-    )
-    trough_to_peak_metrics['p2p_order'] = 'trough_to_peak'
-    trough_to_peak_metrics['metrics_labels'] = ['Tpeak']
+    try:
+        trough_to_peak_metrics = pointToPointMetrics(
+            start_point_indices=trough_indices[trough_sequence_start: trough_sequence_start + num_troughs_to_use],
+            end_point_indices=peak_indices[peak_sequence_start: peak_sequence_start + num_troughs_to_use],
+            point_values=value_data,
+            point_times=time_stamps,
+            endpoint_value_fractions=t2p_value_fractions
+        )
+        trough_to_peak_metrics['p2p_order'] = 'trough_to_peak'
+        trough_to_peak_metrics['metrics_labels'] = ['Tpeak']
+    except IndexError:
+        return None
 
     # compute a measure of average frequency
     peak_times = time_stamps[peak_indices]
@@ -443,65 +544,6 @@ def lowPassFiltered(input_signal: np.ndarray, time_stamps: np.ndarray) -> np.nda
     return sosfilt(sos, input_signal)
 
 
-# below are copies of functions in mantavision and a separate function with these 
-# utility functions should be made in a separate repo, or these repos combined
-
-def contentsOfDir(
-        dir_path: str,
-        search_terms: List[str],
-        search_extension_only: bool=True
-) -> Tuple[List[str], List[Tuple[str]]]:
-    all_files_found = []
-    if os.path.isdir(dir_path):
-        base_dir = dir_path
-    for search_term in search_terms:
-        glob_search_term = '*' + search_term
-        if not search_extension_only:
-            glob_search_term += '*'
-        files_found = glob.glob(os.path.join(dir_path, glob_search_term))
-        if len(files_found) > 0:
-            all_files_found.extend(files_found)
-        else:
-            # presume it's actually a single file path
-            base_dir = os.path.dirname(dir_path)
-            all_files_found = [dir_path]
-        if len(all_files_found) < 1:
-            return None, None
-
-    files = []
-    for file_path in all_files_found:
-        file_name, file_extension = os.path.splitext(os.path.basename(file_path))
-        files.append((file_name, file_extension))
-    return base_dir, files
-
-
-def getDirPathViaGUI(window_title: str='') -> str:
-    # show an "Open" dialog box and return the path to the selected dir
-    window=tk()
-    window.withdraw()
-    window.lift()
-    window.overrideredirect(True)
-    window.call('wm', 'attributes', '.', '-topmost', True)
-    return askdirectory(
-        initialdir='./',
-        title=window_title
-    )
-
-
-def getFilePathViaGUI(window_title: str='') -> str:
-  # show an "Open" dialog box and return the path to the selected file
-  window=tk()
-  window.withdraw()
-  window.lift()  
-  window.overrideredirect(True)
-  window.call('wm', 'attributes', '.', '-topmost', True)
-  return askopenfilename(
-    initialdir='./',
-    title=window_title    
-  )
-
-
-
 def plotCa2Signals(
     time_stamps: np.ndarray,
     signal: np.ndarray,
@@ -531,7 +573,70 @@ def plotCa2Signals(
     plt.close()
 
 
-def resultsToCSV(
+def signalDataForSDK(
+    time_stamps: np.ndarray,
+    input_signal: np.ndarray,
+    sdk_signal_data_file_path: str
+):
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+
+    # set the column headings
+    heading_row = 1
+    time_stamp_column = 1
+    sheet.cell(heading_row, time_stamp_column).value = 'time'
+    signal_value_column = time_stamp_column + 1
+    sheet.cell(heading_row, signal_value_column).value = 'signal'
+
+    # set the data values
+    data_row_start = heading_row + 1
+    num_data_points = len(time_stamps)
+    for data_point_index in range(0, num_data_points):
+        row_num = data_point_index + data_row_start
+        sheet.cell(row_num, time_stamp_column).value = time_stamps[data_point_index]
+        sheet.cell(row_num, signal_value_column).value = input_signal[data_point_index]
+
+    workbook.save(filename=sdk_signal_data_file_path)
+
+
+def signalDataToCSV(
+    time_stamps: np.ndarray,
+    input_signal: np.ndarray,
+    fg_signal_means: np.ndarray,
+    bg_signal_means: np.ndarray,
+    output_data_file_path: str
+):
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+
+    # set the column headings
+    heading_row = 1
+    frame_number_column = 1
+    sheet.cell(heading_row, frame_number_column).value = 'frame number'
+    time_stamp_column = frame_number_column + 1
+    sheet.cell(heading_row, time_stamp_column).value = 'time'
+    signal_value_column = time_stamp_column + 1
+    sheet.cell(heading_row, signal_value_column).value = 'signal'
+    fg_mean_value_column = signal_value_column + 1
+    sheet.cell(heading_row, fg_mean_value_column).value = 'fg_mean'
+    bg_mean_value_column = fg_mean_value_column + 1
+    sheet.cell(heading_row, bg_mean_value_column).value = 'bg_mean'
+
+    # set the data values
+    data_row_start = heading_row + 1
+    num_data_points = len(time_stamps)
+    for data_point_index in range(0, num_data_points):
+        row_num = data_point_index + data_row_start
+        sheet.cell(row_num, frame_number_column).value = data_point_index
+        sheet.cell(row_num, time_stamp_column).value = time_stamps[data_point_index]
+        sheet.cell(row_num, signal_value_column).value = input_signal[data_point_index]
+        sheet.cell(row_num, fg_mean_value_column).value = fg_signal_means[data_point_index]
+        sheet.cell(row_num, bg_mean_value_column).value = bg_signal_means[data_point_index]
+
+    workbook.save(filename=output_data_file_path)
+
+
+def ca2AnalysisResultsToCSV(
         ca2_analysis: Dict,
         path_to_results_file: str,
 ):
