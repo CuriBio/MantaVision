@@ -348,8 +348,17 @@ def rotatedImage(image_to_rotate, rotation_degrees, pivot_x, pivot_y):
     if pivot_x is None or pivot_y is None:
         return image_to_rotate
     scale_factor = 1.0
-    warp_matrix = cv.getRotationMatrix2D((pivot_x, pivot_y), rotation_degrees, scale_factor)
-    return cv.warpAffine(image_to_rotate, warp_matrix, image_to_rotate.shape)
+    warp_matrix = cv.getRotationMatrix2D(
+        (pivot_x, pivot_y),
+        rotation_degrees,
+        scale_factor
+    )
+    rotated_image = cv.warpAffine(
+        image_to_rotate,
+        warp_matrix,
+        (image_to_rotate.shape[1], image_to_rotate.shape[0])
+    )
+    return rotated_image
 
 
 def displacementAdjustedResults(
@@ -444,7 +453,6 @@ def inputImageSubRegion(
         input_shape_y,
         sub_region_origin_y + sub_region_base_height + sub_region_padding_y
     ))
-
     # crop out the new subregion
     sub_region = input_image[sub_region_start_y:sub_region_end_y, sub_region_start_x:sub_region_end_x]
 
@@ -574,26 +582,23 @@ def intensityAdjusted(image_to_adjust: np.ndarray, adjust_gamma: bool = True) ->
     Returns:
       float32 version of input image with intensity adjusted
     """
-    if adjust_gamma:
-        image_stddev = np.std(image_to_adjust)
-        gamma_value = 1.0 / np.sqrt(np.log2(image_stddev))
-        image_to_adjust = gammaAdjusted(
-            intensity=image_to_adjust,
-            gamma=gamma_value
-        ).astype(np.float32)
-        current_image_min: float = np.min(image_to_adjust)
-        current_image_max: float = np.max(image_to_adjust)
-        current_image_range: float = current_image_max - current_image_min
-    else:
-        current_image_min: float = np.min(image_to_adjust)
-        current_image_max: float = np.max(image_to_adjust)
-        current_image_range: float = current_image_max - current_image_min
-    return rescaled(
+    # if adjust_gamma:
+    #     image_stddev = np.std(image_to_adjust)
+    #     gamma_value = 1.0/np.sqrt(np.log2(image_stddev))
+    #     image_to_adjust = gammaAdjusted(
+    #         intensity=image_to_adjust,
+    #         gamma=gamma_value
+    #     ).astype(np.float32)
+    current_image_min: float = np.min(image_to_adjust)
+    current_image_max: float = np.max(image_to_adjust)
+    current_image_range: float = current_image_max - current_image_min
+    adjusted_image = rescaled(
         intensity=image_to_adjust,
         intensity_min=current_image_min,
         intensity_range=current_image_range,
         new_scale=2.0**16
     ).astype(np.float32)
+    return adjusted_image
 
 
 def gammaAdjusted(intensity: float, gamma: float) -> float:
