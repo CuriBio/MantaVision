@@ -10,3 +10,5 @@ dist
 .idea
 venv
 *ipynb_checkpoints*
+*todo*
+*TODO*

@@ -3,7 +3,7 @@
 import numpy as np
 from scipy.ndimage import shift
 import math
-import cv2 as cv  # pip install --user opencv-python
+import cv2 as cv
 from video_api import VideoReader, VideoWriter
 from typing import Tuple, List, Dict
 
@@ -33,6 +33,7 @@ from typing import Tuple, List, Dict
 def trackTemplate(
     input_video_path: str,
     template_guide_image_path: str,
+    template_rgb: np.ndarray = None,
     output_video_path: str = None,
     guide_match_search_seconds: float = None,
     microns_per_pixel: float = None,
@@ -84,22 +85,25 @@ def trackTemplate(
     frames_per_second = input_video_stream.avgFPS()
 
     # open the template image
-    if user_roi_selection:
-        template_as_guide = None
+    if template_rgb is not None:
+        template_gray = cv.cvtColor(template_rgb, cv.COLOR_BGR2GRAY)
     else:
-        template_as_guide = intensityAdjusted(cv.cvtColor(cv.imread(template_guide_image_path), cv.COLOR_BGR2GRAY))
-        if template_as_guide is None:
-            error_msg = "ERROR. Path provided for template does not point to an image file. Nothing has been tracked."
-            return error_msg, [{}], frames_per_second, None, -1
-    if guide_match_search_seconds is None:
-        max_frames_to_check = None
-    else:
-        max_frames_to_check = int(math.ceil(frames_per_second * float(guide_match_search_seconds)))
-    template_rgb, template_gray = templateFromInputROI(
-        input_video_stream,
-        template_as_guide,
-        max_frames_to_check
-    )
+        if user_roi_selection:
+            template_as_guide = None
+        else:
+            template_as_guide = intensityAdjusted(cv.cvtColor(cv.imread(template_guide_image_path), cv.COLOR_BGR2GRAY))
+            if template_as_guide is None:
+                error_msg = "ERROR. Path provided for template does not point to an image file. Nothing has been tracked."
+                return error_msg, [{}], frames_per_second, None, -1
+        if guide_match_search_seconds is None:
+            max_frames_to_check = None
+        else:
+            max_frames_to_check = int(math.ceil(frames_per_second * float(guide_match_search_seconds)))
+        template_rgb, template_gray = templateFromInputROI(
+            input_video_stream,
+            template_as_guide,
+            max_frames_to_check
+        )
     template = intensityAdjusted(template_gray)
     template_height = template.shape[0]
     template_half_height = template_height / 2.0
@@ -214,7 +218,11 @@ def trackTemplate(
             'XY_DISPLACEMENT': 0,
             'TEMPLATE_MATCH_ORIGIN_X': best_match_origin_x,
             'TEMPLATE_MATCH_ORIGIN_Y': best_match_origin_y,
-            'TEMPLATE_MATCH_ROTATION': flipped_image_best_match_rotation
+            'TEMPLATE_MATCH_ROTATION': flipped_image_best_match_rotation,
+            'x_start': best_match_origin_x,
+            'x_end': best_match_origin_x + template_width,
+            'y_start': best_match_origin_y,
+            'y_end': best_match_origin_y + template_height,
         })
         if match_coordinates is not None:
             # update the min and max positions of the template origin for ALL frames
@@ -348,8 +356,17 @@ def rotatedImage(image_to_rotate, rotation_degrees, pivot_x, pivot_y):
     if pivot_x is None or pivot_y is None:
         return image_to_rotate
     scale_factor = 1.0
-    warp_matrix = cv.getRotationMatrix2D((pivot_x, pivot_y), rotation_degrees, scale_factor)
-    return cv.warpAffine(image_to_rotate, warp_matrix, image_to_rotate.shape)
+    warp_matrix = cv.getRotationMatrix2D(
+        (pivot_x, pivot_y),
+        rotation_degrees,
+        scale_factor
+    )
+    rotated_image = cv.warpAffine(
+        image_to_rotate,
+        warp_matrix,
+        (image_to_rotate.shape[1], image_to_rotate.shape[0])
+    )
+    return rotated_image
 
 
 def displacementAdjustedResults(
@@ -444,7 +461,6 @@ def inputImageSubRegion(
         input_shape_y,
         sub_region_origin_y + sub_region_base_height + sub_region_padding_y
     ))
-
     # crop out the new subregion
     sub_region = input_image[sub_region_start_y:sub_region_end_y, sub_region_start_x:sub_region_end_x]
 
@@ -565,7 +581,7 @@ def userDrawnROI(input_image: np.ndarray, title_text: str = None) -> Dict:
     }
 
 
-def intensityAdjusted(image_to_adjust: np.ndarray, adjust_gamma: bool = True) -> np.ndarray:
+def intensityAdjusted(image_to_adjust: np.ndarray, adjust_gamma: bool = False) -> np.ndarray:
     """
     Performs an automatic adjustment of the input intensity range to enhance contrast.
     Args:
@@ -576,24 +592,21 @@ def intensityAdjusted(image_to_adjust: np.ndarray, adjust_gamma: bool = True) ->
     """
     if adjust_gamma:
         image_stddev = np.std(image_to_adjust)
-        gamma_value = 1.0 / np.sqrt(np.log2(image_stddev))
+        gamma_value = 1.0/np.sqrt(np.log2(image_stddev))
         image_to_adjust = gammaAdjusted(
             intensity=image_to_adjust,
             gamma=gamma_value
         ).astype(np.float32)
-        current_image_min: float = np.min(image_to_adjust)
-        current_image_max: float = np.max(image_to_adjust)
-        current_image_range: float = current_image_max - current_image_min
-    else:
-        current_image_min: float = np.min(image_to_adjust)
-        current_image_max: float = np.max(image_to_adjust)
-        current_image_range: float = current_image_max - current_image_min
-    return rescaled(
+    current_image_min: float = np.min(image_to_adjust)
+    current_image_max: float = np.max(image_to_adjust)
+    current_image_range: float = current_image_max - current_image_min
+    adjusted_image = rescaled(
         intensity=image_to_adjust,
         intensity_min=current_image_min,
         intensity_range=current_image_range,
         new_scale=2.0**16
     ).astype(np.float32)
+    return adjusted_image
 
 
 def gammaAdjusted(intensity: float, gamma: float) -> float:
@@ -609,8 +622,8 @@ def matchResults(
     template_to_match: np.ndarray,
     sub_pixel_search_increment: float = None,
     sub_pixel_refinement_radius: int = None,
-    sub_pixel_search_template: np.ndarray = None,
-    sub_pixel_search_offset_right: bool = False
+    sub_pixel_search_offset_right: bool = False,
+    sub_pixel_search_template_alternative: np.ndarray = None,
 ) -> Tuple[float, List[float], float]:
     """
         Computes the coordinates of the best match between the input image and template_to_match.
@@ -653,8 +666,8 @@ def matchResults(
     match_coordinates_origin_y = best_match_coordinates[1]
     if sub_pixel_search_offset_right:
         match_coordinates_origin_x += template_to_match.shape[1]
-    if sub_pixel_search_template is not None:
-        template_to_match = sub_pixel_search_template  # must go after the offset
+    if sub_pixel_search_template_alternative is not None:
+        template_to_match = sub_pixel_search_template_alternative  # must go after the offset
         if sub_pixel_search_offset_right:
             match_coordinates_origin_x -= template_to_match.shape[1]
 

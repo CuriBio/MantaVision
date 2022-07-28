@@ -7,6 +7,7 @@ from gooey import Gooey, GooeyParser
 from json import dump as writeJSON, load as readJSON
 from pathlib import Path 
 from typing import Dict
+from time import time
 
 
 def runCa2Analysis(args: Dict):
@@ -63,8 +64,6 @@ def runMorphology(args: Dict):
         search_image_path=args.morphology_search_image_path,
         left_template_image_path=args.morphology_left_template_image_path,
         right_template_image_path=args.morphology_right_template_image_path,
-        left_sub_template_image_path=None,
-        right_sub_template_image_path=None,
         sub_pixel_search_increment=args.morphology_sub_pixel_search_increment,
         sub_pixel_refinement_radius=args.morphology_sub_pixel_refinement_radius,
         template_refinement_radius=args.morphology_template_refinement_radius,
@@ -138,7 +137,7 @@ def defaultFieldValues() -> Dict:
         'tracking_output_frames': False,
         'tracking_guide_match_search_seconds': 5.0,
         'tracking_max_translation_per_frame': 50,
-        'tracking_max_rotation_per_frame': 1.0,
+        'tracking_max_rotation_per_frame': 2.0,
         'tracking_output_conversion_factor': 1.0,
         'tracking_microns_per_pixel': 1.0,
         'tracking_sub_pixel_search_increment': None,
@@ -173,8 +172,7 @@ GUI_HEIGHT = 950
     program_name="CuriBio MantaVision Toolkit",
     default_size=(GUI_WIDTH, GUI_HEIGHT),
     optional_cols=3,
-    disable_progress_bar_animation=True,
-
+    # disable_progress_bar_animation=True
 )
 def main():
     """ Mantavision (MV) GUI description/layout """
@@ -206,14 +204,14 @@ def main():
     track_template_parser.add_argument(
         'tracking_horizontal_contraction_direction',
         metavar='Horizontal Contraction Direction',        
-        help='Horizontal direction component of contration',
+        help='Horizontal direction component of contraction',
         choices=['left', 'right', 'none'],
         default=initial_values['tracking_horizontal_contraction_direction']
     )
     track_template_parser.add_argument(
         'tracking_vertical_contraction_direction',
         metavar='Vertical Contraction Direction',
-        help='Vertical direction component of contration',
+        help='Vertical direction component of contraction',
         choices=['up', 'down', 'none'],
         default=initial_values['tracking_vertical_contraction_direction']
     )
@@ -229,7 +227,7 @@ def main():
     track_template_parser.add_argument(
         '--tracking_output_path', 
         metavar='Output Path',
-        help='directory to store output of trcked video/s\n[leave blank to use input directory]',
+        help='directory to store output of tracked video/s\n[leave blank to use input directory]',
         widget='DirChooser',
         type=str,
         default=None,
@@ -238,14 +236,21 @@ def main():
     track_template_parser.add_argument(
         '--tracking_output_frames',
         metavar='Output Frames',
-        help=' Ouput individual tracking results frames',
+        help=' Output individual tracking results frames',
         action='store_true',
         default=initial_values['tracking_output_frames']
     )
+    # TODO: use default_values for all help text with an e.g. value
+    default_values = defaultFieldValues()
+    default_guid_match_search_seconds = default_values['tracking_guide_match_search_seconds']
+    guide_match_search_seconds_help = f"search this many seconds of the video for "
+    guide_match_search_seconds_help += f"a ROI that best matches the template image "
+    guide_match_search_seconds_help += f"(e.g. {default_guid_match_search_seconds})"
+    guide_match_search_seconds_help += f"\n[leave blank to use the template]"
     track_template_parser.add_argument(
         '--tracking_guide_match_search_seconds',
         metavar='Guide Search Time',
-        help='search this many seconds of the video for a ROI that best matches the template image (e.g. 5.0)\n[leave blank to use the template]',
+        help=guide_match_search_seconds_help,
         type=float,
         default=None,
         gooey_options={'initial_value': initial_values['tracking_guide_match_search_seconds']}
@@ -253,7 +258,7 @@ def main():
     track_template_parser.add_argument(
         '--tracking_max_translation_per_frame',
         metavar='Max Translation',
-        help='search +/- this amount of translation in any direction from the last frames results (e.g. 100)\n[leave blank to search the entire frame]',
+        help='search +/- this amount of translation in any direction from the last frames results (e.g. 50)\n[leave blank to search the entire frame]',
         type=float,
         default=None,
         gooey_options={'initial_value': initial_values['tracking_max_translation_per_frame']}
@@ -261,7 +266,7 @@ def main():
     track_template_parser.add_argument(
         '--tracking_max_rotation_per_frame',
         metavar='Max Rotation',
-        help='search +/- this amount of rotation in either direction from the last frames results (e.g. 3.0)\n[leave blank to ignore rotation]',
+        help='search +/- this amount of rotation in either direction from the last frames results (e.g. 2.0)\n[leave blank to ignore rotation]',
         type=float,
         default=None,
         gooey_options={'initial_value': initial_values['tracking_max_rotation_per_frame']}
@@ -318,7 +323,7 @@ def main():
         gooey_options={'full_width': True, 'initial_value': initial_values['morphology_search_image_path']}
     )
     morphology_parser.add_argument(
-        'morphology_left_template_image_path',
+        '--morphology_left_template_image_path',
         metavar='Left Template Path',
         help='path to a template image of the left post',
         widget='FileChooser',
@@ -326,7 +331,7 @@ def main():
         gooey_options={'full_width': True, 'initial_value': initial_values['morphology_left_template_image_path']}
     )
     morphology_parser.add_argument(
-        'morphology_right_template_image_path',
+        '--morphology_right_template_image_path',
         metavar='Right Template Path',
         help='path to a template image of the right post',
         widget='FileChooser',
@@ -399,7 +404,7 @@ def main():
         'ca2_analysis_bg_subtraction_method',
         metavar='Background Subtraction',
         help='Method to Estimate Background and Subtract From Signal',
-        choices=['None', 'ROI', 'Mean', 'Lowpass'],
+        choices=['None', 'Auto_ROIs', 'Fixed_ROIs', 'Frame_Mean', 'Lowpass'],
         default=initial_values['ca2_analysis_bg_subtraction_method']
     )
     ca2_analysis_parser.add_argument(
@@ -415,6 +420,7 @@ def main():
 
     args = parser.parse_args()
     saveCurrentFieldValues(args, initial_values, mv_config_file_path)
+    start_time = time()
     if args.actions == 'Tracking':
         runTracking(args)
     elif args.actions == 'Morphology':
@@ -423,6 +429,8 @@ def main():
         runCa2Analysis(args)
     else:
         raise RuntimeError('Invalid Action Chosen')
+    runtime = round(time() - start_time, 2)
+    print(f'\n{args.actions} Runtime: {runtime}s')
 
 
 if __name__ == '__main__':

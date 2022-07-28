@@ -1,284 +1,260 @@
-#! /usr/bin/env python
-
 import os
 from datetime import datetime
 import openpyxl
 import numpy as np
 import cv2 as cv
 from typing import Tuple, List, Dict
-from numpy.polynomial.polynomial import Polynomial
 from matplotlib import pyplot as plt
 from scipy import ndimage as ndifilters
 from skimage import filters as skimagefilters
-from optical_tracking import getFilePathViaGUI, getDirPathViaGUI, contentsOfDir
+from os_functions import contentsOfDir, getFilePathViaGUI, getDirPathViaGUI
 from track_template import matchResults, intensityAdjusted, userDrawnROI
 
 
 def computeMorphologyMetrics(
-  search_image_path: str,
-  left_template_image_path: str,
-  right_template_image_path: str,
-  left_sub_template_image_path: str=None,
-  right_sub_template_image_path: str=None,  
-  sub_pixel_search_increment: float = None,
-  sub_pixel_refinement_radius: float = None,
-  template_refinement_radius: int = 40,
-  edge_finding_smoothing_radius: int = 1,
-  microns_per_pixel: float=None,
-  write_result_images: bool=False,
-  display_result_images: bool=True
+    search_image_path: str,
+    left_template_image_path: str,
+    right_template_image_path: str,
+    sub_pixel_search_increment: float = None,
+    sub_pixel_refinement_radius: float = None,
+    template_refinement_radius: int = 40,
+    edge_finding_smoothing_radius: int = 1,
+    microns_per_pixel: float = None,
+    write_result_images: bool = False,
+    display_result_images: bool = True
 ):
+    """ """
+    if template_refinement_radius < 1:
+        raise RuntimeError("template_refinement_radius cannot be < 1")
+    if edge_finding_smoothing_radius < 1:
+        raise RuntimeError("edge_finding_smoothing_radius cannot be < 1")
 
-  if template_refinement_radius < 1:
-    raise RuntimeError("template_refinement_radius cannot be < 1")
-  if edge_finding_smoothing_radius < 1:
-    raise RuntimeError("edge_finding_smoothing_radius cannot be < 1")
+    base_dir, file_names = contentsOfDir(dir_path=search_image_path, search_terms=['.tif', '.tiff', '.jpg', '.png'])
+    results_dir_name = "results_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    results_dir = os.path.join(base_dir, results_dir_name)
+    os.mkdir(results_dir)
+    if write_result_images:
+        results_image_dir = os.path.join(results_dir, 'result_images')
+        os.mkdir(results_image_dir)
 
-  # if 'windows' in os_name().lower():
-  #   import codecs
-  #   search_image_path = codecs.escape_decode(bytes(win_path, "utf-8"))[0].decode("utf-8")    
-
-  if search_image_path.lower() == 'select_file':
-    search_image_path = getFilePathViaGUI('Select File To Analyize')
-  elif search_image_path.lower() == 'select_dir':
-    search_image_path = getDirPathViaGUI('Select Directory With Images To Analyze')
-  base_dir, file_names = contentsOfDir(dir_path=search_image_path, search_terms=['.tif', '.tiff', '.jpg', '.png'])
-  
-  results_dir_name = "results_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-  results_dir = os.path.join(base_dir, results_dir_name)
-  os.mkdir(results_dir)
-  if write_result_images:
-    results_image_dir = os.path.join(results_dir, 'result_images')
-    os.mkdir(results_image_dir)
-
-  template_paths = {
-    'left': {'outer': left_template_image_path, 'inner': left_sub_template_image_path},
-    'right': {'outer': right_template_image_path, 'inner': right_sub_template_image_path}    
-  }
-  for template_position, template_details in template_paths.items():
-    for template_type, template_path in template_details.items():
-      if template_path == 'select_file':
-        if template_paths[template_position]['inner'] is None:
-          template_selection_title = f'Select File For {template_position} template'
+    template_info = {
+        'left': {'path': left_template_image_path, 'image': None},
+        'right': {'path': right_template_image_path, 'image': None}
+    }
+    for template_position, template_data in template_info.items():
+        if template_data['path'] is not None:
+            template_data['image'] = cv.imread(template_image_path)
         else:
-          template_selection_title = f'Select File For {template_position} {template_type} template'          
-        template_paths[template_position][template_type] = getFilePathViaGUI(template_selection_title)
-      elif template_path == 'draw_roi':
-        drawn_roi_templates_dir = os.path.join(results_dir, 'drawn_template_images')
-        if not os.path.exists(drawn_roi_templates_dir):
-          os.mkdir(drawn_roi_templates_dir)
-        file_name, file_extension = file_names[0]  # NOTE: this could be a selected file too
-        search_image_for_template = cv.imread(os.path.join(base_dir, file_name + file_extension))
-        if template_paths[template_position]['inner'] is None:
-          draw_roi_title = f'Draw ROI For {template_position} template'
-        else:
-          draw_roi_title = f'Draw ROI For {template_position} {template_type} template'          
-        roi_info = userDrawnROI(search_image_for_template, draw_roi_title)
-        template_image = search_image_for_template[
-          roi_info['y_start'] : roi_info['y_end'],
-          roi_info['x_start'] : roi_info['x_end']
-        ]
-        template_image_path = os.path.join(drawn_roi_templates_dir, template_type + '_template_image.tif')
-        cv.imwrite(template_image_path, template_image)
-        template_paths[template_position][template_type] = template_image_path
+            drawn_roi_templates_dir = os.path.join(results_dir, 'drawn_template_images')
+            if not os.path.exists(drawn_roi_templates_dir):
+                os.mkdir(drawn_roi_templates_dir)
+            file_name, file_extension = file_names[0]
+            search_image_for_template = cv.imread(os.path.join(base_dir, file_name + file_extension))
+            draw_roi_title = f'Draw ROI For {template_position} template'
+            roi_info = userDrawnROI(search_image_for_template, draw_roi_title)
+            template_image = search_image_for_template[
+              roi_info['y_start']:roi_info['y_end'],
+              roi_info['x_start']:roi_info['x_end']
+            ]
+            template_image_path = os.path.join(
+                drawn_roi_templates_dir, template_position + '_template_image.tif'
+            )
+            cv.imwrite(template_image_path, template_image)
+            template_data['path'] = template_image_path
+            template_data['image'] = template_image
+    all_metrics = []
+    image_analyzed_id = 0
+    for file_name, file_extension in file_names:
+        file_to_analyze = os.path.join(base_dir, file_name + file_extension)
+        search_image = cv.imread(file_to_analyze)
+        if search_image is None:
+            print(f'ERROR. Could not open the search image with the provided path: {file_to_analyze}. Exiting.')
+            return None
+        rois_info = roiInfoFromTemplates(
+            search_image=search_image,
+            template_info=template_info,
+            sub_pixel_search_increment=sub_pixel_search_increment,
+            sub_pixel_refinement_radius=sub_pixel_refinement_radius
+        )
+        results_image, metrics = morphologyMetricsForImage(
+            search_image=search_image,
+            rois_info=rois_info,
+            microns_per_pixel=microns_per_pixel,
+            template_refinement_radius=template_refinement_radius,
+            edge_finding_smoothing_radius=edge_finding_smoothing_radius
+        )
+        all_metrics.append(
+            {
+                'file': file_to_analyze,
+                'horizontal_length': round(metrics['distance_between_rois'], 2),
+                'left_edge_vertical_length': round(metrics['left_end_point_thickness'], 2),
+                'mid_point_vertical_length': round(metrics['midpoint_thickness'], 2),
+                'right_edge_vertical_length': round(metrics['right_end_point_thickness'], 2),
+                'tissue_area': round(metrics['area_between_rois'], 2),
+                'orientation': round(metrics['orientation'], 2),
+                'warning_flags': metrics['warning_flags']
+            }
+        )
 
-  all_metrics = []
-  image_analyzed_id = 0
-  for file_name, file_extension in file_names:
-      file_to_analyze = os.path.join(base_dir, file_name + file_extension)
-      results_image, metrics = morphologyMetricsForImage(
-        search_image_path=file_to_analyze,
-        template_image_paths=template_paths,
-        sub_pixel_search_increment=sub_pixel_search_increment,
-        sub_pixel_refinement_radius=sub_pixel_refinement_radius,
-        microns_per_pixel=microns_per_pixel,
-        template_refinement_radius=template_refinement_radius,
-        edge_finding_smoothing_radius=edge_finding_smoothing_radius
-      )
-      all_metrics.append(
-        {
-          'file': file_to_analyze,
-          'horizontal_length': round(metrics['distance_between_rois'], 2),
-          'left_edge_vertical_length': round(metrics['left_end_point_thickness'], 2),
-          'mid_point_vertical_length': round(metrics['midpoint_thickness'], 2),
-          'right_edge_vertical_length': round(metrics['right_end_point_thickness'], 2),
-          'tissue_area': round(metrics['area_between_rois'], 2),
-          'orientation': round(metrics['orientation'], 2),
-          'warning_flags': metrics['warning_flags']
-        }        
-      )
+        # write the results image to file if requested
+        if write_result_images:
+            analyzed_file_results_image_name = file_name + '_results.jpg'
+            analyzed_file_results_image_path = os.path.join(results_image_dir, analyzed_file_results_image_name)
+            cv.imwrite(analyzed_file_results_image_path, results_image)
 
-      # write the results image to file if requested
-      if write_result_images:
-        analyzed_file_results_image_name = file_name + '_results.jpg'
-        analyzed_file_results_image_path = os.path.join(results_image_dir, analyzed_file_results_image_name)
-        cv.imwrite(analyzed_file_results_image_path, results_image)
+        # display the metrics and results image here if requested
+        if display_result_images:
+            print(f'image no: {image_analyzed_id} - {file_to_analyze}')
+            print(f"horizontal length between ROIs: {round(metrics['distance_between_rois'], 2)} (microns)")
+            print(f"vertical length at left ROI : {round(metrics['left_end_point_thickness'], 2)} (microns)")
+            print(f"vertical length at midpoint between ROIs: {round(metrics['midpoint_thickness'], 2)} (microns)")
+            print(f"vertical length at right ROI : {round(metrics['right_end_point_thickness'], 2)} (microns)")
+            print(f"area between ROIs: {round(metrics['area_between_rois'], 2)} (microns\u00b2)")
+            print(f"orientation of horizontal line between ROIs: {round(metrics['orientation'], 2)}\u00b0")
 
-      # display the metrics and results image here if requested
-      if display_result_images:
-        print(f'image no: {image_analyzed_id} - {file_to_analyze}')
-        print(f"horizontal length between ROIs: {round(metrics['distance_between_rois'], 2)} (microns)")
-        print(f"vertical length at left ROI : {round(metrics['left_end_point_thickness'], 2)} (microns)")
-        print(f"vertical length at midpoint between ROIs: {round(metrics['midpoint_thickness'], 2)} (microns)")
-        print(f"vertical length at right ROI : {round(metrics['right_end_point_thickness'], 2)} (microns)")
-        print(f"area between ROIs: {round(metrics['area_between_rois'], 2)} (microns\u00b2)")
-        print(f"orientation of horizontal line between ROIs: {round(metrics['orientation'], 2)}\u00b0")        
-        
-        if len(metrics['warning_flags']) > 0:
-          print('WARNING!:')
-          for warning_msg in metrics['warning_flags']:
-            print(warning_msg)
-        plt.imshow(cv.cvtColor(results_image, cv.COLOR_BGR2RGB))
-        plt.show()
-        print()
-      image_analyzed_id += 1
+            if len(metrics['warning_flags']) > 0:
+                print('WARNING!:')
+                for warning_msg in metrics['warning_flags']:
+                    print(warning_msg)
+            plt.imshow(cv.cvtColor(results_image, cv.COLOR_BGR2RGB))
+            plt.show()
+            print()
+        image_analyzed_id += 1
 
-  results_xlsx_name = 'results.xlsx'
-  results_xlsx_path = os.path.join(results_dir, results_xlsx_name)  
-  runtime_parameters = {
-    'search_image_path' : base_dir,
-    'template_image_paths': template_paths,
-    'sub_pixel_search_increment' : sub_pixel_search_increment,
-    'sub_pixel_refinement_radius' : sub_pixel_refinement_radius,    
-    'microns_per_pixel': microns_per_pixel,
-    'template_refinement_radius': template_refinement_radius,
-    'edge_finding_smoothing_radius': edge_finding_smoothing_radius
+    results_xlsx_name = 'results.xlsx'
+    results_xlsx_path = os.path.join(results_dir, results_xlsx_name)
+    runtime_parameters = {
+      'search_image_path' : base_dir,
+      'template_image_paths': {'left': template_info['left']['path'], 'right': template_info['right']['path']},
+      'sub_pixel_search_increment' : sub_pixel_search_increment,
+      'sub_pixel_refinement_radius' : sub_pixel_refinement_radius,
+      'microns_per_pixel': microns_per_pixel,
+      'template_refinement_radius': template_refinement_radius,
+      'edge_finding_smoothing_radius': edge_finding_smoothing_radius
 
-  }
-  resultsToCSV(all_metrics, results_xlsx_path, runtime_parameters)
-
-
-def smoothedHorizontally(input_image: np.ndarray, sigma: float) -> np.ndarray:
-  return ndifilters.gaussian_filter1d(
-      input_image,
-      sigma=sigma,
-      mode='constant',
-      axis=1
-  )
-
+    }
+    resultsToCSV(all_metrics, results_xlsx_path, runtime_parameters)
 
 
 def roiInfoFromTemplates(
-  search_image: np.ndarray,
-  template_image_paths: Dict,
-  sub_pixel_search_increment: float=None,
-  sub_pixel_refinement_radius: float=None
+    search_image: np.ndarray,
+    template_info: Dict,
+    sub_pixel_search_increment: float=None,
+    sub_pixel_refinement_radius: float=None
 ) -> Dict:
-  ''' Finds the best match ROI for templates within search_image,
-      and passes back the location information for all ROIs found.
-  '''
-  rois_info = {}
-  for template_position, template_path_details in template_image_paths.items():
-    outer_template_path = template_path_details['outer']
-    outer_template_image = cv.imread(outer_template_path)
-    if outer_template_image is None:
-      print(f'ERROR. Could not open the template image at path provided: {outer_template_path}. Exiting.')
-      return None
-    outer_template_image = cv.cvtColor(outer_template_image, cv.COLOR_BGR2GRAY)
-    outer_template_image = intensityAdjusted(outer_template_image)
-    if template_path_details['inner'] is not None:
-      inner_template_image_path = template_path_details['inner']
-      inner_template_image = cv.imread(inner_template_image_path)
-      inner_template_image = cv.cvtColor(inner_template_image, cv.COLOR_BGR2GRAY)
-      inner_template_image = intensityAdjusted(inner_template_image)
-      if sub_pixel_search_increment is None:
-        sub_pixel_search_increment = 1.0
-      if sub_pixel_refinement_radius is None:
-        sub_pixel_refinement_radius = 5
-    else:
-      inner_template_image = None
-    if template_position == 'left':
-      sub_pixel_search_offset_right = True
-    else:
-      sub_pixel_search_offset_right = False
-    search_set = [
-      {
-        'angle': 0.0,
-        'frame': search_image
-      }
-    ]
-    # match_measure, match_coordinates, match_rotation      
-    _, match_coordinates, _ = matchResults(
-      search_set=search_set,
-      template_to_match=outer_template_image,
-      sub_pixel_search_increment=sub_pixel_search_increment,
-      sub_pixel_refinement_radius=sub_pixel_refinement_radius,
-      sub_pixel_search_template=inner_template_image,
-      sub_pixel_search_offset_right=sub_pixel_search_offset_right
+    """
+    Finds the best match ROI for templates within search_image,
+    and passes back the location information for all ROIs found.
+
+    :param search_image:
+    :param template_info:
+    :param sub_pixel_search_increment:
+    :param sub_pixel_refinement_radius:
+    :return:
+    """
+
+    rois_info = {}
+    for template_position, template_data in template_info.items():
+        template_image = cv.cvtColor(template_data['image'], cv.COLOR_BGR2GRAY)
+        template_image = intensityAdjusted(template_image)
+        if template_position == 'left':
+            sub_pixel_search_offset_right = True
+        else:
+            sub_pixel_search_offset_right = False
+        search_set = [
+            {
+                'angle': 0.0,
+                'frame': intensityAdjusted(cv.cvtColor(search_image, cv.COLOR_BGR2GRAY))
+            }
+        ]
+        _, match_coordinates, _ = matchResults(
+            search_set=search_set,
+            template_to_match=template_image,
+            sub_pixel_search_increment=sub_pixel_search_increment,
+            sub_pixel_refinement_radius=sub_pixel_refinement_radius,
+            sub_pixel_search_offset_right=sub_pixel_search_offset_right
+        )
+        roi_origin_x, roi_origin_y = match_coordinates
+        roi_height = template_image.shape[0]
+        roi_width = template_image.shape[1]
+        roi_parameters = {
+            'x_start': int(roi_origin_x),
+            'x_end': int(roi_origin_x + roi_width),
+            'y_start': int(roi_origin_y),
+            'y_end': int(roi_origin_y + roi_height),
+        }
+        rois_info[template_position] = roi_parameters
+    return rois_info
+
+
+def smoothedHorizontally(input_image: np.ndarray, sigma: float) -> np.ndarray:
+    return ndifilters.gaussian_filter1d(
+        input_image,
+        sigma=sigma,
+        mode='constant',
+        axis=1
     )
-    roi_origin_x, roi_origin_y = match_coordinates
-    roi_height = outer_template_image.shape[0]
-    roi_width = outer_template_image.shape[1]  
-    roi_parameters = {
-      'ORIGIN_X': int(roi_origin_x),
-      'ORIGIN_Y': int(roi_origin_y),
-      'WIDTH':  int(roi_width),
-      'HEIGHT': int(roi_height)
-    }
-    rois_info[template_position] = roi_parameters
-  return rois_info
 
 
 def morphologyMetricsForImage(
-  search_image_path: str,
-  template_image_paths: Dict,
-  sub_pixel_search_increment: float = None,
-  sub_pixel_refinement_radius: float = None,
-  microns_per_pixel: float=None,
+  search_image: np.ndarray,
+  rois_info: Dict,
+  microns_per_pixel: float = None,
   template_refinement_radius: int = 40,
-  edge_finding_smoothing_radius: int = 1
-):
-  ''' '''
+  edge_finding_smoothing_radius: int = 1,
+  return_results_image: bool = True,
+  draw_tissue_roi_only: bool = False,
+  sub_pixel_search_increment: float = None,
+  sub_pixel_refinement_radius: float = None
+) -> Tuple[np.ndarray, Dict]:
+  """ """
   if microns_per_pixel is None:
     microns_per_pixel = 1.0
 
-  # load the image
-  if search_image_path is None or search_image_path.lower() == 'select_file':
-    search_image_path = getFilePathViaGUI('image to search path')
-  search_image = cv.imread(search_image_path)
-  if search_image is None:
-    print(f'ERROR. Could not open the search image pointed to by the path provided: {search_image_path}. Exiting.')
-    return None
-  search_image_gray = cv.cvtColor(search_image, cv.COLOR_BGR2GRAY)
-  search_image_gray_adjusted = intensityAdjusted(search_image_gray) 
+  search_image_gray = cv.cvtColor(search_image, cv.COLOR_BGR2GRAY).astype(float)
+  search_image_gray_adjusted = intensityAdjusted(search_image_gray)
 
-  # get the ROIs
-  rois_info = roiInfoFromTemplates(
-    search_image=search_image_gray_adjusted,
-    template_image_paths=template_image_paths,
-    sub_pixel_search_increment=None,
-    sub_pixel_refinement_radius=None
-  )
   left_roi = rois_info['left']
+  left_vertical_midpoint = (left_roi['y_start'] + left_roi['y_end'])/2
   right_roi = rois_info['right']
-
-  left_vertical_midpoint = left_roi['ORIGIN_Y'] + left_roi['HEIGHT']/2
-  right_vertical_midpoint = right_roi['ORIGIN_Y'] + right_roi['HEIGHT']/2
+  right_vertical_midpoint = (right_roi['y_start'] + right_roi['y_end'])/2
   vertical_midpoint = (left_vertical_midpoint + right_vertical_midpoint)/2
 
+  # smooth the image to reduce bright spot effects and noise
+  median_filter_size = 10
+  smoothing_filter_size = 10
+  # TODO: I think I might need to create a mask that looks for pixels in the original image
+  #  that are x% above some mean value and then ignore them. perhaps just
+  #  ignore any pixel if it is in the 90 or 95 th percentile for the region we're considering?
+
+  # smooth the image horizontally only so that the vertical edges remain as sharp as possible
+  median_smoothed_image = ndifilters.median_filter(
+    smoothedHorizontally(input_image=search_image_gray_adjusted, sigma=smoothing_filter_size),
+    size=median_filter_size,
+    mode='constant',
+    cval=0.0
+  )
+
   # compute the distance between the inner sides of each ROI
-  left_distance_marker_x = left_roi['ORIGIN_X'] + left_roi['WIDTH']
-  right_distance_marker_x = right_roi['ORIGIN_X']
+  left_distance_marker_x = left_roi['x_end']
+  right_distance_marker_x = right_roi['x_start']
   if left_distance_marker_x >= right_distance_marker_x - template_refinement_radius:
-    # the analysis is garbage and we'll report that but 
-    # we separate the rois to allow the process to keep working
+    # the analysis is garbage. we will report that but instead of barfing we
+    # separate the rois to allow this to continue and subsequent files to be processed
     left_distance_marker_x = right_distance_marker_x - template_refinement_radius - 1
   else:
-    median_smoothed_image = ndifilters.median_filter(
-      smoothed(input_image=search_image_gray_adjusted, sigma=5),
-      size=5
-    )
-    # adjust the left and right distance markers based on max edge detection
-    left_distance_marker_x = verticalEdge(
-      median_smoothed_image[int(left_vertical_midpoint), :],
-      horizontal_midpoint=int(left_distance_marker_x),
-      search_radius=template_refinement_radius
-    )
-    right_distance_marker_x = verticalEdge(
-      median_smoothed_image[int(right_vertical_midpoint), :],
-      horizontal_midpoint=int(right_distance_marker_x),
-      search_radius=template_refinement_radius
-    )
+    if template_refinement_radius > 0:
+        # adjust the left and right distance markers based on max edge detection
+        left_distance_marker_x = verticalEdge(
+          median_smoothed_image[int(left_vertical_midpoint), :],
+          horizontal_midpoint=int(left_distance_marker_x),
+          search_radius=template_refinement_radius
+        )
+        right_distance_marker_x = verticalEdge(
+          median_smoothed_image[int(right_vertical_midpoint), :],
+          horizontal_midpoint=int(right_distance_marker_x),
+          search_radius=template_refinement_radius
+        )
   pixel_distance_between_rois = right_distance_marker_x - left_distance_marker_x
   distance_between_rois = microns_per_pixel*pixel_distance_between_rois
   horizontal_midpoint = left_distance_marker_x + pixel_distance_between_rois/2
@@ -288,53 +264,40 @@ def morphologyMetricsForImage(
   key_upper_edge_points = np.empty(len(points_to_find_edges_at))
   key_lower_edge_points = np.empty(len(points_to_find_edges_at))
 
-  # smooth the image horizontally only so that the vertical edges remain as sharp as possible 
-  median_image = ndifilters.median_filter(
-    smoothedHorizontally(input_image=search_image_gray, sigma=5),
-    size=5
-  )
-  show_plots = False
   # find the edges at the horizontal centre and end points
   for index, point_to_find_edges_at in enumerate(points_to_find_edges_at):
     edge_point = outerEdges(
-      median_image[:, point_to_find_edges_at],
-      vertical_midpoint=vertical_midpoint,
-      show_plots=show_plots
+      median_smoothed_image[:, point_to_find_edges_at],
+      vertical_midpoint=vertical_midpoint
     )
     key_upper_edge_points[index] = edge_point['upper_edge_pos']
     key_lower_edge_points[index] = edge_point['lower_edge_pos']
 
   # find the edge points in a region near the horizontal midpoint
-  midpoint_search_radius = 5
+  midpoint_search_radius = 10
   left_midpoint_edge = int(horizontal_midpoint) - midpoint_search_radius
   right_midpoint_edge = int(horizontal_midpoint) + midpoint_search_radius
   points_to_find_edges = np.asarray([point for point in range(left_midpoint_edge, right_midpoint_edge + 1)])
   top_edge_points = np.empty(len(points_to_find_edges))
   bottom_edge_points = np.empty(len(points_to_find_edges))
-  show_plots = False
   for index, point_to_find_edges in enumerate(points_to_find_edges):
     edge_points = outerEdges(
-      median_image[:, point_to_find_edges],
-      vertical_midpoint=vertical_midpoint,
-      show_plots=show_plots
+      median_smoothed_image[:, point_to_find_edges],
+      vertical_midpoint=vertical_midpoint
     )
     top_edge_points[index] = edge_points['upper_edge_pos']
     bottom_edge_points[index] = edge_points['lower_edge_pos']
-  # ensure we don't randomly choose a bad edge midpoint by
-  # forcing it to be within some range of the median for the midpoint region
-  edge_point_variance = 5
-  top_edge_points_median = np.median(top_edge_points)
+  midpoint_percentiles = [25, 50, 75]
+  top_edge_lower_bound, top_edge_median, top_edge_upper_bound = np.percentile(top_edge_points, midpoint_percentiles)
   top_edge_midpoint = top_edge_points[midpoint_search_radius]
-  if top_edge_midpoint < top_edge_points_median - edge_point_variance:
-    top_edge_midpoint = top_edge_points_median
-  if top_edge_midpoint > top_edge_points_median + edge_point_variance:    
-    top_edge_midpoint = top_edge_points_median
-  bottom_edge_points_median = np.median(bottom_edge_points)
+  if top_edge_midpoint < top_edge_lower_bound or top_edge_midpoint > top_edge_upper_bound:
+    top_edge_midpoint = top_edge_median
+  bottom_edge_lower_bound, bottom_edge_median, bottom_edge_upper_bound = np.percentile(
+      bottom_edge_points, midpoint_percentiles
+  )
   bottom_edge_midpoint = bottom_edge_points[midpoint_search_radius]
-  if bottom_edge_midpoint < bottom_edge_points_median - edge_point_variance:
-    bottom_edge_midpoint = bottom_edge_points_median
-  if bottom_edge_midpoint > bottom_edge_points_median + edge_point_variance:    
-    bottom_edge_midpoint = bottom_edge_points_median
+  if bottom_edge_midpoint < bottom_edge_lower_bound or bottom_edge_midpoint > bottom_edge_upper_bound:
+    bottom_edge_midpoint = bottom_edge_median
 
   # now find ALL edge points of tissue between templates by walking out from the central points
   # and only looking at max edges within a narrow horizontal range of the adjacent inner pixel
@@ -344,23 +307,24 @@ def morphologyMetricsForImage(
   top_edge_values[edge_values_middle] = top_edge_midpoint
   bottom_edge_values = np.zeros(len(all_points_to_find_edges))
   bottom_edge_values[edge_values_middle] = bottom_edge_midpoint
-  
+
   right_points = np.asarray([point for point in range(int(horizontal_midpoint) + 1, right_distance_marker_x)])
   left_points = np.asarray([point for point in range(int(horizontal_midpoint) - 1, left_distance_marker_x  - 1, -1)])
   all_points = [(left_points, edge_values_middle - 1, -1), (right_points, edge_values_middle + 1, 1)]
   edge_point_details = [(top_edge_midpoint, top_edge_values), (bottom_edge_midpoint, bottom_edge_values)]
+  edge_search_radius = 10
   for points_to_find_edges, start, direction in all_points:
     if direction < 1:
-      pass  # moving averge should be with points ot the right up to the midpoint
+      pass  # moving average should be with points ot the right up to the midpoint
     else:
-      pass  # moving averge should be with points to the left up to the midpoint      
+      pass  # moving average should be with points to the left up to the midpoint
     for edge_midpoint, edge_values in edge_point_details:
       prev_edge_value = edge_midpoint
       for index, point_to_find_edges in enumerate(points_to_find_edges):
         edge_value = outerEdge(
-          median_image[:, point_to_find_edges],
-          vertical_midpoint=prev_edge_value, 
-          search_radius=edge_point_variance
+          median_smoothed_image[:, point_to_find_edges],
+          vertical_midpoint=prev_edge_value,
+          search_radius=edge_search_radius
         )
         edge_value_index = start + direction*index
         edge_values[edge_value_index] = edge_value
@@ -376,7 +340,7 @@ def morphologyMetricsForImage(
 
   # compute the vertical distance between "edges" all edge points estimated by walking outward
   left_end_point_thickness = microns_per_pixel*(bottom_edge_values[0] - top_edge_values[0])
-  midpoint_thickness = microns_per_pixel*(bottom_edge_points_median - top_edge_points_median)
+  midpoint_thickness = microns_per_pixel*(bottom_edge_median - top_edge_median)
   right_end_point_thickness = microns_per_pixel*(bottom_edge_values[-1] - top_edge_values[-1])
 
   # compute the area between the fitted curves
@@ -392,7 +356,7 @@ def morphologyMetricsForImage(
     warning_flags.append(
       "Area indicates measurements may be inaccurate"
     )
-  
+
   # edges too close to image border  
   vertical_edge_pos_limit = 20
   min_vertical_edge_pos = vertical_edge_pos_limit
@@ -431,8 +395,6 @@ def morphologyMetricsForImage(
   # length of left and right portions is too different
   left_side_length = horizontal_midpoint - left_distance_marker_x
   right_side_length = right_distance_marker_x - horizontal_midpoint
-  # TODO: check for div by zero
-  # np.any(np.isclose(
   if np.isclose(left_side_length, 0.0):
     warning_flags.append(
       "distance between left end and center indicates measurements may be inaccurate"
@@ -449,7 +411,7 @@ def morphologyMetricsForImage(
     if side_length_ratio > acceptable_side_length_ratio:
       warning_flags.append(
         "Ratio between left and right portion lengths indicates measurements may be inaccurate"
-      )     
+      )
 
   # vertical thickness at left and right key points is too different
   if np.isclose(right_end_point_thickness, 0.0) or right_end_point_thickness is None:
@@ -459,7 +421,7 @@ def morphologyMetricsForImage(
   elif np.isclose(left_end_point_thickness, 0.0) or left_end_point_thickness is None:
     warning_flags.append(
       "Missing left vertical end point indicates measurements may be inaccurate"
-    )    
+    )
   else:
     end_point_thickness_ratio = left_end_point_thickness / right_end_point_thickness
     if end_point_thickness_ratio < 1.0:
@@ -500,7 +462,7 @@ def morphologyMetricsForImage(
   elif np.any(np.isclose(lower_edge_distance_to_midline, 0.0)) or lower_edge_distance_to_midline is None:
     warning_flags.append(
         "lower edge distance to horizontal midline indicates measurements may be inaccurate"
-    )    
+    )
   else:
     edge_distance_to_midline_ratio = upper_edge_distance_to_midline/lower_edge_distance_to_midline
     acceptable_edge_distance_to_midline_ratio = 2.0
@@ -510,7 +472,7 @@ def morphologyMetricsForImage(
       if edge_distance_ratio > acceptable_edge_distance_to_midline_ratio:
         warning_flags.append(
           "Ratio of upper and lower edge distance to horizontal midline indicates measurements may be inaccurate"
-        )      
+        )
         break
 
   angle_of_midline = -1.0*np.rad2deg(
@@ -518,6 +480,10 @@ def morphologyMetricsForImage(
   )
 
   metrics = {
+    'x_start_position': left_distance_marker_x,
+    'x_end_position': right_distance_marker_x,
+    'y_start_positions': top_edge_values,
+    'y_end_positions': bottom_edge_values,
     'distance_between_rois': distance_between_rois,
     'midpoint_thickness': midpoint_thickness,
     'left_end_point_thickness': left_end_point_thickness,
@@ -527,19 +493,11 @@ def morphologyMetricsForImage(
     'warning_flags': warning_flags
   }
 
+  if not return_results_image:
+      return None, metrics
+
   # draw the results metrics on a results image
   results_image = search_image.copy().astype(np.uint8)
-
-  # draw the horizontal line between left and right ROI inner edges
-  blue_bgr = (255, 0, 0)
-  cv.line(
-    results_image,
-    pt1=(left_distance_marker_x, int(left_vertical_midpoint)),
-    pt2=(right_distance_marker_x, int(right_vertical_midpoint)),
-    color=blue_bgr,
-    thickness=3,
-    lineType=cv.LINE_AA
-  )
 
   # draw the upper edges
   red_bgr = (0, 0, 128)
@@ -548,7 +506,7 @@ def morphologyMetricsForImage(
     cv.circle(
       results_image,
       center=(x_pos, y_pos),
-      radius=2,    
+      radius=2,
       color=red_bgr,
       thickness=3,
       lineType=cv.LINE_AA
@@ -559,12 +517,11 @@ def morphologyMetricsForImage(
     cv.circle(
       results_image,
       center=(x_pos, y_pos),
-      radius=2,    
+      radius=2,
       color=red_bgr,
       thickness=3,
       lineType=cv.LINE_AA
     )
-
   # draw the left ROI inner edge object vertical thickness line
   green_bgr = (0, 255, 0)
   left_end_point_upper_edge_pos = round(top_edge_values[0])
@@ -579,7 +536,7 @@ def morphologyMetricsForImage(
   )
   # draw the right ROI inner edge object vertical thickness line
   right_end_point_upper_edge_pos = round(top_edge_values[-1])
-  right_end_point_lower_edge_pos = round(bottom_edge_values[-1]) 
+  right_end_point_lower_edge_pos = round(bottom_edge_values[-1])
   cv.line(
     results_image,
     pt1=(right_distance_marker_x, right_end_point_lower_edge_pos),
@@ -588,19 +545,30 @@ def morphologyMetricsForImage(
     thickness=3,
     lineType=cv.LINE_AA
   )
-  # draw the horizontal midpoint object vertical thickness line
-  midpoint_point_upper_edge_pos = round(top_edge_points_median)
-  midpoint_point_lower_edge_pos = round(bottom_edge_points_median) 
-  cv.line(
-    results_image,
-    pt1=(int(horizontal_midpoint), midpoint_point_upper_edge_pos),
-    pt2=(int(horizontal_midpoint), midpoint_point_lower_edge_pos),
-    color=green_bgr,
-    thickness=3,
-    lineType=cv.LINE_AA
-  )
+  if not draw_tissue_roi_only:
+      # draw the horizontal midpoint object vertical thickness line
+      midpoint_point_upper_edge_pos = round(top_edge_points_median)
+      midpoint_point_lower_edge_pos = round(bottom_edge_points_median)
+      cv.line(
+        results_image,
+        pt1=(int(horizontal_midpoint), midpoint_point_upper_edge_pos),
+        pt2=(int(horizontal_midpoint), midpoint_point_lower_edge_pos),
+        color=green_bgr,
+        thickness=3,
+        lineType=cv.LINE_AA
+      )
+      # draw the horizontal line between left and right ROI inner edges
+      blue_bgr = (255, 0, 0)
+      cv.line(
+        results_image,
+        pt1=(left_distance_marker_x, int(left_vertical_midpoint)),
+        pt2=(right_distance_marker_x, int(right_vertical_midpoint)),
+        color=blue_bgr,
+        thickness=3,
+        lineType=cv.LINE_AA
+      )
 
-  return results_image, metrics 
+  return results_image, metrics
 
 
 def normalized(input_image: np.ndarray, new_range: float = 512.0) -> np.ndarray:
@@ -703,7 +671,7 @@ def outerEdges(input_array: np.ndarray, vertical_midpoint: int, show_plots: bool
   second_edge_candidate_pos: int = int(vertical_midpoint - half_width)
   # create a buffer of +/- 20% of image height to look for the other edge
   vertical_height = input_array_gradmag_ma.shape[0]
-  candidate_range_buffer = int(vertical_height * 0.2)
+  candidate_range_buffer = int(vertical_height * 0.25)
   candidate_start_pos = max(0, second_edge_candidate_pos - candidate_range_buffer)
   candidate_end_pos = min(second_edge_candidate_pos + candidate_range_buffer, vertical_height)
   other_peak_max_pos = np.argmax(input_array_gradmag_ma[candidate_start_pos:candidate_end_pos]) + candidate_start_pos
@@ -723,7 +691,7 @@ def resultsToCSV(
   analysis_results: List[Dict],
   path_to_output_file: str,
   runtime_parameters: Dict
-):    
+):
 
   workbook = openpyxl.Workbook()
   sheet = workbook.active
@@ -736,7 +704,7 @@ def resultsToCSV(
   area_column = 'F'
   orientation_column = 'G'
   warning_column = 'H'
-  
+
   heading_row = '1'
   sheet[file_column + heading_row] = 'File'
   sheet[horizontal_column + heading_row] = 'Horizontal Length (microns)'
@@ -744,7 +712,7 @@ def resultsToCSV(
   sheet[mid_point_column + heading_row] = 'Mid Point Length (microns)'
   sheet[right_edge_column + heading_row] = 'Right Edge Length (microns)'
   sheet[area_column + heading_row] = 'Area (square-microns)'
-  sheet[orientation_column + heading_row] = 'Orientation (degrees)'  
+  sheet[orientation_column + heading_row] = 'Orientation (degrees)'
   sheet[warning_column + heading_row] = 'WARNINGS'
 
   data_row = 2
@@ -784,9 +752,9 @@ def resultsToCSV(
       if template_path is not None:
         template_paths += template_path + ', '
   template_paths = template_paths[:-2]  # remove the last ', '
-  sheet[runtime_config_data_column + str(data_row + 1)] = template_paths 
+  sheet[runtime_config_data_column + str(data_row + 1)] = template_paths
   sheet[runtime_config_lables_column + str(data_row + 2)] = 'microns per pixel'
-  sheet[runtime_config_data_column + str(data_row + 2)] = runtime_parameters['microns_per_pixel']    
+  sheet[runtime_config_data_column + str(data_row + 2)] = runtime_parameters['microns_per_pixel']
   sheet[runtime_config_lables_column + str(data_row + 3)] = 'sub pixel refinement search increment'
   if runtime_parameters['sub_pixel_search_increment'] == '' or runtime_parameters['sub_pixel_search_increment'] is None:
     sheet[runtime_config_data_column + str(data_row + 3)] = 'None'
@@ -825,7 +793,7 @@ def verticalVariance(input_array: np.ndarray, var_rad: int, smoothing_sigma: flo
   )
   if smoothing_sigma is not None:
     input_to_compute = smoothedHorizontally(input_array, sigma=6.0)
-  else: 
+  else:
     input_to_compute = input_array
   variability_image[grid_coordinates] = varApprox(
     input_array=input_to_compute,
@@ -865,7 +833,7 @@ def thresholded(input_image: np.ndarray, method: str, binarize: bool=False) -> n
       foreground_image_mask,
       block_size=3,
       method='mean'  # 'gaussian', 'median'
-    )    
+    )
   elif method == 'li':
     input_image_threshold = skimagefilters.threshold_li(
       foreground_image_mask
@@ -877,7 +845,7 @@ def thresholded(input_image: np.ndarray, method: str, binarize: bool=False) -> n
   elif method == 'mean':
     input_image_threshold = skimagefilters.threshold_mean(
       foreground_image_mask
-    )    
+    )
   else:
     raise RuntimeError(f"threshold method {method} is not supported.")
   if method == 'multi':
@@ -889,11 +857,11 @@ def thresholded(input_image: np.ndarray, method: str, binarize: bool=False) -> n
       prev_thresh = input_image_threshold[segment - 1]
       curr_thresh = input_image_threshold[segment]
       foreground_image_mask[
-          (foreground_image_mask >= prev_thresh) & (foreground_image_mask < curr_thresh) 
+          (foreground_image_mask >= prev_thresh) & (foreground_image_mask < curr_thresh)
       ] = round(prev_thresh)
     highest_thresh = input_image_threshold[-1]
     foreground_image_mask[
-        foreground_image_mask >= highest_thresh 
+        foreground_image_mask >= highest_thresh
     ] = round(highest_thresh)
   else:
     foreground_image_mask[
@@ -919,7 +887,7 @@ def gradmag(input_array: np.ndarray, order: int = 2) -> np.ndarray:
 
 
 if __name__ == '__main__':
-  
+
   computeMorphologyMetrics(
     search_image_path=None,
     template_image_paths=None,
