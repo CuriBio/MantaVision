@@ -1,25 +1,32 @@
-#! /usr/bin/env python
-
 import argparse
 import os
-import glob
 import shutil
 import sys
 import json
 import time
 from typing import Tuple, List, Dict
 import zipfile
-import openpyxl  # pip install --user openpyxl
-import cv2 as cv  # pip install --user opencv-python
+import openpyxl
+import cv2 as cv
 from datetime import datetime
-from tkinter import Tk as tk
-from tkinter.filedialog import askopenfilename, askdirectory
+from os_functions import contentsOfDir, getFilePathViaGUI, getDirPathViaGUI
 from video2images import video2images
 from track_template import trackTemplate
 from video_api import supported_file_extensions
 
 
+# TODO: separate out the file system functions like contentsOfDir, fileSystemViaGUI etc
+#       put them into a file called "os_functions.py"
+
 # TODO: in the user xlsx, have a pixel displacement column and converted displacement column
+
+# TODO: for contraction measurements of regular videos
+#       we can use tracking to determine the smallest min and largest max positions
+#       that way we'd have a good approximation of where the relaxation and contractions should be
+#       and we can then pick out the time stamps of frames where there is a local min/max that is
+#       within some small margin of error (say +/-10% of the difference in (largest max - smallest min)
+#       using these time stamps for known min/max, we can plot the peaks and troughs and estimate
+#       the frequency etc.
 
 
 def runTrackTemplate(config: Dict):
@@ -59,6 +66,7 @@ def runTrackTemplate(config: Dict):
     # run the tracking routine on each input video
     # and write out the results
     print("\nTemplate Tracker running...")
+    template_image = None
     total_tracking_time = 0
     for input_args in args:
         print(f'processing: {input_args["input_video_path"]}')
@@ -66,6 +74,7 @@ def runTrackTemplate(config: Dict):
         messages, tracking_results, frames_per_second, template, min_frame_number = trackTemplate(
             input_args['input_video_path'],
             input_args['template_guide_image_path'],
+            template_image,
             input_args['output_video_path'],
             input_args['guide_match_search_seconds'],
             input_args['microns_per_pixel'],
@@ -299,6 +308,8 @@ def verifiedInputs(config: Dict) -> Tuple[str, List[Dict]]:
 
     if 'max_translation_per_frame' not in config:
         max_translation_per_frame = None
+    elif config['max_translation_per_frame'] is None:
+        max_translation_per_frame = None
     else:
         max_translation_per_frame = (config['max_translation_per_frame'], config['max_translation_per_frame'])
 
@@ -401,61 +412,6 @@ def verifiedInputs(config: Dict) -> Tuple[str, List[Dict]]:
         })
 
     return (dirs, configs)
-
-
-def getDirPathViaGUI(window_title: str = '') -> str:
-    """ Display an "Open" dialog box and return the path to a selected directory """
-    window = tk()
-    window.withdraw()
-    window.lift()
-    window.overrideredirect(True)
-    window.call('wm', 'attributes', '.', '-topmost', True)
-    return askdirectory(
-        initialdir='./',
-        title=window_title
-    )
-
-
-def getFilePathViaGUI(window_title: str = '') -> str:
-    """ Display an "Open" dialog box and return the path to a selected file """
-    window = tk()
-    window.withdraw()
-    window.lift()
-    window.overrideredirect(True)
-    window.call('wm', 'attributes', '.', '-topmost', True)
-    return askopenfilename(
-        initialdir='./',
-        title=window_title
-    )
-
-
-def contentsOfDir(
-        dir_path: str,
-        search_terms: List[str],
-        search_extension_only: bool = True
-) -> Tuple[List[str], List[Tuple[str]]]:
-    all_files_found = []
-    if os.path.isdir(dir_path):
-        base_dir = dir_path
-        for search_term in search_terms:
-            glob_search_term = '*' + search_term
-            if not search_extension_only:
-                glob_search_term += '*'
-            files_found = glob.glob(os.path.join(dir_path, glob_search_term))
-            if len(files_found) > 0:
-                all_files_found.extend(files_found)
-    else:
-        # presume it's actually a single file path
-        base_dir = os.path.dirname(dir_path)
-        all_files_found = [dir_path]
-    if len(all_files_found) < 1:
-        return None, None
-
-    files = []
-    for file_path in all_files_found:
-        file_name, file_extension = os.path.splitext(os.path.basename(file_path))
-        files.append((file_name, file_extension))
-    return base_dir, files
 
 
 def resultsToCSVforSDK(

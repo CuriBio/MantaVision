@@ -1,33 +1,27 @@
 import os
+import cv2 as cv
 import openpyxl
 import numpy as np
 import pandas as pd
 from datetime import datetime
-from typing import Tuple, Dict, List
-from numpy.polynomial.polynomial import polyfit, Polynomial
+from typing import Tuple, Dict
 from scipy.ndimage import gaussian_filter
-from scipy.signal import find_peaks, butter, sosfilt
-from video_api import VideoReader, VideoWriter, supported_file_extensions
 from track_template import userDrawnROI
-from optical_tracking import getDirPathViaGUI, getFilePathViaGUI, contentsOfDir
-import cv2 as cv
-
+from os_functions import contentsOfDir
+from waveform_analysis import waveFormAnalysis
+from video_api import VideoReader, VideoWriter, supported_file_extensions
+from morphology import roiInfoFromTemplates, morphologyMetricsForImage
+from track_template import trackTemplate
+from math import floor, ceil
 import matplotlib.pyplot as plt
 pd.set_option("display.precision", 2)
 pd.set_option("display.expand_frame_repr", False)
 
 
-# TODO: for contraction measurements of regular videos
-#       we can use tracking to determine the smallest min and largest max positions
-#       that way we'd have a good approximation of where the relaxation and contractions should be
-#       and we can then pick out the time stamps of frames where there is a local min/max that is
-#       within some small margin of error (say +/-10% of the difference in (largest max - smallest min)
-#       using these time stamps for known min/max, we can plot the peaks and troughs and estimate
-#       the frequency etc.
-
-# TODO: we could also allow people to select a "shape" parameter i.e. sinusoid, exponential, sawtooth, square etc
+# TODO: instead of using an expected frequency parameters,
+#       we could allow users to select a "shape" parameter i.e. sinusoid, exponential, sawtooth, square etc
 #       and then perform regression to determine the parameters of those shapes that best fits the data points
-#       we extract from a contraction (calcium or regular) video
+#       that we extract from a contraction (calcium or regular) video
 
 # TODO: check there are no double peaks or troughs.
 #       would need to use the peak and trough indices
@@ -61,13 +55,56 @@ pd.set_option("display.expand_frame_repr", False)
 #       compute enough splines to for the resolution we need computationally very expensive
 
 
-def dataMode(input_data: np.ndarray) -> float:
-    data_min = np.floor(np.min(input_data))
-    data_max = np.ceil(np.max(input_data))
-    histogram_range = range(int(data_min) + 1, int(data_max) + 1)
-    data_histogram = np.histogram(input_data, bins=histogram_range, range=(data_min, data_max))[0]
-    histogram_peak = np.argmax(data_histogram)
-    return data_min + histogram_peak
+def videoROIsInfo(video_path: str, template_info: Dict) -> Dict:
+    """ """
+    template_image_rgb_left = template_info['left']['image']
+    _, left_template_results, _, _, _ = trackTemplate(
+        input_video_path=video_path,
+        template_guide_image_path=None,
+        template_rgb=template_image_rgb_left,
+        max_translation_per_frame=[50, 50]
+    )
+    right_template_image_rgb = template_info['right']['image']
+    _, right_template_results, _, _, _ = trackTemplate(
+        input_video_path=video_path,
+        template_guide_image_path=None,
+        template_rgb=right_template_image_rgb,
+        max_translation_per_frame=[50, 50]
+    )
+
+    rois_info = []
+    num_frames = len(right_template_results)
+    for frame_num in range(num_frames):
+        rois_info.append(
+            {
+                'left': {
+                    'x_start': int(left_template_results[frame_num]['x_start']),
+                    'x_end': int(left_template_results[frame_num]['x_end']),
+                    'y_start': int(left_template_results[frame_num]['y_start']),
+                    'y_end': int(left_template_results[frame_num]['y_end']),
+                },
+                'right': {
+                    'x_start': int(right_template_results[frame_num]['x_start']),
+                    'x_end': int(right_template_results[frame_num]['x_end']),
+                    'y_start': int(right_template_results[frame_num]['y_start']),
+                    'y_end': int(right_template_results[frame_num]['y_end']),
+                }
+            }
+        )
+    return rois_info
+
+
+def videoROIsInfoPerFrame(video_path: str, template_info: Dict) -> Dict:
+    rois_info = []
+    video_stream = VideoReader(video_path)
+    while video_stream.next():
+        rois_info.append(
+            roiInfoFromTemplates(
+                search_image=video_stream.frameRGB(),
+                template_info=template_info
+            )
+        )
+    return rois_info
 
 
 def signalDataFromVideo(
@@ -77,11 +114,16 @@ def signalDataFromVideo(
     bg_subtraction_rois: Dict = None
 ) -> Dict:
     """ """
-    input_video_stream = VideoReader(input_video_path)
-    if not input_video_stream.isOpened():
-        return None
 
-    # open an output (writable) video stream if required
+    if 'auto' in bg_subtraction_method.lower():
+        rois_info = iter(
+            videoROIsInfo(
+                video_path=input_video_path,
+                template_info=bg_subtraction_rois['template_info']
+            )
+        )
+
+    input_video_stream = VideoReader(input_video_path)
     if output_video_path is not None:
         video_writer = VideoWriter(
             path=output_video_path,
@@ -100,38 +142,84 @@ def signalDataFromVideo(
     bg_means = []
     while input_video_stream.next():
         time_stamps.append(input_video_stream.timeStamp())
-        current_frame = input_video_stream.frameGray()
+        frame_gray = input_video_stream.frameGray()
+        frame_rgb = None
         if bg_subtraction_method.lower() == 'none':
-            signal_values.append(np.sum(current_frame))
+            signal_values.append(np.sum(frame_gray))
             continue
-        if bg_subtraction_method.lower() == 'roi':
-            bg_roi = current_frame[
-                bg_subtraction_rois['bg_roi']['y_start']:bg_subtraction_rois['bg_roi']['y_end'],
-                bg_subtraction_rois['bg_roi']['x_start']:bg_subtraction_rois['bg_roi']['x_end']
+        if 'rois' in bg_subtraction_method.lower():
+            bg_roi = frame_gray[
+                bg_subtraction_rois['background']['y_start']:bg_subtraction_rois['background']['y_end'],
+                bg_subtraction_rois['background']['x_start']:bg_subtraction_rois['background']['x_end']
             ]
             background_subtractor = np.mean(bg_roi)
-            # NOTE: cutting out a new current_frame from the fg_roi has to go AFTER bg_roi extraction
-            current_frame = current_frame[
-                bg_subtraction_rois['fg_roi']['y_start']:bg_subtraction_rois['fg_roi']['y_end'],
-                bg_subtraction_rois['fg_roi']['x_start']:bg_subtraction_rois['fg_roi']['x_end']
-            ]
+            if 'auto' in bg_subtraction_method.lower():
+                # get the tissue only roi from morphology function
+                frame_rgb = input_video_stream.frameVideoRGB()
+                frame_rois_info = next(rois_info)
+                frame_rgb, morphology = morphologyMetricsForImage(
+                    search_image=frame_rgb,
+                    rois_info=frame_rois_info,
+                    template_refinement_radius=0,
+                    edge_finding_smoothing_radius=10,
+                    return_results_image=True,
+                    draw_tissue_roi_only=True
+                )
+                # compute the mean of the tissue only region
+                frame_gray_rotated = np.rot90(frame_gray, k=-1)
+                frame_gray_rotated_width = frame_gray_rotated.shape[1]
+                y_pos = list(
+                    range(
+                        int(floor(morphology['x_start_position'])),
+                        int(floor(morphology['x_end_position'])) + 1
+                    )
+                )
+                x_start_pos = frame_gray_rotated_width - morphology['y_end_positions']
+                x_end_pos = frame_gray_rotated_width - morphology['y_start_positions']
+                num_rows = len(x_start_pos)
+                row_sums = 0
+                row_counts = 0
+                for row_num in range(0, num_rows):
+                    frame_row = frame_gray_rotated[y_pos[row_num], int(x_start_pos[row_num]):int(x_end_pos[row_num])]
+                    row_sums += np.sum(frame_row)
+                    row_counts += len(frame_row)
+                tissue_mean = float(row_sums)/float(row_counts)
+                # append the tissue mean
+                fg_means.append(tissue_mean)
+                # append the background subtracted tissue mean
+                signal_values.append(tissue_mean - background_subtractor)
+            else:  # we're using fixed tissue roi which was already set by the user
+                # NOTE: cutting out a new frame_gray from the tissue roi has to go AFTER background roi extraction
+                frame_gray = frame_gray[
+                    bg_subtraction_rois['tissue']['y_start']:bg_subtraction_rois['tissue']['y_end'],
+                    bg_subtraction_rois['tissue']['x_start']:bg_subtraction_rois['tissue']['x_end']
+                ]
         elif bg_subtraction_method.lower() == 'lowpass':
-            background_subtractor = gaussian_filter(current_frame.astype(float), sigma=8, mode='reflect')
-        else:  # bg_subtraction_method.lower() == 'mean':
-            background_subtractor = np.mean(current_frame)
+            background_subtractor = gaussian_filter(frame_gray.astype(float), sigma=8, mode='reflect')
+        else:  # bg_subtraction_method.lower() == 'frame_mean':
+            background_subtractor = np.mean(frame_gray)
+
+        # append the background mean
         bg_means.append(background_subtractor)
-        fg_means.append(np.mean(current_frame))
-        adjusted_frame = current_frame - background_subtractor
+        # append the mean of the fixed tissue roi for all methods other than auto
+        if 'auto' not in bg_subtraction_method.lower():
+            fg_means.append(np.mean(frame_gray))
+            adjusted_frame = frame_gray - background_subtractor
+            adjusted_frame[adjusted_frame < 0] = 0
+            adjusted_frame_mean = np.mean(adjusted_frame)
+            signal_values.append(adjusted_frame_mean)
 
-        # clip pixels to > 0 and use the mean of all pixels as the signal
-        adjusted_frame[adjusted_frame < 0] = 0
-        adjusted_frame_mean = np.mean(adjusted_frame)
-        signal_values.append(adjusted_frame_mean)
-
+        # write out the video frame with the rois drawn
         if video_writer is not None:
-            # mark the fg & bg ROIs on the output video frame
-            frame = input_video_stream.frameVideoRGB()
-            for roi in [bg_subtraction_rois['bg_roi'], bg_subtraction_rois['fg_roi']]:
+            # mark the bg (& maybe fg) ROIs on the output video frame
+            if frame_rgb is None:
+                frame_rgb = input_video_stream.frameVideoRGB()
+            rois_to_draw = [bg_subtraction_rois['background']]
+            # tissue roi is drawn by the morphology function when auto method is run
+            # all other methods require drawing the background roi here
+            if 'auto' not in bg_subtraction_method.lower():
+                rois_to_draw.append(bg_subtraction_rois['tissue'])
+            for roi in rois_to_draw:
                 top_left_point = (roi['x_start'], roi['y_start'])
                 top_right_point = (roi['x_end'], roi['y_start'])
                 bottom_left_point = (roi['x_start'], roi['y_end'])
@@ -146,14 +234,14 @@ def signalDataFromVideo(
                 grid_colour_bgr = (0, 255, 0)
                 for edge_point_a, edge_point_b in roi_edges:
                     cv.line(
-                        img=frame,
+                        img=frame_rgb,
                         pt1=edge_point_a,
                         pt2=edge_point_b,
                         color=grid_colour_bgr,
                         thickness=1,
                         lineType=cv.LINE_AA
                     )
-            video_writer.writeFrame(frame, input_video_stream.frameVideoPTS())
+            video_writer.writeFrame(frame_rgb, input_video_stream.frameVideoPTS())
 
     if video_writer is not None:
         video_writer.close()
@@ -162,14 +250,15 @@ def signalDataFromVideo(
     return {
         'time_stamps': np.array(time_stamps, dtype=float),
         'signal_values': np.array(signal_values, dtype=float),
-        'fg_means': np.array(fg_means, dtype=float),
-        'bg_means': np.array(bg_means, dtype=float)
+        'tissue_means': np.array(fg_means, dtype=float),
+        'background_means': np.array(bg_means, dtype=float)
     }
 
 
 def videoBGSubtractionROIs(
     video_file_path: str,
-    max_seconds_to_search: float = None
+    max_seconds_to_search: float = None,
+    roi_method: str = None
 ) -> Dict:
     input_video_stream = VideoReader(video_file_path)
     if not input_video_stream.isOpened():
@@ -184,17 +273,40 @@ def videoBGSubtractionROIs(
     max_intensity_sum: float = 0.0
     max_intensity_sum_frame: np.ndarray = None
     while input_video_stream.next():
-        current_frame = input_video_stream.frameGray()
-        current_frame_intensity_sum: float = np.sum(current_frame)
-        if current_frame_intensity_sum > max_intensity_sum:
-            max_intensity_sum = current_frame_intensity_sum
-            max_intensity_sum_frame = current_frame
+        frame_gray = input_video_stream.frameGray()
+        frame_gray_intensity_sum: float = np.sum(frame_gray)
+        if frame_gray_intensity_sum > max_intensity_sum:
+            max_intensity_sum = frame_gray_intensity_sum
+            max_intensity_sum_frame = input_video_stream.frameRGB()  # frame_gray
         if input_video_stream.timeStamp() > max_seconds_to_search:
             break
-    return {
-        'bg_roi': userDrawnROI(max_intensity_sum_frame, "Select the Background ROI"),
-        'fg_roi': userDrawnROI(max_intensity_sum_frame, "Select the Foreground/Signal ROI"),
+    rois = {
+        'background': userDrawnROI(max_intensity_sum_frame, "Select the Background ROI")
     }
+    if 'fixed' in roi_method.lower():
+        rois['tissue'] = userDrawnROI(max_intensity_sum_frame, "Select the Tissue/Signal ROI")
+    else:
+        rois['tissue'] = {}
+        left_roi = userDrawnROI(max_intensity_sum_frame, "Select the Left ROI to Track")
+        right_roi = userDrawnROI(max_intensity_sum_frame, "Select the Right ROI to Track")
+        rois['template_info'] = {
+            'left': {
+                'path': '',
+                'image': max_intensity_sum_frame[
+                    left_roi['y_start']:left_roi['y_end'],
+                    left_roi['x_start']:left_roi['x_end'],
+                ]
+            },
+            'right': {
+                'path': '',
+                'image': max_intensity_sum_frame[
+                    right_roi['y_start']:right_roi['y_end'],
+                    right_roi['x_start']:right_roi['x_end'],
+                ]
+            }
+        }
+
+    return rois
 
 
 def analyzeCa2Data(
@@ -212,8 +324,8 @@ def analyzeCa2Data(
     results_dir = os.path.join(base_dir, results_dir_name)
     os.mkdir(results_dir)
 
-    if bg_subtraction_method.lower() == 'roi':
-        # collect fg & bg ROIs for all the videos to be analyzed, up front, so that
+    if 'rois' in bg_subtraction_method.lower():
+        # collect bg & fg or left/right ROIs for all the videos to be analyzed, up front, so that
         # all the videos can then be processed automatically without any user interaction
         video_rois = {}
         expected_frequency_hz_tolerance = 0.5
@@ -222,7 +334,11 @@ def analyzeCa2Data(
         bg_subtraction_roi_search_seconds = 2.0*seconds_for_period
         for file_name, file_extension in files_to_analyze:
             input_video_file_path = os.path.join(base_dir, file_name + file_extension)
-            video_rois[file_name] = videoBGSubtractionROIs(input_video_file_path, bg_subtraction_roi_search_seconds)
+            video_rois[file_name] = videoBGSubtractionROIs(
+                input_video_file_path,
+                bg_subtraction_roi_search_seconds,
+                roi_method=bg_subtraction_method
+            )
     else:
         video_rois = None
 
@@ -235,6 +351,7 @@ def analyzeCa2Data(
             output_video_file_name = file_name + "-with_rois" + file_extension
             output_video_path = os.path.join(results_dir, output_video_file_name)
         input_video_file_path = os.path.join(base_dir, file_name + file_extension)
+        # TODO: merge bg_method and rois into a single dictionary called method_details
         signal_data = signalDataFromVideo(
             input_video_file_path,
             output_video_path,
@@ -245,15 +362,15 @@ def analyzeCa2Data(
             raise RuntimeError("Error. Signal from video could not be extracted")
         time_stamps = signal_data['time_stamps']
         input_signal = signal_data['signal_values']
-        fg_means = signal_data['fg_means']
-        bg_means = signal_data['bg_means']
+        tissue_means = signal_data['tissue_means']
+        background_means = signal_data['background_means']
 
         signal_data_file_path = os.path.join(results_dir, file_name + '-signal_data.xlsx')
         signalDataToCSV(
             time_stamps,
             input_signal,
-            fg_means,
-            bg_means,
+            tissue_means,
+            background_means,
             signal_data_file_path
         )
 
@@ -264,7 +381,7 @@ def analyzeCa2Data(
             signal_data_for_sdk_file_path
         )
 
-        ca2_analysis = ca2Analysis(
+        ca2_analysis = waveFormAnalysis(
             input_signal,
             time_stamps,
             expected_frequency_hz=expected_frequency_hz,
@@ -311,237 +428,12 @@ def analyzeCa2Data(
             )
 
 
-def ca2Analysis(
-    value_data: np.ndarray,
-    time_stamps: np.ndarray=None,
-    expected_frequency_hz: float=None,
-    expected_min_peak_width: int=None,
-    expected_min_peak_height: float=None    
-) -> Dict:
-    """ """
-    peak_indices, trough_indices = peakAndTroughIndices(
-        value_data,
-        time_stamps,
-        expected_frequency_hz=expected_frequency_hz,
-        expected_min_peak_width=expected_min_peak_width,
-        expected_min_peak_height=expected_min_peak_height
-    )
-
-    first_peak_time = time_stamps[peak_indices[0]]
-    first_trough_time = time_stamps[trough_indices[0]]
-
-    # compute the peak to trough metrics
-    p2t_value_fractions = np.asarray([0.5, 0.9], dtype=np.float32)  
-    peak_sequence_start = 0
-    if first_peak_time < first_trough_time:
-        trough_sequence_start = 0
-    else:
-        trough_sequence_start = 1
-    num_peaks = len(peak_indices)
-    num_useable_troughs = len(trough_indices) - trough_sequence_start
-    num_peaks_to_use = min(num_peaks, num_useable_troughs)
-    try:
-        peak_to_trough_metrics = pointToPointMetrics(
-            start_point_indices=peak_indices[peak_sequence_start: peak_sequence_start + num_peaks_to_use],
-            end_point_indices=trough_indices[trough_sequence_start: trough_sequence_start + num_peaks_to_use],
-            point_values=value_data,
-            point_times=time_stamps,
-            endpoint_value_fractions=p2t_value_fractions
-        )
-        peak_to_trough_metrics['p2p_order'] = 'peak_to_trough'
-        peak_to_trough_metrics['metrics_labels'] = ['T50R', 'T90R', 'T100R']
-    except IndexError:
-        return None
-
-    # compute the trough to peak metrics
-    t2p_value_fractions = np.zeros(0, dtype=np.float32)
-    trough_sequence_start = 0
-    if first_trough_time < first_peak_time:
-        peak_sequence_start = 0
-    else:
-        peak_sequence_start = 1
-    num_troughs = len(trough_indices)
-    num_useable_peaks = len(peak_indices) - peak_sequence_start
-    num_troughs_to_use = min(num_troughs, num_useable_peaks)
-    try:
-        trough_to_peak_metrics = pointToPointMetrics(
-            start_point_indices=trough_indices[trough_sequence_start: trough_sequence_start + num_troughs_to_use],
-            end_point_indices=peak_indices[peak_sequence_start: peak_sequence_start + num_troughs_to_use],
-            point_values=value_data,
-            point_times=time_stamps,
-            endpoint_value_fractions=t2p_value_fractions
-        )
-        trough_to_peak_metrics['p2p_order'] = 'trough_to_peak'
-        trough_to_peak_metrics['metrics_labels'] = ['Tpeak']
-    except IndexError:
-        return None
-
-    # compute a measure of average frequency
-    peak_times = time_stamps[peak_indices]
-    avg_frequency = 1.0/np.mean(np.diff(peak_times))
-
-    return {
-        'peak_indices': peak_indices,
-        'trough_indices': trough_indices, 
-        'metrics': [trough_to_peak_metrics, peak_to_trough_metrics],
-        'avg_frequency': avg_frequency
-    }
-
-
-def pointToPointMetrics(
-    start_point_indices: np.ndarray,
-    end_point_indices: np.ndarray,
-    point_values: np.ndarray,
-    point_times: np.ndarray,
-    endpoint_value_fractions: np.ndarray  # don't include a 1.0 case since we always perform this
-) -> Dict:
-    num_metrics_to_compute = len(endpoint_value_fractions) + 1  # +1 for 100% case we always perform
-    num_point_values = len(start_point_indices)
-    metrics = np.zeros(shape=(num_metrics_to_compute, num_point_values), dtype=np.float32)
-    normalized_metrics = metrics.copy()
-    metric_failure_counter = np.zeros(shape=(num_metrics_to_compute), dtype=np.float32)
-
-    for point_index in range(len(start_point_indices)):
-        start_point_index = start_point_indices[point_index]
-        end_point_index = end_point_indices[point_index] + 1
-        # shift times and values to 0 start/reference
-        points_to_fit_poly_at = point_times[start_point_index:end_point_index] - point_times[start_point_index]
-        value_of_points_to_fit = point_values[start_point_index:end_point_index] - point_values[start_point_index]
-
-        # the time to 100% (endpoint_value_fractions = 1.0) can just be read from the data.
-        # a polynomial fit to estimate this time can be wrong because end points for the fit
-        # don't always go through the real end points. plus it's a waste of compute time.
-        start_point_time = points_to_fit_poly_at[0]
-        end_point_time = points_to_fit_poly_at[-1]
-        metrics[-1, point_index] = end_point_time
-        end_point_value = value_of_points_to_fit[-1]
-        normalized_metrics[-1, point_index] = end_point_time/np.abs(end_point_value)
-
-        num_points_for_fit = len(points_to_fit_poly_at)
-        min_points_for_3rd_deg_poly = 6  # arbitrary value. empirically determine on a small data set.
-        if num_points_for_fit >= min_points_for_3rd_deg_poly:
-            polyfit_deg = 3
-        else:
-            polyfit_deg = 2
-
-        polyfit_of_values = Polynomial.fit(
-            points_to_fit_poly_at,
-            value_of_points_to_fit,
-            polyfit_deg,
-            domain=[start_point_time, end_point_time],
-            window=[start_point_time, end_point_time]
-        )
-        poly = Polynomial(polyfit_of_values.convert().coef)
-        
-        for fraction_id_to_add in range(len(endpoint_value_fractions)):
-            fraction_of_value = endpoint_value_fractions[fraction_id_to_add]
-            fraction_of_p2p_diff = fraction_of_value*end_point_value
-            roots = Polynomial.roots(poly - fraction_of_p2p_diff)
-            failure_count = 1.0
-            for fraction_point_time in roots:
-                if np.iscomplex(fraction_point_time):
-                    continue  # imaginary part must be non zero so we can't use it 
-                if fraction_point_time < start_point_time or fraction_point_time > end_point_time:
-                    continue
-                # could still have a complex num obj with imaginary part 0 so force to be real
-                fraction_point_time = np.real(fraction_point_time)
-                metrics[fraction_id_to_add, point_index] = fraction_point_time
-                normalized_metrics[fraction_id_to_add, point_index] = fraction_point_time/np.abs(fraction_of_p2p_diff)
-                failure_count = 0.0
-                break
-            metric_failure_counter[fraction_id_to_add] += failure_count
-
-    metrics_counters = np.abs(metric_failure_counter - num_point_values)
-    metrics_sums = np.sum(metrics, axis=-1)
-    metrics_means = metrics_sums/metrics_counters
-    normalized_metrics_sums = np.sum(normalized_metrics, axis=-1)
-    normalized_metrics_sums_means = normalized_metrics_sums/metrics_counters
-    metrics_failure_proportions = metric_failure_counter/num_point_values
-    return {
-        'metric_fractions':             np.append(endpoint_value_fractions, [1.0]),  # add the 100% case
-        'p2p_metric_data':              metrics,
-        'mean_metric_data':             metrics_means,
-        'normalized_metric_data':       normalized_metrics_sums_means,
-        'num_metric_failures':          metric_failure_counter,
-        'num_metric_points':            num_point_values,
-        'metric_failure_proportions':   metrics_failure_proportions
-    }
-
-
-def peakAndTroughIndices(
-    input_data: np.ndarray,
-    time_stamps: np.ndarray = None,
-    expected_frequency_hz: float = None,
-    expected_min_peak_width: int = None,
-    expected_min_peak_height: float = None
-) -> Tuple[np.ndarray]:
-    """ Returns the indices of peaks and troughs found in the 1D input data """
-    if expected_min_peak_height is None:
-        expected_min_peak_height = 1.0  # was 5.0
-    if expected_min_peak_width is None:
-        expected_min_peak_width = 1  # was 5
-    
-    if expected_frequency_hz is not None and time_stamps is not None:
-        expected_frequency_hz = expected_frequency_hz
-        expected_frequency_tolerance_hz = 0.5
-        pacing_frequency_min_hz = expected_frequency_hz - expected_frequency_tolerance_hz
-        pacing_frequency_max_hz = expected_frequency_hz + expected_frequency_tolerance_hz
-
-        # compute the width (in samples) from peak to peak or trough to trough that we expect the
-        # signal to contain so we can eliminate noise components we presume will be shorter than this
-        duration = time_stamps[-1] - time_stamps[0]
-        num_samples = len(time_stamps)
-        sampling_rate = float(num_samples)/duration
-        expected_min_peak_width = sampling_rate/pacing_frequency_max_hz
-
-        # compute the height from trough to peak or peak to trough that we expect the signal to contain.
-        # we use this to eliminate noise components we presume will be smaller than this value.
-        # NOTE: it is probably not necessary to pass this parameter to the peak finder; as in,
-        # it will likely work without this, and since it is much harder to estimate than the expected width,
-        # and be a problem with for instance highly decaying signals and/or signals with significant noise,
-        # it should be the first thing to consider changing (not using) if we're failing to pick all peaks/troughs.
-        # also the use of HALF the calculated height of the middle-ish peak is entirely arbitrary and could
-        # be replaced with some other fraction of a trough to peak height, or from a different place in the signal.
-        middle_sample = int(num_samples/2)
-        signal_sample_1_cycle_start = middle_sample 
-        signal_sample_1_cycle_end = signal_sample_1_cycle_start + int(expected_min_peak_width)
-        signal_sample_1_cycle = input_data[signal_sample_1_cycle_start:signal_sample_1_cycle_end]
-        signal_sample_1_cycle_min = np.min(signal_sample_1_cycle)
-        signal_sample_1_cycle_max = np.max(signal_sample_1_cycle)
-        middle_peak_height = np.abs(signal_sample_1_cycle_max - signal_sample_1_cycle_min)
-        min_height_scale_factor = 0.5
-        expected_min_peak_height = min_height_scale_factor * middle_peak_height
-
-    peaks, _ = find_peaks(input_data, prominence=expected_min_peak_height, distance=expected_min_peak_width)
-    troughs, _ = find_peaks(-input_data, prominence=expected_min_peak_height, distance=expected_min_peak_width)
-
-    return peaks, troughs
-
-
-def extremePointIndices(signal: np.ndarray) -> Tuple[np.ndarray]:
-    peaks, troughs = peakAndTroughIndices(signal)
-    peaks_and_troughs = np.concatenate((peaks, troughs), axis=0)
-    peaks_and_troughs_sorted = np.sort(peaks_and_troughs)
-    return (peaks, troughs, peaks_and_troughs_sorted)
-
-
 def signalDataFromXLSX(path_to_data: str) -> Tuple[np.ndarray]:
     ''' Reads in an xlsx file containing ca2 experiment data and
         returns a tuple of numpy arrays (time stamps, signal) '''
     ca2_data = pd.read_excel(path_to_data, usecols=[1, 5], dtype=np.float32)
     ca2_data = ca2_data.to_numpy(copy=True).T
     return (ca2_data[0], ca2_data[1])
-
-
-def lowPassFiltered(input_signal: np.ndarray, time_stamps: np.ndarray) -> np.ndarray:
-    filter_order = 5  # how sharply the filter cuts off the larger the sharper it bends
-    # frequency_range_hz = [1.0, 2.0]  # cut off frequency [start, stop] for bandpass/bandstop
-    frequency_hz = 1.5
-    duration = time_stamps[-1] - time_stamps[0]
-    num_samples = len(time_stamps)
-    sampleing_frequency = float(num_samples)/duration
-    sos = butter(filter_order, frequency_hz, 'lowpass', fs=sampleing_frequency, output='sos')
-    return sosfilt(sos, input_signal)
 
 
 def plotCa2Signals(
@@ -602,8 +494,8 @@ def signalDataForSDK(
 def signalDataToCSV(
     time_stamps: np.ndarray,
     input_signal: np.ndarray,
-    fg_signal_means: np.ndarray,
-    bg_signal_means: np.ndarray,
+    tissue_means: np.ndarray,
+    background_means: np.ndarray,
     output_data_file_path: str
 ):
     workbook = openpyxl.Workbook()
@@ -630,8 +522,8 @@ def signalDataToCSV(
         sheet.cell(row_num, frame_number_column).value = data_point_index
         sheet.cell(row_num, time_stamp_column).value = time_stamps[data_point_index]
         sheet.cell(row_num, signal_value_column).value = input_signal[data_point_index]
-        sheet.cell(row_num, fg_mean_value_column).value = fg_signal_means[data_point_index]
-        sheet.cell(row_num, bg_mean_value_column).value = bg_signal_means[data_point_index]
+        sheet.cell(row_num, fg_mean_value_column).value = tissue_means[data_point_index]
+        sheet.cell(row_num, bg_mean_value_column).value = background_means[data_point_index]
 
     workbook.save(filename=output_data_file_path)
 
@@ -687,6 +579,15 @@ def ca2AnalysisResultsToCSV(
     sheet.cell(row_num, metric_value_column).value = avg_frequency
 
     workbook.save(filename=path_to_results_file)
+
+
+def dataMode(input_data: np.ndarray) -> float:
+    data_min = np.floor(np.min(input_data))
+    data_max = np.ceil(np.max(input_data))
+    histogram_range = range(int(data_min) + 1, int(data_max) + 1)
+    data_histogram = np.histogram(input_data, bins=histogram_range, range=(data_min, data_max))[0]
+    histogram_peak = np.argmax(data_histogram)
+    return data_min + histogram_peak
 
 
 if __name__ == '__main__':
