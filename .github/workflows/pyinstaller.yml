@@ -17,7 +17,7 @@ jobs:
       with:
         python-version: 3.9.13
 
-    - run: pip install -r src/requirements.txt pyinstaller
+    - run: pip install -r src/requirements.txt pyinstaller==5.2
     - run: pyinstaller -i app/icon/logo.ico -F --windowed src/mantavision.py
     - uses: actions/upload-artifact@v2
       with:

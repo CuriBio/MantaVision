@@ -7,6 +7,9 @@ from nd2 import ND2File
 
 
 supported_file_extensions = ['.mp4', '.avi', '.mov', '.nd2']
+# TODO: need supported reader types and supported writer types
+#  and to check the writer in particular for nd2 extension
+#  and fail gracefully with a not supported error
 
 
 # TODO: figure out why stream initialisation doesn't work
@@ -204,6 +207,7 @@ class PYAVReader():
         self.current_frame = None
         self.frame_num = -1
         self.initialiseStream()
+        self._duration = float(self.video_stream.duration * self.timeBase())
 
     def next(self) -> bool:
         return_this_at_end_of_frames = None
@@ -259,7 +263,7 @@ class PYAVReader():
         return self.video_stream.time_base
 
     def duration(self) -> float:
-        return float(self.video_stream.duration * self.timeBase())
+        return self._duration
 
     def codecName(self):
         return self.video_stream.codec_context.name
@@ -345,8 +349,8 @@ class ND2VideoReader():
 
         self.time_base = Fraction(1, 1000)  # is always milliseconds for nd2 files
         self.time_steps = self.timeStamps()
-        self.duration = float(self.time_steps[-1])
-        self.avg_fps = float(self.num_frames)/self.duration
+        self._duration = float(self.time_steps[-1])
+        self.avg_fps = float(self.num_frames)/self._duration
 
         self.frame_num = -1
 
@@ -422,7 +426,7 @@ class ND2VideoReader():
         return self.time_base
 
     def duration(self) -> float:
-        return self.duration
+        return self._duration
 
     def codecName(self):
         # we just return a fixed value for cases where
