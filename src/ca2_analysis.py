@@ -131,7 +131,8 @@ def signalDataFromVideo(
             height=input_video_stream.frameVideoHeight(),
             time_base=input_video_stream.timeBase(),
             fps=input_video_stream.avgFPS(),
-            bitrate=input_video_stream.bitRate()
+            bitrate=input_video_stream.bitRate(),
+
         )
     else:
         video_writer = None
@@ -162,7 +163,6 @@ def signalDataFromVideo(
                     rois_info=frame_rois_info,
                     template_refinement_radius=0,
                     edge_finding_smoothing_radius=10,
-                    return_results_image=True,
                     draw_tissue_roi_only=True
                 )
                 # compute the mean of the tissue only region
@@ -348,7 +348,12 @@ def analyzeCa2Data(
             output_video_path = None
         else:
             bg_subtraction_rois = video_rois[file_name]
-            output_video_file_name = file_name + "-with_rois" + file_extension
+            if "nd2" in file_extension.lower():
+                output_file_extension = ".avi"
+            else:
+                output_file_extension = file_extension
+            output_video_file_name = file_name + "-with_rois" + output_file_extension
+
             output_video_path = os.path.join(results_dir, output_video_file_name)
         input_video_file_path = os.path.join(base_dir, file_name + file_extension)
         # TODO: merge bg_method and rois into a single dictionary called method_details
