@@ -15,6 +15,7 @@ def runCa2Analysis(args: Dict):
     analyzeCa2Data(
         path_to_data=args.ca2_analysis_path_to_data,
         expected_frequency_hz=args.ca2_analysis_expected_frequency_hz,
+        low_signal_to_noise=args.ca2_analysis_low_signal_to_noise,
         save_result_plots=args.ca2_analysis_save_result_plots,
         bg_subtraction_method=args.ca2_analysis_bg_subtraction_method
     )
@@ -123,6 +124,7 @@ def saveCurrentFieldValues(
         field_values['ca2_analysis_expected_frequency_hz'] = args.ca2_analysis_expected_frequency_hz
         field_values['ca2_analysis_save_result_plots'] = args.ca2_analysis_save_result_plots
         field_values['ca2_analysis_bg_subtraction_method'] = args.ca2_analysis_bg_subtraction_method
+        field_values['ca2_analysis_low_signal_to_noise'] = args.ca2_analysis_low_signal_to_noise
     with open(current_field_values_file_path, 'w') as outfile:
         writeJSON(field_values, outfile, indent=4)
 
@@ -154,6 +156,7 @@ def defaultFieldValues() -> Dict:
         'ca2_analysis_expected_frequency_hz': 1.0,
         'ca2_analysis_save_result_plots': False,
         'ca2_analysis_bg_subtraction_method': None,
+        'ca2_analysis_low_signal_to_noise': False
     }
 
 
@@ -407,6 +410,14 @@ def main():
         choices=['None', 'Auto_ROIs', 'Fixed_ROIs', 'Frame_Mean', 'Lowpass'],
         default=initial_values['ca2_analysis_bg_subtraction_method']
     )
+    ca2_analysis_parser.add_argument(
+        '--ca2_analysis_low_signal_to_noise',
+        metavar='Low Signal to Noise Adjustment',
+        help=' Adjust computation to account for videos with low signal to noise (SLOW)',
+        action='store_false',
+        default=initial_values['ca2_analysis_low_signal_to_noise']
+    )
+
     ca2_analysis_parser.add_argument(
         '--ca2_analysis_save_result_plots',
         metavar='Save Signal Plots',

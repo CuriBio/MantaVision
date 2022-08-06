@@ -195,7 +195,7 @@ def morphologyMetricsForImage(
   template_refinement_radius: int = 40,
   edge_finding_smoothing_radius: int = 1,
   draw_tissue_roi_only: bool = False,
-  signal_to_noise: str = None,
+  low_signal_to_noise: bool = False,
   sub_pixel_search_increment: float = None,
   sub_pixel_refinement_radius: float = None
 ) -> Tuple[np.ndarray, Dict]:
@@ -203,33 +203,21 @@ def morphologyMetricsForImage(
   if microns_per_pixel is None:
     microns_per_pixel = 1.0
 
-  if signal_to_noise is None:
-      signal_to_noise = 'high'
-  else:
-      signal_to_noise = signal_to_noise.lower()
-
-  # TODO: if we get certain errors, it is likely because the video is blank
-  #  or we couldn't find decent edges. the video being blank is a particular problem
-  #  so we need to include checks for that and return a sensible value that
-  #  won't break barf here or the upstream process.
-  #  which may well require adding checks in the upstream process too
-
   search_image_gray = cv.cvtColor(search_image, cv.COLOR_BGR2GRAY).astype(float)
   search_image_gray = normalized(search_image_gray, new_range=65536.0)
-  smoothed_image = uniformFiltered(
-      search_image_gray,
-      filter_radius=6
-  )
-  # TODO: determine if we are going to use smoothed horizontally in regular vidoes
-  #  or only if low_signal_to_noise like the median
-  # smoothed_image = smoothedHorizontally(
-  #     smoothed_image,
-  #     sigma=8
-  # )
-  if signal_to_noise == 'low':
+  if low_signal_to_noise:
+      smoothed_image = smoothedHorizontally(
+          search_image_gray,
+          sigma=10
+      )
       smoothed_image = medianFiltered(
           smoothed_image,
           filter_radius=4
+      )
+  else:
+      smoothed_image = uniformFiltered(
+          search_image_gray,
+          filter_radius=6
       )
   # compute edge map
   edge_image = yGradMag(smoothed_image)

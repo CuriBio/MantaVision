@@ -18,12 +18,6 @@ pd.set_option("display.precision", 2)
 pd.set_option("display.expand_frame_repr", False)
 
 
-# TODO: add a check box for low S/N (which will use a median filter etc to get better results).
-#       or perhaps we have a drop down for "S/N" that has ['high', 'med', 'low'] or nothing
-#       if it's nothing or high, we just do the mean (uniform filter) filter,
-#       if it's med we add in the horizontal filtering (and maybe a very small (1 radius) median filter
-#       if ti's low we add full horizontal filtering and large median filter
-
 # TODO: add a field for the moving roi template path and if it's not filled out, ask the user to draw an roi to track
 #       this moving roi will always be used as the lhs edge of the tissue roi.
 # TODO: add a tick box for "track fixed roi" which
@@ -140,6 +134,7 @@ def videoROIsInfoPerFrame(video_path: str, template_info: Dict) -> Dict:
 def signalDataFromVideo(
     input_video_path: str,
     output_video_path: str = None,
+    low_signal_to_noise: bool = False,
     bg_subtraction_method: str = 'None',
     bg_subtraction_rois: Dict = None
 ) -> Dict:
@@ -193,7 +188,8 @@ def signalDataFromVideo(
                     rois_info=frame_rois_info,
                     template_refinement_radius=0,
                     edge_finding_smoothing_radius=10,
-                    draw_tissue_roi_only=True
+                    draw_tissue_roi_only=True,
+                    low_signal_to_noise=low_signal_to_noise
                 )
                 # compute the mean of the tissue only region
                 frame_gray_rotated = np.rot90(frame_gray, k=-1)
@@ -210,7 +206,13 @@ def signalDataFromVideo(
                 row_sums = 0
                 row_counts = 0
                 for row_num in range(0, num_rows):
-                    frame_row = frame_gray_rotated[y_pos[row_num], int(x_start_pos[row_num]):int(x_end_pos[row_num])]
+                    x_row_start = int(x_start_pos[row_num])
+                    x_row_end = int(x_end_pos[row_num])
+                    if x_row_start == x_row_end:
+                        # edge finding failed, so sample from the entire line
+                        x_row_start = 0
+                        x_row_end = frame_gray_rotated_width
+                    frame_row = frame_gray_rotated[y_pos[row_num], x_row_start:x_row_end]
                     row_sums += np.sum(frame_row)
                     row_counts += len(frame_row)
                 tissue_mean = float(row_sums)/float(row_counts)
@@ -343,6 +345,7 @@ def analyzeCa2Data(
     path_to_data: str,
     expected_frequency_hz: float,
     bg_subtraction_method: str = 'None',
+    low_signal_to_noise: bool = False,
     save_result_plots: bool = False,
     display_results: bool = False,
     expected_min_peak_width: int = None,
@@ -390,6 +393,7 @@ def analyzeCa2Data(
         signal_data = signalDataFromVideo(
             input_video_file_path,
             output_video_path,
+            low_signal_to_noise,
             bg_subtraction_method,
             bg_subtraction_rois
         )
