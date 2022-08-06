@@ -599,7 +599,7 @@ def intensityAdjusted(image_to_adjust: np.ndarray, adjust_gamma: bool = False) -
         ).astype(np.float32)
     current_image_min: float = np.min(image_to_adjust)
     current_image_max: float = np.max(image_to_adjust)
-    current_image_range: float = current_image_max - current_image_min
+    current_image_range: float = max(1.0, current_image_max - current_image_min)
     adjusted_image = rescaled(
         intensity=image_to_adjust,
         intensity_min=current_image_min,

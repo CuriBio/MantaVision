@@ -331,51 +331,17 @@ def verifiedInputs(config: Dict) -> Tuple[str, List[Dict]]:
     # set all the values needed to run template matching on each input video
     configs = []
     for file_name, input_file_extension in video_files:
-
-        # check the file name conforms to minimum requirements
-        num_chars_in_datestamp = len('yyyy-mm-dd')
-        num_chars_in_well_name = len('A001')
+        # if the file is long enough to contain well name and data stamp,
+        # extract them from expect
+        well_name = 'A001'
+        date_stamp = '2020-02-02'
+        num_chars_in_datestamp = len(date_stamp)
+        num_chars_in_well_name = len(well_name)
         min_num_chars_in_file_name = num_chars_in_datestamp + num_chars_in_well_name
-        if len(file_name) < min_num_chars_in_file_name:
-            print(f'ERROR. the input video {file_name} does not have a valid name.')
-            print(
-                'The pattern must have a datestamp as the first 10 characters and a wellname as the last 4 characters')
-            print('i.e. 1010-01-01 any other characters A001')
-            sys.exit(1)
-
-        # make sure a valid well name can be extracted from the file name
-        file_name_length = len(file_name)
-        well_name = file_name[file_name_length - num_chars_in_well_name:]
-        well_name_valid = True
-        well_name_letter_part = well_name[0]
-        if not well_name_letter_part.isalpha():
-            well_name_valid = False
-        well_name_number_part = well_name[1:]
-        if not well_name_number_part.isdigit():
-            well_name_valid = False
-        if not well_name_valid:
-            print("ERROR. An input video file does not contain a valid well name as expected as the last word.")
-            print(f"The last word of the filename is: {well_name}")
-            print("The last word of the file name must be a letter followed by a zero padded 3 digit number')")
-            print(" i.e. A001 or D006")
-            sys.exit(1)
-
-        # make sure a valid date stamp can be extacted from the file name
-        date_stamp = file_name[:num_chars_in_datestamp]
-        date_stamp_parsed = date_stamp.split("-")
-        num_parts_in_date = 3
-        date_stamp_valid = True
-        if len(date_stamp_parsed) != num_parts_in_date:
-            date_stamp_valid = False
-        else:
-            for date_part in date_stamp_parsed:
-                if not date_part.isdigit():
-                    date_stamp_valid = False
-        if not date_stamp_valid:
-            print("ERROR. An input video file does not contain a valid date stamp as expected for the first word.")
-            print(f"The first word of the filename is: {date_stamp}")
-            print("The first word of the file name must be of the form yyyy-mm-dd i.e. 1010-01-01")
-            sys.exit(1)
+        if len(file_name) >= min_num_chars_in_file_name:
+            file_name_length = len(file_name)
+            well_name = file_name[file_name_length - num_chars_in_well_name:]
+            date_stamp = file_name[:num_chars_in_datestamp]
 
         # set all the required path values
         input_video_path = os.path.join(base_dir, file_name + input_file_extension)

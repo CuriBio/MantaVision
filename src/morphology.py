@@ -195,6 +195,7 @@ def morphologyMetricsForImage(
   template_refinement_radius: int = 40,
   edge_finding_smoothing_radius: int = 1,
   draw_tissue_roi_only: bool = False,
+  signal_to_noise: str = None,
   sub_pixel_search_increment: float = None,
   sub_pixel_refinement_radius: float = None
 ) -> Tuple[np.ndarray, Dict]:
@@ -202,16 +203,34 @@ def morphologyMetricsForImage(
   if microns_per_pixel is None:
     microns_per_pixel = 1.0
 
+  if signal_to_noise is None:
+      signal_to_noise = 'high'
+  else:
+      signal_to_noise = signal_to_noise.lower()
+
+  # TODO: if we get certain errors, it is likely because the video is blank
+  #  or we couldn't find decent edges. the video being blank is a particular problem
+  #  so we need to include checks for that and return a sensible value that
+  #  won't break barf here or the upstream process.
+  #  which may well require adding checks in the upstream process too
+
   search_image_gray = cv.cvtColor(search_image, cv.COLOR_BGR2GRAY).astype(float)
   search_image_gray = normalized(search_image_gray, new_range=65536.0)
-  smoothed_image = smoothedHorizontally(
+  smoothed_image = uniformFiltered(
       search_image_gray,
-      sigma=10
+      filter_radius=6
   )
-  smoothed_image = medianFiltered(
-      smoothed_image,
-      filter_radius=4
-  )
+  # TODO: determine if we are going to use smoothed horizontally in regular vidoes
+  #  or only if low_signal_to_noise like the median
+  # smoothed_image = smoothedHorizontally(
+  #     smoothed_image,
+  #     sigma=8
+  # )
+  if signal_to_noise == 'low':
+      smoothed_image = medianFiltered(
+          smoothed_image,
+          filter_radius=4
+      )
   # compute edge map
   edge_image = yGradMag(smoothed_image)
 
@@ -317,6 +336,7 @@ def morphologyMetricsForImage(
   all_points = [(left_points, edge_values_middle - 1, -1), (right_points, edge_values_middle + 1, 1)]
   edge_point_details = [(top_edge_midpoint, top_edge_values), (bottom_edge_midpoint, bottom_edge_values)]
   edge_search_radius = 10
+  image_vertical_midpoint = int(edge_image.shape[0]/2)
   for points_to_find_edges, start, direction in all_points:
     if direction < 1:
       pass  # moving average should be with points ot the right up to the midpoint
@@ -340,7 +360,9 @@ def morphologyMetricsForImage(
         else:
           end_point_for_avg = edge_value_index
           start_point_for_avg = max(edge_values_middle, edge_value_index - direction*edge_finding_smoothing_radius)
-        prev_edge_value_avg = np.average(edge_values[start_point_for_avg:end_point_for_avg])
+        prev_edge_value_avg = np.mean(edge_values[start_point_for_avg:end_point_for_avg])
+        if np.isnan(prev_edge_value_avg):
+            prev_edge_value_avg = image_vertical_midpoint
         prev_edge_value = round(prev_edge_value_avg)
 
   # draw the tissue roi and other landmarks on a results image

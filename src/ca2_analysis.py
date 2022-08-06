@@ -18,10 +18,40 @@ pd.set_option("display.precision", 2)
 pd.set_option("display.expand_frame_repr", False)
 
 
-# TODO: instead of using an expected frequency parameters,
-#       we could allow users to select a "shape" parameter i.e. sinusoid, exponential, sawtooth, square etc
-#       and then perform regression to determine the parameters of those shapes that best fits the data points
-#       that we extract from a contraction (calcium or regular) video
+# TODO: add a check box for low S/N (which will use a median filter etc to get better results).
+#       or perhaps we have a drop down for "S/N" that has ['high', 'med', 'low'] or nothing
+#       if it's nothing or high, we just do the mean (uniform filter) filter,
+#       if it's med we add in the horizontal filtering (and maybe a very small (1 radius) median filter
+#       if ti's low we add full horizontal filtering and large median filter
+
+# TODO: add a field for the moving roi template path and if it's not filled out, ask the user to draw an roi to track
+#       this moving roi will always be used as the lhs edge of the tissue roi.
+# TODO: add a tick box for "track fixed roi" which
+#       if selected, presumes the fixed roi is for the rhs post and so actively track it, and
+#       use the lhs of that roi as the inner edge of the tissue roi,
+#       if not selected, presumes the fixed roi is of the tissue and just use the top, bottom and rhs of the roi
+#       (either user drawn or matched from a template) as the tissue roi, and use the moving roi as the lhs
+#       of the tissue roi.
+# TODO: add a field for the fixed roi template path and if it's not filled out ask the user to draw the roi.
+
+# TODO: the automatic methods that track and adjust the tissue roi (either full or semi auto)
+#  should be tracking a "moving roi" i.e. the moving post
+#  and the user should then either select the right fixed post or perhaps just an roi around
+#  the tissue from which we obtain the vertical end points and rhs end points only, the lhs
+#  end point is still determined from the tracking of the moving post
+
+# TODO: while we track the moving roi, we can perform analysis on it
+#  to determine the frequency of the contractions, that way we don't need to
+#  ask the user to guess. So we need to add the frequency analysis to track template
+#  and then report the value in Ca2+ analysis somewhere sensible
+#  the way we can tell what the frequency is, is as follows
+#  we know physically where the extreme points are (left and right in a purely horizontal contraction)
+#  and once we know where those positions are, we can check for frames that have a match
+#  that corresponds to being close to those extreme points.
+#  we can then pick a physical point mid way between those extreme points
+#  and we count how many frames on average between matches to cross that mid point in either direction
+#  and of course the time it take is just (num_frames / frames_per_second)
+#  and from that, 1/T = frequency
 
 # TODO: check there are no double peaks or troughs.
 #       would need to use the peak and trough indices
