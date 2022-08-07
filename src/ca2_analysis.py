@@ -263,13 +263,13 @@ def signalDataFromVideo(
                     (bottom_right_point, top_right_point),
                 ]
 
-                grid_colour_bgr = (0, 255, 0)
+                roi_outline_colour = (0, 0, 255)
                 for edge_point_a, edge_point_b in roi_edges:
                     cv.line(
                         img=frame_rgb,
                         pt1=edge_point_a,
                         pt2=edge_point_b,
-                        color=grid_colour_bgr,
+                        color=roi_outline_colour,
                         thickness=1,
                         lineType=cv.LINE_AA
                     )

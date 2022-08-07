@@ -497,28 +497,26 @@ def templateFromInputROI(
         if template_to_find is None:  # return the user drawn roi from the first video frame
             print("Waiting on user to manually select ROI ...")
             roi = userDrawnROI(frame)
-            if roi is None:
-                print("...No ROI selected")
-                continue
-            else:
+            if roi is not None:
                 print("...ROI selection complete")
+                # return the selected roi as a new template
+                new_template = frame[roi['y_start']:roi['y_end'], roi['x_start']:roi['x_end']]
+                frame_gray = video_to_search.frameGray()
+                new_template_grey = frame_gray[roi['y_start']:roi['y_end'], roi['x_start']:roi['x_end']]
                 # reset the video to where it was initially before we return
                 video_to_search.setFramePosition(initial_frame_pos)
-                # return the selected roi
-                return (
-                    frame[roi['y_start']:roi['y_end'], roi['x_start']:roi['x_end']],
-                    video_to_search.frameGray()[roi['y_start']:roi['y_end'], roi['x_start']:roi['x_end']],
-                )
-
-        # find the best match in the input video to the template passed in
-        frame_adjusted = intensityAdjusted(video_to_search.frameGray())
-        match_results = cv.matchTemplate(frame_adjusted, template_to_find, cv.TM_CCOEFF)
-        _, match_measure, _, match_coordinates = cv.minMaxLoc(match_results)
-        if match_measure > best_match_measure:
-            best_match_measure = match_measure
-            best_match_coordinates = match_coordinates
-            best_match_frame = frame
-            best_match_frame_gray = video_to_search.frameGray()
+                return new_template, new_template_grey
+            print("...No ROI selected. Presenting the next frame...")
+        else:
+            # find the best match in the input video to the template passed in
+            frame_adjusted = intensityAdjusted(video_to_search.frameGray())
+            match_results = cv.matchTemplate(frame_adjusted, template_to_find, cv.TM_CCOEFF)
+            _, match_measure, _, match_coordinates = cv.minMaxLoc(match_results)
+            if match_measure > best_match_measure:
+                best_match_measure = match_measure
+                best_match_coordinates = match_coordinates
+                best_match_frame = frame
+                best_match_frame_gray = video_to_search.frameGray()
 
         video_to_search.next()
 
