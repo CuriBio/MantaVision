@@ -18,21 +18,18 @@ pd.set_option("display.precision", 2)
 pd.set_option("display.expand_frame_repr", False)
 
 
-# TODO: add a field for the moving roi template path and if it's not filled out, ask the user to draw an roi to track
-#       this moving roi will always be used as the lhs edge of the tissue roi.
-# TODO: add a tick box for "track fixed roi" which
-#       if selected, presumes the fixed roi is for the rhs post and so actively track it, and
-#       use the lhs of that roi as the inner edge of the tissue roi,
-#       if not selected, presumes the fixed roi is of the tissue and just use the top, bottom and rhs of the roi
-#       (either user drawn or matched from a template) as the tissue roi, and use the moving roi as the lhs
-#       of the tissue roi.
-# TODO: add a field for the fixed roi template path and if it's not filled out ask the user to draw the roi.
+# TODO: add a field for the dynamic roi template path and if it's not filled out, ask the user to draw an roi to track
+#       this roi will always be used as the lhs edge of the tissue roi.
+# TODO: add a field for the reference roi template path and if it's not filled out, ask the user to draw an roi
+#       this roi will always be used as the rhs edge of the tissue roi, and possibly the upper and lower edges
+# TODO: add a tick box for "reference roi bounds tissue" which
+#       if selected, presumes the roi is a bounding box for the tissue and uses the top, bottom and rhs of the roi
+#       if not selected, will actively track the roi and use the lhs of that roi as the inner edge of the tissue roi
+#       and attempt to figure out where the actual top and bottom tissue edges are.
+# TODO: add the same contraction vector drop down as is used in tracking
+#       this will then determine which edge of the tissue roi is formed by
+#       the user drawn or template guided rois
 
-# TODO: the automatic methods that track and adjust the tissue roi (either full or semi auto)
-#  should be tracking a "moving roi" i.e. the moving post
-#  and the user should then either select the right fixed post or perhaps just an roi around
-#  the tissue from which we obtain the vertical end points and rhs end points only, the lhs
-#  end point is still determined from the tracking of the moving post
 
 # TODO: while we track the moving roi, we can perform analysis on it
 #  to determine the frequency of the contractions, that way we don't need to
@@ -81,37 +78,37 @@ pd.set_option("display.expand_frame_repr", False)
 
 def videoROIsInfo(video_path: str, template_info: Dict) -> Dict:
     """ """
-    template_image_rgb_left = template_info['left']['image']
-    _, left_template_results, _, _, _ = trackTemplate(
+    dynamic_roi_template_image = template_info['dynamic']['image']
+    _, dynamic_roi, _, _, _ = trackTemplate(
         input_video_path=video_path,
         template_guide_image_path=None,
-        template_rgb=template_image_rgb_left,
+        template_rgb=dynamic_roi_template_image,
         max_translation_per_frame=[50, 50]
     )
-    right_template_image_rgb = template_info['right']['image']
-    _, right_template_results, _, _, _ = trackTemplate(
+    reference_roi_template_image = template_info['reference']['image']
+    _, reference_roi, _, _, _ = trackTemplate(
         input_video_path=video_path,
         template_guide_image_path=None,
-        template_rgb=right_template_image_rgb,
+        template_rgb=reference_roi_template_image,
         max_translation_per_frame=[50, 50]
     )
 
     rois_info = []
-    num_frames = len(right_template_results)
+    num_frames = len(reference_roi)
     for frame_num in range(num_frames):
         rois_info.append(
             {
-                'left': {
-                    'x_start': int(left_template_results[frame_num]['x_start']),
-                    'x_end': int(left_template_results[frame_num]['x_end']),
-                    'y_start': int(left_template_results[frame_num]['y_start']),
-                    'y_end': int(left_template_results[frame_num]['y_end']),
+                'dynamic': {
+                    'x_start': int(dynamic_roi[frame_num]['x_start']),
+                    'x_end': int(dynamic_roi[frame_num]['x_end']),
+                    'y_start': int(dynamic_roi[frame_num]['y_start']),
+                    'y_end': int(dynamic_roi[frame_num]['y_end']),
                 },
-                'right': {
-                    'x_start': int(right_template_results[frame_num]['x_start']),
-                    'x_end': int(right_template_results[frame_num]['x_end']),
-                    'y_start': int(right_template_results[frame_num]['y_start']),
-                    'y_end': int(right_template_results[frame_num]['y_end']),
+                'reference': {
+                    'x_start': int(reference_roi[frame_num]['x_start']),
+                    'x_end': int(reference_roi[frame_num]['x_end']),
+                    'y_start': int(reference_roi[frame_num]['y_start']),
+                    'y_end': int(reference_roi[frame_num]['y_end']),
                 }
             }
         )
@@ -319,21 +316,21 @@ def videoBGSubtractionROIs(
         rois['tissue'] = userDrawnROI(max_intensity_sum_frame, "Select the Tissue/Signal ROI")
     else:
         rois['tissue'] = {}
-        left_roi = userDrawnROI(max_intensity_sum_frame, "Select the Left ROI to Track")
-        right_roi = userDrawnROI(max_intensity_sum_frame, "Select the Right ROI to Track")
+        dynamic_roi = userDrawnROI(max_intensity_sum_frame, "Select the dynamic ROI to Track")
+        reference_roi = userDrawnROI(max_intensity_sum_frame, "Select the reference ROI")
         rois['template_info'] = {
-            'left': {
+            'dynamic': {
                 'path': '',
                 'image': max_intensity_sum_frame[
-                    left_roi['y_start']:left_roi['y_end'],
-                    left_roi['x_start']:left_roi['x_end'],
+                    dynamic_roi['y_start']:dynamic_roi['y_end'],
+                    dynamic_roi['x_start']:dynamic_roi['x_end'],
                 ]
             },
-            'right': {
+            'reference': {
                 'path': '',
                 'image': max_intensity_sum_frame[
-                    right_roi['y_start']:right_roi['y_end'],
-                    right_roi['x_start']:right_roi['x_end'],
+                    reference_roi['y_start']:reference_roi['y_end'],
+                    reference_roi['x_start']:reference_roi['x_end'],
                 ]
             }
         }
@@ -347,6 +344,8 @@ def analyzeCa2Data(
     bg_subtraction_method: str = 'None',
     low_signal_to_noise: bool = False,
     save_result_plots: bool = False,
+    dynamic_roi_template_path: str = None,
+    reference_roi_template_path: str = None,
     display_results: bool = False,
     expected_min_peak_width: int = None,
     expected_min_peak_height: float = None

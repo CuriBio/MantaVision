@@ -39,8 +39,8 @@ def computeMorphologyMetrics(
         os.mkdir(results_image_dir)
 
     template_info = {
-        'left': {'path': left_template_image_path, 'image': None},
-        'right': {'path': right_template_image_path, 'image': None}
+        'dynamic': {'path': left_template_image_path, 'image': None},
+        'reference': {'path': right_template_image_path, 'image': None}
     }
     for template_position, template_data in template_info.items():
         if template_data['path'] is not None:
@@ -126,7 +126,10 @@ def computeMorphologyMetrics(
     results_xlsx_path = os.path.join(results_dir, results_xlsx_name)
     runtime_parameters = {
       'search_image_path' : base_dir,
-      'template_image_paths': {'left': template_info['left']['path'], 'right': template_info['right']['path']},
+      'template_image_paths': {
+          'dynamic': template_info['dynamic']['path'],
+          'reference': template_info['reference']['path']
+      },
       'sub_pixel_search_increment' : sub_pixel_search_increment,
       'sub_pixel_refinement_radius' : sub_pixel_refinement_radius,
       'microns_per_pixel': microns_per_pixel,
@@ -221,9 +224,6 @@ def morphologyMetricsForImage(
       )
 
   # compute edge map
-  # TODO: figure out if the bottom edges are off (by 1 or more pixels)
-  #     it looks like the top edge sits just above the actual tissue edge
-  #     but the bottom edge sits ON the tissue edge and should be moved down
   edge_image = yGradMag(smoothed_image)
 
   # create an operator for the moving average filter that will be used later
@@ -232,9 +232,9 @@ def morphologyMetricsForImage(
   #  the moving average operation
 
   # compute the distance between the inner sides of each ROI
-  left_roi = rois_info['left']
+  left_roi = rois_info['dynamic']
   left_vertical_midpoint = (left_roi['y_start'] + left_roi['y_end'])/2
-  right_roi = rois_info['right']
+  right_roi = rois_info['reference']
   right_vertical_midpoint = (right_roi['y_start'] + right_roi['y_end'])/2
   vertical_midpoint = (left_vertical_midpoint + right_vertical_midpoint)/2
   left_distance_marker_x = left_roi['x_end']
