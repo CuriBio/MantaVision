@@ -18,18 +18,14 @@ pd.set_option("display.precision", 2)
 pd.set_option("display.expand_frame_repr", False)
 
 
-# TODO: add a field for the dynamic roi template path and if it's not filled out, ask the user to draw an roi to track
-#       this roi will always be used as the lhs edge of the tissue roi.
-# TODO: add a field for the reference roi template path and if it's not filled out, ask the user to draw an roi
-#       this roi will always be used as the rhs edge of the tissue roi, and possibly the upper and lower edges
-# TODO: add a tick box for "reference roi bounds tissue" which
-#       if selected, presumes the roi is a bounding box for the tissue and uses the top, bottom and rhs of the roi
-#       if not selected, will actively track the roi and use the lhs of that roi as the inner edge of the tissue roi
-#       and attempt to figure out where the actual top and bottom tissue edges are.
+# TODO: update ca2 analysis function behaviour to accommodate if template paths are filled or not
+#       and act accordingly i.e. use the templates if they're provided, or ask the user to draw them otherwise.
 # TODO: add the same contraction vector drop down as is used in tracking
 #       this will then determine which edge of the tissue roi is formed by
 #       the user drawn or template guided rois
 
+#       the dynamic roi will always be used as the lhs edge of the tissue roi.
+#       the reference roi will always be used as the rhs edge of the tissue roi, and possibly the upper and lower edges
 
 # TODO: while we track the moving roi, we can perform analysis on it
 #  to determine the frequency of the contractions, that way we don't need to
@@ -85,33 +81,49 @@ def videoROIsInfo(video_path: str, template_info: Dict) -> Dict:
         template_rgb=dynamic_roi_template_image,
         max_translation_per_frame=[50, 50]
     )
-    reference_roi_template_image = template_info['reference']['image']
-    _, reference_roi, _, _, _ = trackTemplate(
-        input_video_path=video_path,
-        template_guide_image_path=None,
-        template_rgb=reference_roi_template_image,
-        max_translation_per_frame=[50, 50]
-    )
-
+    num_frames = len(dynamic_roi)
     rois_info = []
-    num_frames = len(reference_roi)
-    for frame_num in range(num_frames):
-        rois_info.append(
-            {
-                'dynamic': {
-                    'x_start': int(dynamic_roi[frame_num]['x_start']),
-                    'x_end': int(dynamic_roi[frame_num]['x_end']),
-                    'y_start': int(dynamic_roi[frame_num]['y_start']),
-                    'y_end': int(dynamic_roi[frame_num]['y_end']),
-                },
-                'reference': {
-                    'x_start': int(reference_roi[frame_num]['x_start']),
-                    'x_end': int(reference_roi[frame_num]['x_end']),
-                    'y_start': int(reference_roi[frame_num]['y_start']),
-                    'y_end': int(reference_roi[frame_num]['y_end']),
+
+    if template_info['reference']['reference_roi_captures_tissue']:
+        # we will only be using the reference roi, and, the top, bottom and rhs don't change,
+        # only the dynamic roi side changes with the results of the tracking of the dynamic roi
+        for frame_num in range(num_frames):
+            rois_info.append(
+                {
+                    'reference': {
+                        'x_start': int(dynamic_roi[frame_num]['x_end']),
+                        'x_end': template_info['reference']['roi']['x_end'],
+                        'y_start': template_info['reference']['roi']['y_start'],
+                        'y_end': template_info['reference']['roi']['y_end']
+                    }
                 }
-            }
+            )
+    else:
+        reference_roi_template_image = template_info['reference']['image']
+        _, reference_roi, _, _, _ = trackTemplate(
+            input_video_path=video_path,
+            template_guide_image_path=None,
+            template_rgb=reference_roi_template_image,
+            max_translation_per_frame=[50, 50]
         )
+        for frame_num in range(num_frames):
+            rois_info.append(
+                {
+                    'dynamic': {
+                        'x_start': int(dynamic_roi[frame_num]['x_start']),
+                        'x_end': int(dynamic_roi[frame_num]['x_end']),
+                        'y_start': int(dynamic_roi[frame_num]['y_start']),
+                        'y_end': int(dynamic_roi[frame_num]['y_end']),
+                    },
+                    'reference': {
+                        'x_start': int(reference_roi[frame_num]['x_start']),
+                        'x_end': int(reference_roi[frame_num]['x_end']),
+                        'y_start': int(reference_roi[frame_num]['y_start']),
+                        'y_end': int(reference_roi[frame_num]['y_end']),
+                    }
+                }
+            )
+
     return rois_info
 
 
@@ -133,15 +145,16 @@ def signalDataFromVideo(
     output_video_path: str = None,
     low_signal_to_noise: bool = False,
     bg_subtraction_method: str = 'None',
-    bg_subtraction_rois: Dict = None
+    video_roi_info: Dict = None
 ) -> Dict:
     """ """
 
+    reference_roi_captures_tissue = video_roi_info['template_info']['reference']['reference_roi_captures_tissue']
     if 'auto' in bg_subtraction_method.lower():
-        rois_info = iter(
+        video_rois = iter(
             videoROIsInfo(
                 video_path=input_video_path,
-                template_info=bg_subtraction_rois['template_info']
+                template_info=video_roi_info['template_info']
             )
         )
 
@@ -172,56 +185,63 @@ def signalDataFromVideo(
             continue
         if 'rois' in bg_subtraction_method.lower():
             bg_roi = frame_gray[
-                bg_subtraction_rois['background']['y_start']:bg_subtraction_rois['background']['y_end'],
-                bg_subtraction_rois['background']['x_start']:bg_subtraction_rois['background']['x_end']
+                video_roi_info['background']['y_start']:video_roi_info['background']['y_end'],
+                video_roi_info['background']['x_start']:video_roi_info['background']['x_end']
             ]
             background_subtractor = np.mean(bg_roi)
             if 'auto' in bg_subtraction_method.lower():
-                # get the tissue only roi from morphology function
-                frame_rgb = input_video_stream.frameVideoRGB()
-                frame_rois_info = next(rois_info)
-                frame_rgb, morphology = morphologyMetricsForImage(
-                    search_image=frame_rgb,
-                    rois_info=frame_rois_info,
-                    template_refinement_radius=0,
-                    edge_finding_smoothing_radius=10,
-                    draw_tissue_roi_only=True,
-                    low_signal_to_noise=low_signal_to_noise
-                )
-                # compute the mean of the tissue only region
-                frame_gray_rotated = np.rot90(frame_gray, k=-1)
-                frame_gray_rotated_width = frame_gray_rotated.shape[1]
-                y_pos = list(
-                    range(
-                        int(floor(morphology['x_start_position'])),
-                        int(floor(morphology['x_end_position'])) + 1
+                frame_roi_info = next(video_rois)
+                if reference_roi_captures_tissue:
+                    reference_roi = frame_roi_info['reference']
+                    frame_gray = frame_gray[
+                        reference_roi['y_start']:reference_roi['y_end'],
+                        reference_roi['x_start']:reference_roi['x_end'],
+                    ]
+                else:
+                    # get the tissue only roi from morphology function
+                    frame_rgb = input_video_stream.frameVideoRGB()
+                    frame_rgb, morphology = morphologyMetricsForImage(
+                        search_image=frame_rgb,
+                        rois_info=frame_roi_info,
+                        template_refinement_radius=0,
+                        edge_finding_smoothing_radius=10,
+                        draw_tissue_roi_only=True,
+                        low_signal_to_noise=low_signal_to_noise
                     )
-                )
-                x_start_pos = frame_gray_rotated_width - morphology['y_end_positions']
-                x_end_pos = frame_gray_rotated_width - morphology['y_start_positions']
-                num_rows = len(x_start_pos)
-                row_sums = 0
-                row_counts = 0
-                for row_num in range(0, num_rows):
-                    x_row_start = int(x_start_pos[row_num])
-                    x_row_end = int(x_end_pos[row_num])
-                    if x_row_start == x_row_end:
-                        # edge finding failed, so sample from the entire line
-                        x_row_start = 0
-                        x_row_end = frame_gray_rotated_width
-                    frame_row = frame_gray_rotated[y_pos[row_num], x_row_start:x_row_end]
-                    row_sums += np.sum(frame_row)
-                    row_counts += len(frame_row)
-                tissue_mean = float(row_sums)/float(row_counts)
-                # append the tissue mean
-                fg_means.append(tissue_mean)
-                # append the background subtracted tissue mean
-                signal_values.append(tissue_mean - background_subtractor)
+                    # compute the mean of the tissue only region
+                    frame_gray_rotated = np.rot90(frame_gray, k=-1)
+                    frame_gray_rotated_width = frame_gray_rotated.shape[1]
+                    y_pos = list(
+                        range(
+                            int(floor(morphology['x_start_position'])),
+                            int(floor(morphology['x_end_position'])) + 1
+                        )
+                    )
+                    x_start_pos = frame_gray_rotated_width - morphology['y_end_positions']
+                    x_end_pos = frame_gray_rotated_width - morphology['y_start_positions']
+                    num_rows = len(x_start_pos)
+                    row_sums = 0
+                    row_counts = 0
+                    for row_num in range(0, num_rows):
+                        x_row_start = int(x_start_pos[row_num])
+                        x_row_end = int(x_end_pos[row_num])
+                        if x_row_start == x_row_end:
+                            # edge finding failed, so sample from the entire line
+                            x_row_start = 0
+                            x_row_end = frame_gray_rotated_width
+                        frame_row = frame_gray_rotated[y_pos[row_num], x_row_start:x_row_end]
+                        row_sums += np.sum(frame_row)
+                        row_counts += len(frame_row)
+                    tissue_mean = float(row_sums)/float(row_counts)
+                    # append the tissue mean
+                    fg_means.append(tissue_mean)
+                    # append the background subtracted tissue mean
+                    signal_values.append(tissue_mean - background_subtractor)
             else:  # we're using fixed tissue roi which was already set by the user
                 # NOTE: cutting out a new frame_gray from the tissue roi has to go AFTER background roi extraction
                 frame_gray = frame_gray[
-                    bg_subtraction_rois['tissue']['y_start']:bg_subtraction_rois['tissue']['y_end'],
-                    bg_subtraction_rois['tissue']['x_start']:bg_subtraction_rois['tissue']['x_end']
+                    video_roi_info['tissue']['y_start']:video_roi_info['tissue']['y_end'],
+                    video_roi_info['tissue']['x_start']:video_roi_info['tissue']['x_end']
                 ]
         elif bg_subtraction_method.lower() == 'lowpass':
             background_subtractor = gaussian_filter(frame_gray.astype(float), sigma=8, mode='reflect')
@@ -230,8 +250,8 @@ def signalDataFromVideo(
 
         # append the background mean
         bg_means.append(background_subtractor)
-        # append the mean of the fixed tissue roi for all methods other than auto
-        if 'auto' not in bg_subtraction_method.lower():
+        # append the mean of the fixed tissue roi for all methods other than fully auto
+        if 'auto' not in bg_subtraction_method.lower() or reference_roi_captures_tissue:
             fg_means.append(np.mean(frame_gray))
             adjusted_frame = frame_gray - background_subtractor
             adjusted_frame[adjusted_frame < 0] = 0
@@ -240,14 +260,16 @@ def signalDataFromVideo(
 
         # write out the video frame with the rois drawn
         if video_writer is not None:
-            # mark the bg (& maybe fg) ROIs on the output video frame
+            # mark the bg (& maybe tissue) ROIs on the output video frame
             if frame_rgb is None:
                 frame_rgb = input_video_stream.frameVideoRGB()
-            rois_to_draw = [bg_subtraction_rois['background']]
+            rois_to_draw = [video_roi_info['background']]
             # tissue roi is drawn by the morphology function when auto method is run
-            # all other methods require drawing the background roi here
+            # all other methods require drawing the reference roi here
             if 'auto' not in bg_subtraction_method.lower():
-                rois_to_draw.append(bg_subtraction_rois['tissue'])
+                rois_to_draw.append(video_roi_info['tissue'])
+            elif reference_roi_captures_tissue:
+                rois_to_draw.append(reference_roi)
             for roi in rois_to_draw:
                 top_left_point = (roi['x_start'], roi['y_start'])
                 top_right_point = (roi['x_end'], roi['y_start'])
@@ -287,7 +309,8 @@ def signalDataFromVideo(
 def videoBGSubtractionROIs(
     video_file_path: str,
     max_seconds_to_search: float = None,
-    roi_method: str = None
+    roi_method: str = None,
+    reference_roi_captures_tissue: bool = False
 ) -> Dict:
     input_video_stream = VideoReader(video_file_path)
     if not input_video_stream.isOpened():
@@ -331,7 +354,14 @@ def videoBGSubtractionROIs(
                 'image': max_intensity_sum_frame[
                     reference_roi['y_start']:reference_roi['y_end'],
                     reference_roi['x_start']:reference_roi['x_end'],
-                ]
+                ],
+                'roi': {
+                    'x_start': reference_roi['x_start'],
+                    'x_end': reference_roi['x_end'],
+                    'y_start': reference_roi['y_start'],
+                    'y_end': reference_roi['y_end'],
+                },
+                'reference_roi_captures_tissue': reference_roi_captures_tissue
             }
         }
 
@@ -346,6 +376,7 @@ def analyzeCa2Data(
     save_result_plots: bool = False,
     dynamic_roi_template_path: str = None,
     reference_roi_template_path: str = None,
+    reference_roi_captures_tissue: bool = False,
     display_results: bool = False,
     expected_min_peak_width: int = None,
     expected_min_peak_height: float = None
@@ -359,27 +390,28 @@ def analyzeCa2Data(
     if 'rois' in bg_subtraction_method.lower():
         # collect bg & fg or left/right ROIs for all the videos to be analyzed, up front, so that
         # all the videos can then be processed automatically without any user interaction
-        video_rois = {}
+        all_videos_rois = {}
         expected_frequency_hz_tolerance = 0.5
         frequency_epsilon = 0.01
         seconds_for_period = 1.0/(expected_frequency_hz - expected_frequency_hz_tolerance + frequency_epsilon)
         bg_subtraction_roi_search_seconds = 2.0*seconds_for_period
         for file_name, file_extension in files_to_analyze:
             input_video_file_path = os.path.join(base_dir, file_name + file_extension)
-            video_rois[file_name] = videoBGSubtractionROIs(
+            all_videos_rois[file_name] = videoBGSubtractionROIs(
                 input_video_file_path,
                 bg_subtraction_roi_search_seconds,
-                roi_method=bg_subtraction_method
+                roi_method=bg_subtraction_method,
+                reference_roi_captures_tissue=reference_roi_captures_tissue
             )
     else:
-        video_rois = None
+        all_videos_rois = None
 
     for file_name, file_extension in files_to_analyze:
-        if video_rois is None:
-            bg_subtraction_rois = None
+        if all_videos_rois is None:
+            video_roi_info = None
             output_video_path = None
         else:
-            bg_subtraction_rois = video_rois[file_name]
+            video_roi_info = all_videos_rois[file_name]
             if "nd2" in file_extension.lower():
                 output_file_extension = ".avi"
             else:
@@ -394,7 +426,7 @@ def analyzeCa2Data(
             output_video_path,
             low_signal_to_noise,
             bg_subtraction_method,
-            bg_subtraction_rois
+            video_roi_info
         )
         if signal_data is None:
             raise RuntimeError("Error. Signal from video could not be extracted")

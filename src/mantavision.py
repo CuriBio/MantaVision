@@ -19,7 +19,8 @@ def runCa2Analysis(args: Dict):
         save_result_plots=args.ca2_analysis_save_result_plots,
         bg_subtraction_method=args.ca2_analysis_bg_subtraction_method,
         dynamic_roi_template_path=args.ca2_analysis_dynamic_roi_template_path,
-        reference_roi_template_path=args.ca2_analysis_reference_roi_template_path
+        reference_roi_template_path=args.ca2_analysis_reference_roi_template_path,
+        reference_roi_captures_tissue=args.ca2_analysis_reference_roi_captures_tissue
     )
 
 
@@ -128,6 +129,7 @@ def saveCurrentFieldValues(
         field_values['ca2_analysis_low_signal_to_noise'] = args.ca2_analysis_low_signal_to_noise
         field_values['ca2_analysis_dynamic_roi_template_path'] = args.ca2_analysis_dynamic_roi_template_path
         field_values['ca2_analysis_reference_roi_template_path'] = args.ca2_analysis_reference_roi_template_path
+        field_values['ca2_analysis_reference_roi_captures_tissue'] = args.ca2_analysis_reference_roi_captures_tissue
     with open(current_field_values_file_path, 'w') as outfile:
         writeJSON(field_values, outfile, indent=4)
 
@@ -161,7 +163,8 @@ def defaultFieldValues() -> Dict:
         'ca2_analysis_bg_subtraction_method': None,
         'ca2_analysis_low_signal_to_noise': False,
         'ca2_analysis_dynamic_roi_template_path': None,
-        'ca2_analysis_reference_roi_template_path': None
+        'ca2_analysis_reference_roi_template_path': None,
+        'ca2_analysis_reference_roi_captures_tissue': False
     }
 
 
@@ -246,9 +249,9 @@ def main():
         metavar='Output Frames',
         help=' Output individual tracking results frames',
         action='store_true',
-        default=initial_values['tracking_output_frames']
+        gooey_options={'initial_value': initial_values['tracking_output_frames']}
     )
-    # TODO: use default_values for all help text with an e.g. value
+    # TODO: use default_values for the value of any help text with "e.g. {value}"
     default_values = defaultFieldValues()
     default_guid_match_search_seconds = default_values['tracking_guide_match_search_seconds']
     guide_match_search_seconds_help = f"search this many seconds of the video for "
@@ -428,7 +431,7 @@ def main():
     )
     ca2_analysis_parser.add_argument(
         '--ca2_analysis_reference_roi_template_path',
-        metavar='Fixed ROI Template Path',
+        metavar='Reference ROI Template Path',
         help='path to a template image of the reference roi',
         widget='FileChooser',
         type=str,
@@ -436,18 +439,25 @@ def main():
         gooey_options={'full_width': True, 'initial_value': initial_values['ca2_analysis_reference_roi_template_path']}
     )
     ca2_analysis_parser.add_argument(
+        '--ca2_analysis_reference_roi_captures_tissue',
+        metavar='Reference ROI captures tissue',
+        help=' Reference ROI defines a bounding box capturing tissue, not the non dynamic post',
+        action='store_true',
+        gooey_options={'initial_value': initial_values['ca2_analysis_reference_roi_captures_tissue']}
+    )
+    ca2_analysis_parser.add_argument(
         '--ca2_analysis_low_signal_to_noise',
         metavar='Low Signal to Noise Adjustment',
         help=' Adjust auto detection of tissue roi to account for videos with low signal to noise (SLOW)',
-        action='store_false',
-        default=initial_values['ca2_analysis_low_signal_to_noise']
+        action='store_true',
+        gooey_options={'initial_value': initial_values['ca2_analysis_low_signal_to_noise']}
     )
     ca2_analysis_parser.add_argument(
         '--ca2_analysis_save_result_plots',
         metavar='Save Signal Plots',
         help=' Save Plots of the estimated signal with peaks and troughs indicated',
         action='store_true',
-        default=initial_values['ca2_analysis_save_result_plots']
+        gooey_options={'initial_value': initial_values['ca2_analysis_save_result_plots']}
     )
     # TODO: add an option to control if we output the background subtracted video with roi drawn on it etc.
 
