@@ -497,28 +497,26 @@ def templateFromInputROI(
         if template_to_find is None:  # return the user drawn roi from the first video frame
             print("Waiting on user to manually select ROI ...")
             roi = userDrawnROI(frame)
-            if roi is None:
-                print("...No ROI selected")
-                continue
-            else:
+            if roi is not None:
                 print("...ROI selection complete")
+                # return the selected roi as a new template
+                new_template = frame[roi['y_start']:roi['y_end'], roi['x_start']:roi['x_end']]
+                frame_gray = video_to_search.frameGray()
+                new_template_grey = frame_gray[roi['y_start']:roi['y_end'], roi['x_start']:roi['x_end']]
                 # reset the video to where it was initially before we return
                 video_to_search.setFramePosition(initial_frame_pos)
-                # return the selected roi
-                return (
-                    frame[roi['y_start']:roi['y_end'], roi['x_start']:roi['x_end']],
-                    video_to_search.frameGray()[roi['y_start']:roi['y_end'], roi['x_start']:roi['x_end']],
-                )
-
-        # find the best match in the input video to the template passed in
-        frame_adjusted = intensityAdjusted(video_to_search.frameGray())
-        match_results = cv.matchTemplate(frame_adjusted, template_to_find, cv.TM_CCOEFF)
-        _, match_measure, _, match_coordinates = cv.minMaxLoc(match_results)
-        if match_measure > best_match_measure:
-            best_match_measure = match_measure
-            best_match_coordinates = match_coordinates
-            best_match_frame = frame
-            best_match_frame_gray = video_to_search.frameGray()
+                return new_template, new_template_grey
+            print("...No ROI selected. Presenting the next frame...")
+        else:
+            # find the best match in the input video to the template passed in
+            frame_adjusted = intensityAdjusted(video_to_search.frameGray())
+            match_results = cv.matchTemplate(frame_adjusted, template_to_find, cv.TM_CCOEFF)
+            _, match_measure, _, match_coordinates = cv.minMaxLoc(match_results)
+            if match_measure > best_match_measure:
+                best_match_measure = match_measure
+                best_match_coordinates = match_coordinates
+                best_match_frame = frame
+                best_match_frame_gray = video_to_search.frameGray()
 
         video_to_search.next()
 
@@ -552,13 +550,18 @@ def userDrawnROI(input_image: np.ndarray, title_text: str = None) -> Dict:
     Returns:
       ROI selected by the user from the input image.
     """
-    # create a window that can be resized
+
+    # create a resizeable window big enough to draw roi's and see the heading text
     if title_text is None:
         roi_selector_window_name = "DRAW RECTANGULAR ROI"
     else:
         roi_selector_window_name = title_text
     roi_gui_flags = cv.WINDOW_KEEPRATIO | cv.WINDOW_NORMAL  # can resize the window
     cv.namedWindow(roi_selector_window_name, flags=roi_gui_flags)
+    # we resize so the user can easily select ROIs and read the title instructions
+    cv.resizeWindow(roi_selector_window_name, width=1280, height=720)
+    # we move to arbitrary coordinates closer to the screen center
+    cv.moveWindow(roi_selector_window_name, x=200, y=200)
 
     # open a roi selector in the resizeable window we just created
     roi_selection = cv.selectROI(roi_selector_window_name, input_image, showCrosshair=False)
@@ -599,7 +602,7 @@ def intensityAdjusted(image_to_adjust: np.ndarray, adjust_gamma: bool = False) -
         ).astype(np.float32)
     current_image_min: float = np.min(image_to_adjust)
     current_image_max: float = np.max(image_to_adjust)
-    current_image_range: float = current_image_max - current_image_min
+    current_image_range: float = max(1.0, current_image_max - current_image_min)
     adjusted_image = rescaled(
         intensity=image_to_adjust,
         intensity_min=current_image_min,
@@ -693,6 +696,39 @@ def matchResults(
     ]
 
     return best_match_measure, best_match_sub_coordinates, best_match_rotation
+
+
+def roiInfoFromTemplate(
+    search_image_gray: np.ndarray,
+    template_image_gray: np.ndarray,
+    sub_pixel_search_increment: float = None,
+    sub_pixel_refinement_radius: int = None,
+    sub_pixel_search_offset_right: bool = False
+) -> Dict:
+    """ Finds the best match ROI for a template within search_image """
+    template_image = intensityAdjusted(template_image_gray)
+    search_set = [
+        {
+            'angle': 0.0,
+            'frame': intensityAdjusted(search_image_gray)
+        }
+    ]
+    _, match_coordinates, _ = matchResults(
+        search_set=search_set,
+        template_to_match=template_image,
+        sub_pixel_search_increment=sub_pixel_search_increment,
+        sub_pixel_refinement_radius=sub_pixel_refinement_radius,
+        sub_pixel_search_offset_right=sub_pixel_search_offset_right
+    )
+    roi_origin_x, roi_origin_y = match_coordinates
+    roi_height = template_image.shape[0]
+    roi_width = template_image.shape[1]
+    return {
+        'x_start': int(roi_origin_x),
+        'x_end': int(roi_origin_x + roi_width),
+        'y_start': int(roi_origin_y),
+        'y_end': int(roi_origin_y + roi_height),
+    }
 
 
 def bestSubPixelMatch(

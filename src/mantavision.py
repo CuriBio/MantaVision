@@ -15,8 +15,12 @@ def runCa2Analysis(args: Dict):
     analyzeCa2Data(
         path_to_data=args.ca2_analysis_path_to_data,
         expected_frequency_hz=args.ca2_analysis_expected_frequency_hz,
+        low_signal_to_noise=args.ca2_analysis_low_signal_to_noise,
         save_result_plots=args.ca2_analysis_save_result_plots,
-        bg_subtraction_method=args.ca2_analysis_bg_subtraction_method
+        analysis_method=args.ca2_analysis_method,
+        dynamic_roi_template_path=args.ca2_analysis_dynamic_roi_template_path,
+        reference_roi_template_path=args.ca2_analysis_reference_roi_template_path,
+        select_background_once=args.ca2_analysis_select_background_once
     )
 
 
@@ -93,7 +97,6 @@ def saveCurrentFieldValues(
     current_field_values_file_path: str
 ):
     """ write the current ui values to prev_run_values_file_path """
-    
     field_values = previous_field_values
     if args.actions == 'Tracking':
         field_values['tracking_video_dir'] = args.tracking_video_dir
@@ -122,7 +125,11 @@ def saveCurrentFieldValues(
         field_values['ca2_analysis_path_to_data'] = args.ca2_analysis_path_to_data
         field_values['ca2_analysis_expected_frequency_hz'] = args.ca2_analysis_expected_frequency_hz
         field_values['ca2_analysis_save_result_plots'] = args.ca2_analysis_save_result_plots
-        field_values['ca2_analysis_bg_subtraction_method'] = args.ca2_analysis_bg_subtraction_method
+        field_values['ca2_analysis_method'] = args.ca2_analysis_method
+        field_values['ca2_analysis_low_signal_to_noise'] = args.ca2_analysis_low_signal_to_noise
+        field_values['ca2_analysis_dynamic_roi_template_path'] = args.ca2_analysis_dynamic_roi_template_path
+        field_values['ca2_analysis_reference_roi_template_path'] = args.ca2_analysis_reference_roi_template_path
+        field_values['ca2_analysis_select_background_once'] = args.ca2_analysis_select_background_once
     with open(current_field_values_file_path, 'w') as outfile:
         writeJSON(field_values, outfile, indent=4)
 
@@ -153,7 +160,11 @@ def defaultFieldValues() -> Dict:
         'ca2_analysis_path_to_data': None,
         'ca2_analysis_expected_frequency_hz': 1.0,
         'ca2_analysis_save_result_plots': False,
-        'ca2_analysis_bg_subtraction_method': None,
+        'ca2_analysis_method': None,
+        'ca2_analysis_low_signal_to_noise': False,
+        'ca2_analysis_dynamic_roi_template_path': None,
+        'ca2_analysis_reference_roi_template_path': None,
+        'ca2_analysis_select_background_once': False
     }
 
 
@@ -220,7 +231,7 @@ def main():
         metavar='Template Path',        
         help='path to an image that is a template ROI to track\n[leave blank to draw a ROI]',
         widget='FileChooser',
-        type=str,        
+        type=str,
         default=None,
         gooey_options={'initial_value': initial_values['tracking_template_path']}
     )
@@ -238,9 +249,9 @@ def main():
         metavar='Output Frames',
         help=' Output individual tracking results frames',
         action='store_true',
-        default=initial_values['tracking_output_frames']
+        gooey_options={'initial_value': initial_values['tracking_output_frames']}
     )
-    # TODO: use default_values for all help text with an e.g. value
+    # TODO: use default_values for the value of any help text with "e.g. {value}"
     default_values = defaultFieldValues()
     default_guid_match_search_seconds = default_values['tracking_guide_match_search_seconds']
     guide_match_search_seconds_help = f"search this many seconds of the video for "
@@ -328,6 +339,7 @@ def main():
         help='path to a template image of the left post',
         widget='FileChooser',
         type=str,
+        default=None,
         gooey_options={'full_width': True, 'initial_value': initial_values['morphology_left_template_image_path']}
     )
     morphology_parser.add_argument(
@@ -336,6 +348,7 @@ def main():
         help='path to a template image of the right post',
         widget='FileChooser',
         type=str,
+        default=None,
         gooey_options={'full_width': True, 'initial_value': initial_values['morphology_right_template_image_path']}
     )    
     morphology_parser.add_argument(
@@ -401,22 +414,55 @@ def main():
         gooey_options={'initial_value': initial_values['ca2_analysis_expected_frequency_hz']}
     )
     ca2_analysis_parser.add_argument(
-        'ca2_analysis_bg_subtraction_method',
-        metavar='Background Subtraction',
-        help='Method to Estimate Background and Subtract From Signal',
-        choices=['None', 'Auto_ROIs', 'Fixed_ROIs', 'Frame_Mean', 'Lowpass'],
-        default=initial_values['ca2_analysis_bg_subtraction_method']
+        'ca2_analysis_method',
+        metavar='Method',
+        help='Method to Extract Signal',
+        choices=[
+            'Auto_Determine_Tissue_Morphology',
+            'Auto_Adjusted_Tissue_ROI',
+            'Fixed_Tissue_ROI'
+        ],
+        default=initial_values['ca2_analysis_method']
     )
     ca2_analysis_parser.add_argument(
         '--ca2_analysis_save_result_plots',
-        metavar='Save Signal Plots',
-        help=' Save Plots of the estimated signal with peaks and troughs indicated',
+        metavar='Analysis Plots',
+        help=' Produce plots of detected signal\n (with peaks and troughs marked)',
         action='store_true',
-        default=initial_values['ca2_analysis_save_result_plots']
+        gooey_options={'initial_value': initial_values['ca2_analysis_save_result_plots']}
     )
-    # TODO: add an option to output the background subtracted video
-    #       this is particularly useful when developing methods for background subtraction
-    #       to ensure the results are sensible
+    ca2_analysis_parser.add_argument(
+        '--ca2_analysis_select_background_once',
+        metavar='Draw Background ROI Once',
+        help=' Draw the background ROI once per batch\n (from the first video processed)',
+        action='store_true',
+        gooey_options={'initial_value': initial_values['ca2_analysis_select_background_once']}
+    )
+    ca2_analysis_parser.add_argument(
+        '--ca2_analysis_low_signal_to_noise',
+        metavar='Low Signal to Noise Adjustment',
+        help=' Auto detection of tissue ROI will try and compensate for low signal to noise (SLOW)',
+        action='store_true',
+        gooey_options={'initial_value': initial_values['ca2_analysis_low_signal_to_noise']}
+    )
+    ca2_analysis_parser.add_argument(
+        '--ca2_analysis_dynamic_roi_template_path',
+        metavar='Dynamic ROI Template Path',
+        help='path to a template image of the dynamic roi to track',
+        widget='FileChooser',
+        type=str,
+        default=None,
+        gooey_options={'full_width': True, 'initial_value': initial_values['ca2_analysis_dynamic_roi_template_path']}
+    )
+    ca2_analysis_parser.add_argument(
+        '--ca2_analysis_reference_roi_template_path',
+        metavar='Reference ROI Template Path',
+        help='path to a template image of the reference roi',
+        widget='FileChooser',
+        type=str,
+        default=None,
+        gooey_options={'full_width': True, 'initial_value': initial_values['ca2_analysis_reference_roi_template_path']}
+    )
 
     args = parser.parse_args()
     saveCurrentFieldValues(args, initial_values, mv_config_file_path)

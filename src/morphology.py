@@ -39,8 +39,8 @@ def computeMorphologyMetrics(
         os.mkdir(results_image_dir)
 
     template_info = {
-        'left': {'path': left_template_image_path, 'image': None},
-        'right': {'path': right_template_image_path, 'image': None}
+        'dynamic': {'path': left_template_image_path, 'image': None},
+        'reference': {'path': right_template_image_path, 'image': None}
     }
     for template_position, template_data in template_info.items():
         if template_data['path'] is not None:
@@ -126,7 +126,10 @@ def computeMorphologyMetrics(
     results_xlsx_path = os.path.join(results_dir, results_xlsx_name)
     runtime_parameters = {
       'search_image_path' : base_dir,
-      'template_image_paths': {'left': template_info['left']['path'], 'right': template_info['right']['path']},
+      'template_image_paths': {
+          'dynamic': template_info['dynamic']['path'],
+          'reference': template_info['reference']['path']
+      },
       'sub_pixel_search_increment' : sub_pixel_search_increment,
       'sub_pixel_refinement_radius' : sub_pixel_refinement_radius,
       'microns_per_pixel': microns_per_pixel,
@@ -195,6 +198,7 @@ def morphologyMetricsForImage(
   template_refinement_radius: int = 40,
   edge_finding_smoothing_radius: int = 1,
   draw_tissue_roi_only: bool = False,
+  low_signal_to_noise: bool = False,
   sub_pixel_search_increment: float = None,
   sub_pixel_refinement_radius: float = None
 ) -> Tuple[np.ndarray, Dict]:
@@ -204,14 +208,21 @@ def morphologyMetricsForImage(
 
   search_image_gray = cv.cvtColor(search_image, cv.COLOR_BGR2GRAY).astype(float)
   search_image_gray = normalized(search_image_gray, new_range=65536.0)
-  smoothed_image = smoothedHorizontally(
-      search_image_gray,
-      sigma=10
-  )
-  smoothed_image = medianFiltered(
-      smoothed_image,
-      filter_radius=4
-  )
+  if low_signal_to_noise:
+      smoothed_image = smoothedHorizontally(
+          search_image_gray,
+          sigma=10
+      )
+      smoothed_image = medianFiltered(
+          smoothed_image,
+          filter_radius=4
+      )
+  else:
+      smoothed_image = uniformFiltered(
+          search_image_gray,
+          filter_radius=6
+      )
+
   # compute edge map
   edge_image = yGradMag(smoothed_image)
 
@@ -221,9 +232,9 @@ def morphologyMetricsForImage(
   #  the moving average operation
 
   # compute the distance between the inner sides of each ROI
-  left_roi = rois_info['left']
+  left_roi = rois_info['dynamic']
   left_vertical_midpoint = (left_roi['y_start'] + left_roi['y_end'])/2
-  right_roi = rois_info['right']
+  right_roi = rois_info['reference']
   right_vertical_midpoint = (right_roi['y_start'] + right_roi['y_end'])/2
   vertical_midpoint = (left_vertical_midpoint + right_vertical_midpoint)/2
   left_distance_marker_x = left_roi['x_end']
@@ -317,6 +328,7 @@ def morphologyMetricsForImage(
   all_points = [(left_points, edge_values_middle - 1, -1), (right_points, edge_values_middle + 1, 1)]
   edge_point_details = [(top_edge_midpoint, top_edge_values), (bottom_edge_midpoint, bottom_edge_values)]
   edge_search_radius = 10
+  image_vertical_midpoint = int(edge_image.shape[0]/2)
   for points_to_find_edges, start, direction in all_points:
     if direction < 1:
       pass  # moving average should be with points ot the right up to the midpoint
@@ -340,23 +352,27 @@ def morphologyMetricsForImage(
         else:
           end_point_for_avg = edge_value_index
           start_point_for_avg = max(edge_values_middle, edge_value_index - direction*edge_finding_smoothing_radius)
-        prev_edge_value_avg = np.average(edge_values[start_point_for_avg:end_point_for_avg])
+        prev_edge_value_avg = np.mean(edge_values[start_point_for_avg:end_point_for_avg])
+        if np.isnan(prev_edge_value_avg):
+            prev_edge_value_avg = image_vertical_midpoint
         prev_edge_value = round(prev_edge_value_avg)
 
+  # increment the bottom edges so those end points are included in computations.
+  # otherwise, distances etc are computed as 1 less because the end point isn't included
+  bottom_edge_values += 1
+
   # draw the tissue roi and other landmarks on a results image
-  # edge_image = normalized(edge_image, new_range=256).astype(np.uint8)
-  # results_image = cv.merge((edge_image, edge_image, edge_image))
   results_image = search_image.copy().astype(np.uint8)
 
   # draw the upper edges
-  red_bgr = (0, 0, 128)
+  tissue_edge_colour = (0, 0, 128)
   lower_edge_points_to_draw = zip(all_points_to_find_edges.astype(np.int32), bottom_edge_values.astype(np.int32))
   for x_pos, y_pos in lower_edge_points_to_draw:
     cv.circle(
       results_image,
       center=(x_pos, y_pos),
       radius=2,
-      color=red_bgr,
+      color=tissue_edge_colour,
       thickness=3,
       lineType=cv.LINE_AA
     )
@@ -367,19 +383,22 @@ def morphologyMetricsForImage(
       results_image,
       center=(x_pos, y_pos),
       radius=2,
-      color=red_bgr,
+      color=tissue_edge_colour,
       thickness=3,
       lineType=cv.LINE_AA
     )
   # draw the left ROI inner edge object vertical thickness line
-  green_bgr = (0, 255, 0)
+  if draw_tissue_roi_only:
+      vertical_line_colour = tissue_edge_colour
+  else:
+      vertical_line_colour = (0, 255, 0)
   left_end_point_upper_edge_pos = round(top_edge_values[0])
   left_end_point_lower_edge_pos = round(bottom_edge_values[0])
   cv.line(
     results_image,
     pt1=(left_distance_marker_x, left_end_point_lower_edge_pos),
     pt2=(left_distance_marker_x, left_end_point_upper_edge_pos),
-    color=green_bgr,
+    color=vertical_line_colour,
     thickness=3,
     lineType=cv.LINE_AA
   )
@@ -390,32 +409,10 @@ def morphologyMetricsForImage(
     results_image,
     pt1=(right_distance_marker_x, right_end_point_lower_edge_pos),
     pt2=(right_distance_marker_x, right_end_point_upper_edge_pos),
-    color=green_bgr,
+    color=vertical_line_colour,
     thickness=3,
     lineType=cv.LINE_AA
   )
-  if not draw_tissue_roi_only:
-      # draw the horizontal midpoint object vertical thickness line
-      midpoint_point_upper_edge_pos = round(top_edge_median)
-      midpoint_point_lower_edge_pos = round(bottom_edge_median)
-      cv.line(
-        results_image,
-        pt1=(int(horizontal_midpoint), midpoint_point_upper_edge_pos),
-        pt2=(int(horizontal_midpoint), midpoint_point_lower_edge_pos),
-        color=green_bgr,
-        thickness=3,
-        lineType=cv.LINE_AA
-      )
-      # draw the horizontal line between left and right ROI inner edges
-      blue_bgr = (255, 0, 0)
-      cv.line(
-        results_image,
-        pt1=(left_distance_marker_x, int(left_vertical_midpoint)),
-        pt2=(right_distance_marker_x, int(right_vertical_midpoint)),
-        color=blue_bgr,
-        thickness=3,
-        lineType=cv.LINE_AA
-      )
 
   if draw_tissue_roi_only:
     tissue_roi_metrics = {
@@ -425,6 +422,28 @@ def morphologyMetricsForImage(
         'y_end_positions': bottom_edge_values
     }
     return results_image, tissue_roi_metrics
+
+  # draw the vertical line at the horizontal midpoint
+  midpoint_point_upper_edge_pos = round(top_edge_median)
+  midpoint_point_lower_edge_pos = round(bottom_edge_median)
+  cv.line(
+    results_image,
+    pt1=(int(horizontal_midpoint), midpoint_point_upper_edge_pos),
+    pt2=(int(horizontal_midpoint), midpoint_point_lower_edge_pos),
+    color=vertical_line_colour,
+    thickness=3,
+    lineType=cv.LINE_AA
+  )
+  # draw the horizontal line between left and right ROI inner edges
+  horizontal_midline_colour = (255, 0, 0)
+  cv.line(
+    results_image,
+    pt1=(left_distance_marker_x, int(left_vertical_midpoint)),
+    pt2=(right_distance_marker_x, int(right_vertical_midpoint)),
+    color=horizontal_midline_colour,
+    thickness=3,
+    lineType=cv.LINE_AA
+  )
 
   # compute the vertical distance between "edges" all edge points estimated by walking outward
   left_end_point_thickness = microns_per_pixel*(bottom_edge_values[0] - top_edge_values[0])
@@ -697,17 +716,6 @@ def maxEdges(
   '''
 
   input_array_gradmag_ma = movingAverage(input_array_gradmag, moving_average_operator)
-
-    # plt.plot(input_array_gradmag_ma, label='Gradient Magnitude of vertical line at midpoint', color = 'r')
-    # gradient_cumulative_sum = np.cumsum(input_array_gradmag)
-    # plt.show()
-    # # gradient_cumulative_sum_ma = np.convolve(
-    # #   gradient_cumulative_sum,
-    # #   np.ones(len_of_average)/len_of_average,
-    # #   mode='valid'
-    # # )
-    # plt.plot(gradient_cumulative_sum, label='Cummulative Distribution of Gradient', color = 'g')
-    # plt.show()
 
   # first find what we presume is one of two tissue edges using the highest intensity gradmag
   max_intensity_pos = np.argmax(input_array_gradmag_ma)
