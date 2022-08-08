@@ -550,13 +550,18 @@ def userDrawnROI(input_image: np.ndarray, title_text: str = None) -> Dict:
     Returns:
       ROI selected by the user from the input image.
     """
-    # create a window that can be resized
+
+    # create a resizeable window big enough to draw roi's and see the heading text
     if title_text is None:
         roi_selector_window_name = "DRAW RECTANGULAR ROI"
     else:
         roi_selector_window_name = title_text
     roi_gui_flags = cv.WINDOW_KEEPRATIO | cv.WINDOW_NORMAL  # can resize the window
     cv.namedWindow(roi_selector_window_name, flags=roi_gui_flags)
+    # we resize so the user can easily select ROIs and read the title instructions
+    cv.resizeWindow(roi_selector_window_name, width=1280, height=720)
+    # we move to arbitrary coordinates closer to the screen center
+    cv.moveWindow(roi_selector_window_name, x=200, y=200)
 
     # open a roi selector in the resizeable window we just created
     roi_selection = cv.selectROI(roi_selector_window_name, input_image, showCrosshair=False)
@@ -691,6 +696,39 @@ def matchResults(
     ]
 
     return best_match_measure, best_match_sub_coordinates, best_match_rotation
+
+
+def roiInfoFromTemplate(
+    search_image_gray: np.ndarray,
+    template_image_gray: np.ndarray,
+    sub_pixel_search_increment: float = None,
+    sub_pixel_refinement_radius: int = None,
+    sub_pixel_search_offset_right: bool = False
+) -> Dict:
+    """ Finds the best match ROI for a template within search_image """
+    template_image = intensityAdjusted(template_image_gray)
+    search_set = [
+        {
+            'angle': 0.0,
+            'frame': intensityAdjusted(search_image_gray)
+        }
+    ]
+    _, match_coordinates, _ = matchResults(
+        search_set=search_set,
+        template_to_match=template_image,
+        sub_pixel_search_increment=sub_pixel_search_increment,
+        sub_pixel_refinement_radius=sub_pixel_refinement_radius,
+        sub_pixel_search_offset_right=sub_pixel_search_offset_right
+    )
+    roi_origin_x, roi_origin_y = match_coordinates
+    roi_height = template_image.shape[0]
+    roi_width = template_image.shape[1]
+    return {
+        'x_start': int(roi_origin_x),
+        'x_end': int(roi_origin_x + roi_width),
+        'y_start': int(roi_origin_y),
+        'y_end': int(roi_origin_y + roi_height),
+    }
 
 
 def bestSubPixelMatch(
