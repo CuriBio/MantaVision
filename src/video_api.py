@@ -1,4 +1,5 @@
 import numpy as np
+import cv2 as cv
 from typing import Dict
 from fractions import Fraction
 from av import open as OpenVideo
@@ -49,6 +50,8 @@ class VideoWriter:
 
         if self.pixel_format is None:
             self.pixel_format = 'yuv420p'  # 'yuv444p' #
+        elif 'yuvj' in self.pixel_format:
+            self.pixel_format = self.pixel_format.replace('yuvj', 'yuv')
 
         if self.codec is None:
             if '.mkv' in self.path:
@@ -202,9 +205,11 @@ class PYAVReader():
         self.video_path = video_path
         self.container = OpenVideo(self.video_path)
         self.video_stream = self.container.streams.video[0]
-        self.num_frames = self.video_stream.frames
-        self.video_frames = self.container.decode(video=0)
+        # if 'yuvj' in self.video_stream.pix_fmt:
+        #     self.video_stream.pix_fmt = self.video_stream.pix_fmt.replace('yuvj', 'yuv')
         self.current_frame = None
+        self.video_frames = self.container.decode(video=0)
+        self.num_frames = self.video_stream.frames
         self.frame_num = -1
         self.initialiseStream()
         self._duration = float(self.video_stream.duration * self.timeBase())
@@ -242,7 +247,7 @@ class PYAVReader():
 
     def frameGray(self) -> np.ndarray:
         return orientedFrame(
-            self.current_frame.to_ndarray(format='gray'),
+            self.current_frame.to_ndarray(format='gray16le'),
             self.direction_sense
         )
 

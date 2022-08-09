@@ -9,19 +9,23 @@ from track_template import userDrawnROI
 from os_functions import contentsOfDir
 from waveform_analysis import waveFormAnalysis
 from video_api import VideoReader, VideoWriter, supported_file_extensions
-from morphology import morphologyMetricsForImage  #, roiInfoFromTemplates
+from morphology import morphologyMetricsForImage
 from track_template import trackTemplate, roiInfoFromTemplate
 from math import floor
+import zipfile
 import matplotlib.pyplot as plt
 pd.set_option("display.precision", 2)
 pd.set_option("display.expand_frame_repr", False)
 
 
-# TODO: update ca2 analysis function behaviour to accommodate if template paths are filled or not
-#       and act accordingly i.e. use the templates if they're provided, or ask the user to draw them otherwise.
+# TODO: ROI selection instructions aren't printing in the status window until the very end of analysis.
+#  make those instructions on how to do ROI selection (i.e. select ROI, press enter) print in the status window
+#  i.e. console output OR, perhaps have some text in the ui that explains what to do
+
 # TODO: attempt to determine if the video has low S/N and run morphology in low_s/n mode?
 #       it might be enough to just determine if the variance of the first frame is > blah, or
 #       even if the mean and median are more than x apart etc
+
 # TODO: add the same contraction vector drop down as is used in tracking
 #       this will then determine which edge of the tissue roi is formed by
 #       the user drawn or template guided rois
@@ -152,7 +156,8 @@ def signalDataFromVideo(
             height=input_video_stream.frameVideoHeight(),
             time_base=input_video_stream.timeBase(),
             fps=input_video_stream.avgFPS(),
-            bitrate=input_video_stream.bitRate()
+            bitrate=input_video_stream.bitRate(),
+            pixel_format=input_video_stream.pixelFormat()
         )
     else:
         video_writer = None
@@ -395,10 +400,22 @@ def analyzeCa2Data(
     expected_min_peak_height: float = None
 ):
     """ """
+
+    # get all the video files to be processed and set up the results directory structure
     base_dir, files_to_analyze = contentsOfDir(dir_path=path_to_data, search_terms=supported_file_extensions)
     results_dir_name = "results_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     results_dir = os.path.join(base_dir, results_dir_name)
     os.mkdir(results_dir)
+    video_dir = os.path.join(results_dir, 'video')
+    os.mkdir(video_dir)
+    xlsx_dir = os.path.join(results_dir, 'xlsx')
+    os.mkdir(xlsx_dir)
+    plot_dir = os.path.join(results_dir, 'plot')
+    os.mkdir(plot_dir)
+    sdk_results_dir = os.path.join(results_dir, 'sdk')
+    os.mkdir(sdk_results_dir)
+    sdk_xlsx_dir = os.path.join(sdk_results_dir, 'xlsx')
+    os.mkdir(sdk_xlsx_dir)
 
     # collect bg & tissue or dynamic & reference ROIs for all the videos to be analyzed, up front, so that
     # all the videos can then be processed automatically without any user interaction
@@ -422,7 +439,13 @@ def analyzeCa2Data(
         if select_background_once:
             background_roi = video_rois['background']
 
+    num_files_to_analyze = len(files_to_analyze)
+    file_num_being_analyzed = 0
+    print()
     for file_name, file_extension in files_to_analyze:
+        file_num_being_analyzed += 1
+        print(f"\nAnalyzing {file_name} ({file_num_being_analyzed} of {num_files_to_analyze})...")
+
         if all_videos_rois is None:
             video_roi_info = None
             output_video_path = None
@@ -434,7 +457,7 @@ def analyzeCa2Data(
                 output_file_extension = file_extension
             output_video_file_name = file_name + "-with_rois" + output_file_extension
 
-            output_video_path = os.path.join(results_dir, output_video_file_name)
+            output_video_path = os.path.join(video_dir, output_video_file_name)
         input_video_file_path = os.path.join(base_dir, file_name + file_extension)
         signal_data = signalDataFromVideo(
             input_video_file_path,
@@ -445,27 +468,10 @@ def analyzeCa2Data(
         )
         if signal_data is None:
             raise RuntimeError("Error. Signal from video could not be extracted")
+
+        # write out the analysis results
         time_stamps = signal_data['time_stamps']
         input_signal = signal_data['signal_values']
-        tissue_means = signal_data['tissue_means']
-        background_means = signal_data['background_means']
-
-        signal_data_file_path = os.path.join(results_dir, file_name + '-signal_data.xlsx')
-        signalDataToCSV(
-            time_stamps,
-            input_signal,
-            tissue_means,
-            background_means,
-            signal_data_file_path
-        )
-
-        signal_data_for_sdk_file_path = os.path.join(results_dir, file_name + '-signal_data_for_sdk.xlsx')
-        signalDataForSDK(
-            time_stamps,
-            input_signal,
-            signal_data_for_sdk_file_path
-        )
-
         ca2_analysis = waveFormAnalysis(
             input_signal,
             time_stamps,
@@ -480,12 +486,18 @@ def analyzeCa2Data(
             print("No analysis results were written")
             print("\n")
             continue
-
-        path_to_ca2_analysis_results_file = os.path.join(results_dir, file_name + '-results.xlsx')
-        ca2AnalysisResultsToCSV(
-            ca2_analysis,
-            path_to_ca2_analysis_results_file,
-        )
+        else:
+            tissue_means = signal_data['tissue_means']
+            background_means = signal_data['background_means']
+            path_to_ca2_analysis_results_file = os.path.join(xlsx_dir, file_name + '-results.xlsx')
+            ca2AnalysisResultsToCSV(
+                time_stamps,
+                input_signal,
+                tissue_means,
+                background_means,
+                ca2_analysis,
+                path_to_ca2_analysis_results_file
+            )
 
         if display_results:
             print()
@@ -499,7 +511,7 @@ def analyzeCa2Data(
 
         if display_results or save_result_plots is not None:
             if save_result_plots:
-                plot_file_path = os.path.join(results_dir, file_name + '-plot.png')
+                plot_file_path = os.path.join(plot_dir, file_name + '-plot.png')
             else:
                 plot_file_path = None
             plotCa2Signals(
@@ -512,13 +524,22 @@ def analyzeCa2Data(
                 plot_file_path=plot_file_path
             )
 
-
-def signalDataFromXLSX(path_to_data: str) -> Tuple[np.ndarray]:
-    ''' Reads in an xlsx file containing ca2 experiment data and
-        returns a tuple of numpy arrays (time stamps, signal) '''
-    ca2_data = pd.read_excel(path_to_data, usecols=[1, 5], dtype=np.float32)
-    ca2_data = ca2_data.to_numpy(copy=True).T
-    return (ca2_data[0], ca2_data[1])
+        signal_data_for_sdk_file_path = os.path.join(sdk_xlsx_dir, file_name + '-signal_data_for_sdk.xlsx')
+        signalDataForSDK(
+            time_stamps,
+            input_signal,
+            signal_data_for_sdk_file_path,
+            videoMetaDataForSDK(base_dir, file_name, file_extension)
+        )
+        # create a zip archive and write all the xlsx files to it
+        xlsx_archive_file_path = os.path.join(sdk_results_dir, 'sdk_xlsx-results.zip')
+        xlsx_archive = zipfile.ZipFile(xlsx_archive_file_path, 'w')
+        for sdk_dir_name, _, sdk_file_names in os.walk(sdk_xlsx_dir):
+            for sdk_file_name in sdk_file_names:
+                if 'sdk' in sdk_file_name:  # only include the xlsx files intended for the sdk
+                    file_path = os.path.join(sdk_dir_name, sdk_file_name)
+                    xlsx_archive.write(file_path, os.path.basename(file_path))
+        xlsx_archive.close()
 
 
 def plotCa2Signals(
@@ -550,41 +571,21 @@ def plotCa2Signals(
     plt.close()
 
 
-def signalDataForSDK(
-    time_stamps: np.ndarray,
-    input_signal: np.ndarray,
-    sdk_signal_data_file_path: str
-):
-    workbook = openpyxl.Workbook()
-    sheet = workbook.active
-
-    # set the column headings
-    heading_row = 1
-    time_stamp_column = 1
-    sheet.cell(heading_row, time_stamp_column).value = 'time'
-    signal_value_column = time_stamp_column + 1
-    sheet.cell(heading_row, signal_value_column).value = 'signal'
-
-    # set the data values
-    data_row_start = heading_row + 1
-    num_data_points = len(time_stamps)
-    for data_point_index in range(0, num_data_points):
-        row_num = data_point_index + data_row_start
-        sheet.cell(row_num, time_stamp_column).value = time_stamps[data_point_index]
-        sheet.cell(row_num, signal_value_column).value = input_signal[data_point_index]
-
-    workbook.save(filename=sdk_signal_data_file_path)
-
-
-def signalDataToCSV(
+def ca2AnalysisResultsToCSV(
     time_stamps: np.ndarray,
     input_signal: np.ndarray,
     tissue_means: np.ndarray,
     background_means: np.ndarray,
-    output_data_file_path: str
+    ca2_analysis: Dict,
+    output_file_path: str
 ):
+    """ """
+
     workbook = openpyxl.Workbook()
+
+    # create the first worksheet with the raw signal data
     sheet = workbook.active
+    sheet.title = 'Signal Data'
 
     # set the column headings
     heading_row = 1
@@ -610,15 +611,8 @@ def signalDataToCSV(
         sheet.cell(row_num, fg_mean_value_column).value = tissue_means[data_point_index]
         sheet.cell(row_num, bg_mean_value_column).value = background_means[data_point_index]
 
-    workbook.save(filename=output_data_file_path)
-
-
-def ca2AnalysisResultsToCSV(
-        ca2_analysis: Dict,
-        path_to_results_file: str,
-):
-    workbook = openpyxl.Workbook()
-    sheet = workbook.active
+    # create a second worksheet and write out the analysis results
+    sheet = workbook.create_sheet('Ca2+ Analysis')
 
     # set the column headings
     heading_row = 1
@@ -663,7 +657,73 @@ def ca2AnalysisResultsToCSV(
     sheet.cell(row_num, metric_type_column).value = 'frequency'
     sheet.cell(row_num, metric_value_column).value = avg_frequency
 
-    workbook.save(filename=path_to_results_file)
+    workbook.save(filename=output_file_path)
+
+
+def signalDataForSDK(
+    time_stamps: np.ndarray,
+    input_signal: np.ndarray,
+    sdk_signal_data_file_path: str,
+    video_meta_data: Dict
+):
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+
+    # set the column headings
+    heading_row = 1
+    time_stamp_column = 1
+    sheet.cell(heading_row, time_stamp_column).value = 'time'
+    signal_value_column = time_stamp_column + 1
+    sheet.cell(heading_row, signal_value_column).value = 'signal'
+
+    # set the data values
+    data_row_start = heading_row + 1
+    num_data_points = len(time_stamps)
+    for data_point_index in range(0, num_data_points):
+        row_num = data_point_index + data_row_start
+        sheet.cell(row_num, time_stamp_column).value = time_stamps[data_point_index]
+        sheet.cell(row_num, signal_value_column).value = input_signal[data_point_index]
+
+    # add meta data
+    sheet['E2'] = video_meta_data['well_name']
+    sheet['E3'] = video_meta_data['video_date'] + ' 00:00:00'
+    sheet['E4'] = 'NA'  # plate barcode
+    sheet['E5'] = video_meta_data['frames_per_second']
+    sheet['E6'] = 'y'  # do twitch's point up
+    sheet['E7'] = 'NA'  # microscope name
+
+    workbook.save(filename=sdk_signal_data_file_path)
+
+
+def videoMetaDataForSDK(base_dir: str, file_name: str, file_extension: str) -> Dict:
+    well_name = 'X000'
+    date_stamp = '2020-02-02'
+    num_chars_in_datestamp = len(date_stamp)
+    num_chars_in_well_name = len(well_name)
+    min_num_chars_in_file_name = num_chars_in_datestamp + num_chars_in_well_name
+    if len(file_name) >= min_num_chars_in_file_name:
+        file_name_length = len(file_name)
+        well_name = file_name[file_name_length - num_chars_in_well_name:]
+        date_stamp = file_name[:num_chars_in_datestamp]
+
+    video_file_path = os.path.join(base_dir, file_name + file_extension)
+    input_video_stream = VideoReader(video_file_path)
+    frames_per_second = input_video_stream.avgFPS()
+    input_video_stream.close()
+
+    return {
+        'well_name': well_name,
+        'video_date': date_stamp,
+        'frames_per_second': frames_per_second
+    }
+
+
+def signalDataFromXLSX(path_to_data: str) -> Tuple[np.ndarray]:
+    ''' Reads in an xlsx file containing ca2 experiment data and
+        returns a tuple of numpy arrays (time stamps, signal) '''
+    ca2_data = pd.read_excel(path_to_data, usecols=[1, 5], dtype=np.float32)
+    ca2_data = ca2_data.to_numpy(copy=True).T
+    return (ca2_data[0], ca2_data[1])
 
 
 def dataMode(input_data: np.ndarray) -> float:
