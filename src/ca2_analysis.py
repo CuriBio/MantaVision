@@ -18,10 +18,6 @@ pd.set_option("display.precision", 2)
 pd.set_option("display.expand_frame_repr", False)
 
 
-# TODO: ROI selection instructions aren't printing in the status window until the very end of analysis.
-#  make those instructions on how to do ROI selection (i.e. select ROI, press enter) print in the status window
-#  i.e. console output OR, perhaps have some text in the ui that explains what to do
-
 # TODO: attempt to determine if the video has low S/N and run morphology in low_s/n mode?
 #       it might be enough to just determine if the variance of the first frame is > blah, or
 #       even if the mean and median are more than x apart etc
