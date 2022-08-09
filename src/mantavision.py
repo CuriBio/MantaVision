@@ -426,22 +426,22 @@ def main():
     )
     ca2_analysis_parser.add_argument(
         '--ca2_analysis_save_result_plots',
-        metavar='Analysis Plots',
-        help=' Produce plots of detected signal\n (with peaks and troughs marked)',
+        metavar='Plots',
+        help=' Generate plots of detected signal\n with peaks and troughs marked',
         action='store_true',
         gooey_options={'initial_value': initial_values['ca2_analysis_save_result_plots']}
     )
     ca2_analysis_parser.add_argument(
         '--ca2_analysis_select_background_once',
         metavar='Draw Background ROI Once',
-        help=' Draw the background ROI once per batch\n (from the first video processed)',
+        help=' Draw background ROI once per batch,\n from the first video processed',
         action='store_true',
         gooey_options={'initial_value': initial_values['ca2_analysis_select_background_once']}
     )
     ca2_analysis_parser.add_argument(
         '--ca2_analysis_low_signal_to_noise',
         metavar='Low Signal to Noise Adjustment',
-        help=' Auto detection of tissue ROI will try and compensate for low signal to noise (SLOW)',
+        help=' Auto detection of tissue ROI will compensate for low signal to noise (VERY SLOW)',
         action='store_true',
         gooey_options={'initial_value': initial_values['ca2_analysis_low_signal_to_noise']}
     )
