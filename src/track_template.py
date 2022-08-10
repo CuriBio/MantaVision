@@ -556,13 +556,12 @@ def userDrawnROI(input_image: np.ndarray, title_text: str = None) -> Dict:
         roi_selector_window_name = "DRAW RECTANGULAR ROI"
     else:
         roi_selector_window_name = title_text
-    roi_gui_flags = cv.WINDOW_KEEPRATIO | cv.WINDOW_NORMAL  # can resize the window
+    roi_gui_flags = cv.WINDOW_KEEPRATIO | cv.WINDOW_NORMAL | cv.WINDOW_GUI_NORMAL
     cv.namedWindow(roi_selector_window_name, flags=roi_gui_flags)
     # we resize so the user can easily select ROIs and read the title instructions
     cv.resizeWindow(roi_selector_window_name, width=1280, height=720)
     # we move to arbitrary coordinates closer to the screen center
     cv.moveWindow(roi_selector_window_name, x=200, y=200)
-
     # open a roi selector in the resizeable window we just created
     roi_selection = cv.selectROI(roi_selector_window_name, input_image, showCrosshair=False)
     cv.destroyAllWindows()

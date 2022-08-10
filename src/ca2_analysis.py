@@ -18,6 +18,11 @@ pd.set_option("display.precision", 2)
 pd.set_option("display.expand_frame_repr", False)
 
 
+# TODO: parallelize the analysis of each frame. i.e.
+#  if we have 10 processors, split up the frames into 10 contiguous sections
+#  and have each section processed independently by one process
+#  the final result is obtained by simple concatenation of each sections results in order
+
 # TODO: attempt to determine if the video has low S/N and run morphology in low_s/n mode?
 #       it might be enough to just determine if the variance of the first frame is > blah, or
 #       even if the mean and median are more than x apart etc
