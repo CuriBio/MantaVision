@@ -407,13 +407,6 @@ def main():
         gooey_options={'full_width': True, 'initial_value': initial_values['ca2_analysis_path_to_data']}
     )
     ca2_analysis_parser.add_argument(
-        'ca2_analysis_expected_frequency_hz',
-        metavar='Expected Frequency Hz',
-        help='Signal can be +/- 0.5Hz from this value',
-        type=float,
-        gooey_options={'initial_value': initial_values['ca2_analysis_expected_frequency_hz']}
-    )
-    ca2_analysis_parser.add_argument(
         'ca2_analysis_method',
         metavar='Method',
         help='Method to Extract Signal',
@@ -439,13 +432,6 @@ def main():
         gooey_options={'initial_value': initial_values['ca2_analysis_select_background_once']}
     )
     ca2_analysis_parser.add_argument(
-        '--ca2_analysis_low_signal_to_noise',
-        metavar='Low Signal to Noise Adjustment',
-        help=' Auto detection of tissue ROI will compensate for low signal to noise (VERY SLOW)',
-        action='store_true',
-        gooey_options={'initial_value': initial_values['ca2_analysis_low_signal_to_noise']}
-    )
-    ca2_analysis_parser.add_argument(
         '--ca2_analysis_dynamic_roi_template_path',
         metavar='Dynamic ROI Template Path',
         help='path to a template image of the dynamic roi to track',
@@ -462,6 +448,28 @@ def main():
         type=str,
         default=None,
         gooey_options={'full_width': True, 'initial_value': initial_values['ca2_analysis_reference_roi_template_path']}
+    )
+    ca2_analysis_parser.add_argument(
+        '--ca_tracking_spacer_1',
+        gooey_options={'visible': False}
+    )
+    ca2_analysis_parser.add_argument(
+        '--ca2_analysis_low_signal_to_noise',
+        metavar='Low Signal to Noise Adjustment',
+        help=' Auto detection of tissue ROI will compensate for low signal to noise\n (VERY SLOW)',
+        action='store_true',
+        gooey_options={'initial_value': initial_values['ca2_analysis_low_signal_to_noise']}
+    )
+    ca2_analysis_parser.add_argument(
+        '--ca2_analysis_expected_frequency_hz',
+        metavar='Frequency (Hz) Hint for Fixed ROI Method',
+        help='Fixed ROI method requires this and it must be +/- 0.5Hz from this value',
+        type=float,
+        gooey_options={'initial_value': initial_values['ca2_analysis_expected_frequency_hz']}
+    )
+    ca2_analysis_parser.add_argument(
+        '--ca_tracking_spacer_2',
+        gooey_options={'visible': False}
     )
 
     args = parser.parse_args()
