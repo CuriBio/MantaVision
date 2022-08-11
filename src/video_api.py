@@ -1,5 +1,6 @@
 import numpy as np
-import cv2 as cv
+import sys
+import os
 from typing import Dict
 from fractions import Fraction
 from av import open as OpenVideo
@@ -101,8 +102,24 @@ class VideoWriter:
 class VideoReader:
     """ Unified interface for reading videos of various formats ND2, mp4/avi ... """
     def __init__(self, video_path: str, reader_api: str = None, direction_sense: Dict = None):
+        self.is_nd2 = False
         self.video_path = video_path
         self.reader = self._set_reader(reader_api, direction_sense)
+        self._enableFormatBugWorkaround()
+
+    def _enableFormatBugWorkaround(self):
+        """ temporary hack to stop deprecated pixel format warnings being spewed all over the console output """
+        if not self.is_nd2:
+            if 'yuvj' in self.reader.video_stream.pix_fmt:
+                self.tmp_std_err = sys.stderr
+                devnull = open(os.devnull, 'w')
+                sys.stderr = devnull
+            else:
+                self.tmp_std_err = None
+
+    def _disableFormatBugWorkaround(self):
+        if self.tmp_std_err is not None:
+            sys.stderr = self.tmp_std_err
 
     def _apiFromPath(self) -> str:
         self.format_apis = [
@@ -119,6 +136,7 @@ class VideoReader:
         if reader_api is None:
             reader_api = self._apiFromPath()
         if reader_api == 'nd2':
+            self.is_nd2 = True
             return ND2VideoReader(self.video_path, direction_sense)
         return PYAVReader(self.video_path, direction_sense)
 
@@ -195,6 +213,7 @@ class VideoReader:
         return self.reader.initialiseStream()
 
     def close(self):
+        self._disableFormatBugWorkaround()
         return self.reader.close()
 
 
@@ -205,8 +224,6 @@ class PYAVReader():
         self.video_path = video_path
         self.container = OpenVideo(self.video_path)
         self.video_stream = self.container.streams.video[0]
-        # if 'yuvj' in self.video_stream.pix_fmt:
-        #     self.video_stream.pix_fmt = self.video_stream.pix_fmt.replace('yuvj', 'yuv')
         self.current_frame = None
         self.video_frames = self.container.decode(video=0)
         self.num_frames = self.video_stream.frames

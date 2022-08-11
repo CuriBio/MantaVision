@@ -71,7 +71,7 @@ def runTrackTemplate(config: Dict):
     for input_args in args:
         print(f'processing: {input_args["input_video_path"]}')
         video_tracking_start_time = time.time()
-        messages, tracking_results, frames_per_second, template, min_frame_number = trackTemplate(
+        messages, tracking_results, estimated_frequency, frames_per_second, template, min_frame_number = trackTemplate(
             input_args['input_video_path'],
             input_args['template_guide_image_path'],
             template_image,
@@ -130,7 +130,8 @@ def runTrackTemplate(config: Dict):
             'Microns Per Pixel': input_args['microns_per_pixel'],
             'Output Conversion Factor': input_args['output_conversion_factor'],
             'Sub Pixel Search Increment': input_args['sub_pixel_search_increment'],
-            'Sub Pixel Refinement Radius': input_args['sub_pixel_refinement_radius']
+            'Sub Pixel Refinement Radius': input_args['sub_pixel_refinement_radius'],
+            'Estimated Frequency': estimated_frequency
         }
         # fill in missing values in meta_data
         for md_key, md_value in meta_data.items():
@@ -154,6 +155,7 @@ def runTrackTemplate(config: Dict):
                 "INPUT_ARGS": input_args,
                 "ERROR_MSGS": error_msg,
                 "WARNING_MSGS": warning_msg,
+                "ESTIMATED_FREQUENCY": estimated_frequency,
                 "RESULTS": tracking_results,
             }
             with open(input_args['output_json_path'], 'w') as outfile:

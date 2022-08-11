@@ -4,7 +4,7 @@ import openpyxl
 import numpy as np
 import pandas as pd
 from datetime import datetime
-from typing import Tuple, Dict
+from typing import Tuple, Dict, List
 from track_template import userDrawnROI
 from os_functions import contentsOfDir
 from waveform_analysis import waveFormAnalysis
@@ -17,6 +17,11 @@ import matplotlib.pyplot as plt
 pd.set_option("display.precision", 2)
 pd.set_option("display.expand_frame_repr", False)
 
+
+# TODO: parallelize the analysis of each frame. i.e.
+#  if we have 10 processors, split up the frames into 10 contiguous sections
+#  and have each section processed independently by one process
+#  the final result is obtained by simple concatenation of each sections results in order
 
 # TODO: attempt to determine if the video has low S/N and run morphology in low_s/n mode?
 #       it might be enough to just determine if the variance of the first frame is > blah, or
@@ -71,10 +76,14 @@ pd.set_option("display.expand_frame_repr", False)
 #       compute enough splines to for the resolution we need computationally very expensive
 
 
-def videoROIsInfo(video_path: str, template_info: Dict, reference_roi_captures_tissue: bool) -> Dict:
+def videoROIsInfo(
+        video_path: str,
+        template_info: Dict,
+        reference_roi_captures_tissue: bool
+) -> Tuple[List[Dict], float]:
     """ """
     dynamic_roi_template_image = template_info['dynamic']['image']
-    _, dynamic_roi, _, _, _ = trackTemplate(
+    _, dynamic_roi, estimate_frequency, _, _, _ = trackTemplate(
         input_video_path=video_path,
         template_guide_image_path=None,
         template_rgb=dynamic_roi_template_image,
@@ -99,7 +108,7 @@ def videoROIsInfo(video_path: str, template_info: Dict, reference_roi_captures_t
             )
     else:
         reference_roi_template_image = template_info['reference']['image']
-        _, reference_roi, _, _, _ = trackTemplate(
+        _, reference_roi, _, _, _, _ = trackTemplate(
             input_video_path=video_path,
             template_guide_image_path=None,
             template_rgb=reference_roi_template_image,
@@ -123,7 +132,7 @@ def videoROIsInfo(video_path: str, template_info: Dict, reference_roi_captures_t
                 }
             )
 
-    return rois_info
+    return rois_info, estimate_frequency
 
 
 def signalDataFromVideo(
@@ -135,14 +144,14 @@ def signalDataFromVideo(
 ) -> Dict:
     """ """
 
+    estimate_frequency = None
     if 'auto' in analysis_method.lower():
-        video_rois = iter(
-            videoROIsInfo(
-                video_path=input_video_path,
-                template_info=video_roi_info['template_info'],
-                reference_roi_captures_tissue=video_roi_info['reference_roi_captures_tissue']
-            )
+        video_frames_rois, estimate_frequency = videoROIsInfo(
+            video_path=input_video_path,
+            template_info=video_roi_info['template_info'],
+            reference_roi_captures_tissue=video_roi_info['reference_roi_captures_tissue']
         )
+        video_rois = iter(video_frames_rois)
 
     input_video_stream = VideoReader(input_video_path)
     if output_video_path is not None:
@@ -280,13 +289,13 @@ def signalDataFromVideo(
         'time_stamps': np.array(time_stamps, dtype=float),
         'signal_values': np.array(signal_values, dtype=float),
         'tissue_means': np.array(fg_means, dtype=float),
-        'background_means': np.array(bg_means, dtype=float)
+        'background_means': np.array(bg_means, dtype=float),
+        'estimated_frequency': estimate_frequency
     }
 
 
 def videoROIs(
     video_file_path: str,
-    max_seconds_to_search: float = None,
     roi_method: str = None,
     dynamic_roi_template_path: str = None,
     reference_roi_template_path: str = None,
@@ -297,9 +306,8 @@ def videoROIs(
         return None, None
 
     input_video_duration = input_video_stream.duration()
-    if max_seconds_to_search is None:
-        max_seconds_to_search = input_video_duration
-    if max_seconds_to_search < 0 or max_seconds_to_search > input_video_duration:
+    max_seconds_to_search: float = 2.0
+    if max_seconds_to_search > input_video_duration:
         max_seconds_to_search = input_video_duration
 
     frame_for_roi_extraction: np.ndarray = None
@@ -384,7 +392,7 @@ def videoROIs(
 
 def analyzeCa2Data(
     path_to_data: str,
-    expected_frequency_hz: float,
+    expected_frequency_hz: None,
     analysis_method: str = 'None',
     low_signal_to_noise: bool = False,
     save_result_plots: bool = False,
@@ -396,6 +404,11 @@ def analyzeCa2Data(
     expected_min_peak_height: float = None
 ):
     """ """
+
+    if expected_frequency_hz is None:
+        if 'auto' not in analysis_method.lower():
+            print("ERROR. Expected Frequency Hint must be provided for non automatic methods")
+            return
 
     # get all the video files to be processed and set up the results directory structure
     base_dir, files_to_analyze = contentsOfDir(dir_path=path_to_data, search_terms=supported_file_extensions)
@@ -416,16 +429,11 @@ def analyzeCa2Data(
     # collect bg & tissue or dynamic & reference ROIs for all the videos to be analyzed, up front, so that
     # all the videos can then be processed automatically without any user interaction
     all_videos_rois = {}
-    expected_frequency_hz_tolerance = 0.5
-    frequency_epsilon = 0.01
-    seconds_for_period = 1.0/(expected_frequency_hz - expected_frequency_hz_tolerance + frequency_epsilon)
-    bg_subtraction_roi_search_seconds = 2.0*seconds_for_period
     background_roi = None
     for file_name, file_extension in files_to_analyze:
         input_video_file_path = os.path.join(base_dir, file_name + file_extension)
         video_rois = videoROIs(
             input_video_file_path,
-            bg_subtraction_roi_search_seconds,
             analysis_method,
             dynamic_roi_template_path,
             reference_roi_template_path,
@@ -468,6 +476,9 @@ def analyzeCa2Data(
         # write out the analysis results
         time_stamps = signal_data['time_stamps']
         input_signal = signal_data['signal_values']
+        if signal_data['estimated_frequency'] is not None:
+            expected_frequency_hz = signal_data['estimated_frequency']
+            # TODO: should we be setting expected_min_peak_width & expected_min_peak_height to None in this case?
         ca2_analysis = waveFormAnalysis(
             input_signal,
             time_stamps,

@@ -44,7 +44,7 @@ def trackTemplate(
     max_translation_per_frame: Tuple[float] = None,
     max_rotation_per_frame: float = None,
     contraction_vector: Tuple = None,
-) -> Tuple[str, List[Dict], float, np.ndarray, int]:
+) -> Tuple[str, List[Dict], float, float, np.ndarray, int]:
     """
     Tracks a template image through each frame of a video.
     Args:
@@ -281,14 +281,68 @@ def trackTemplate(
         template_half_height=template_half_height,
         template_half_width=template_half_width
     )
+    estimated_frequency = frequencyEstimate(displacement_adjusted_results)
 
     return (
         (warning_msg, error_msg),
         displacement_adjusted_results,
+        estimated_frequency,
         frames_per_second,
         template_rgb,
         min_contraction_frame_number
     )
+
+
+def frequencyEstimate(tracking_info: List[Dict]) -> float:
+    """
+       :param tracking_info:
+       :return: estimated frequency of the tracked object movement
+    """
+    # estimate a midpoint in the displacements
+    time_stamps = []
+    displacements = []
+    for frame_info in tracking_info:
+        time_stamps.append(frame_info['TIME_STAMP'])
+        frame_displacement = frame_info['XY_DISPLACEMENT']
+        displacements.append(frame_displacement)
+    displacements = np.asarray(displacements)
+    displacement_midpoint = np.median(displacements)
+
+    # compute the sign of each displacement from the midpoint
+    distances_from_midpoint = displacements - displacement_midpoint
+    distances_from_midpoint_signs = np.sign(distances_from_midpoint)
+    previous_sign = distances_from_midpoint_signs[0]
+
+    # record the times when the signs change from +ve to -ve and vice versa
+    time_stamps = np.asarray(time_stamps)
+    neg_to_pos_crossing_times = []
+    pos_to_neg_crossing_times = []
+    for index in range(1, len(distances_from_midpoint)):
+        current_sign = distances_from_midpoint_signs[index]
+        if current_sign != previous_sign:
+            if current_sign == 0:
+                continue
+            time_stamp = time_stamps[index]
+            if previous_sign < 0:
+                neg_to_pos_crossing_times.append(time_stamp)
+            else:
+                pos_to_neg_crossing_times.append(time_stamp)
+            previous_sign = current_sign
+
+    # compute the frequency of the -ve to +ve change points
+    num_neg_to_pos_periods = len(neg_to_pos_crossing_times) - 1
+    neg_to_pos_time_diff = neg_to_pos_crossing_times[-1] - neg_to_pos_crossing_times[0]
+    neg_to_pos_frequency = num_neg_to_pos_periods/neg_to_pos_time_diff
+
+    # compute the frequency of the +ve to -ve change points
+    num_pos_to_neg_periods = len(pos_to_neg_crossing_times) - 1
+    pos_to_neg_time_diff = pos_to_neg_crossing_times[-1] - pos_to_neg_crossing_times[0]
+    pos_to_neg_frequency = num_pos_to_neg_periods/pos_to_neg_time_diff
+
+    # compute the average of the +ve to +ve and +ve to -ve frequency estimates
+    estimated_frequency = (pos_to_neg_frequency + neg_to_pos_frequency)/2.0
+
+    return estimated_frequency
 
 
 def boundingBoxEdges(box_origin_x, box_origin_y, box_width, box_height, rotation_degrees) -> List[Tuple]:
@@ -556,13 +610,12 @@ def userDrawnROI(input_image: np.ndarray, title_text: str = None) -> Dict:
         roi_selector_window_name = "DRAW RECTANGULAR ROI"
     else:
         roi_selector_window_name = title_text
-    roi_gui_flags = cv.WINDOW_KEEPRATIO | cv.WINDOW_NORMAL  # can resize the window
+    roi_gui_flags = cv.WINDOW_KEEPRATIO | cv.WINDOW_NORMAL | cv.WINDOW_GUI_NORMAL
     cv.namedWindow(roi_selector_window_name, flags=roi_gui_flags)
     # we resize so the user can easily select ROIs and read the title instructions
     cv.resizeWindow(roi_selector_window_name, width=1280, height=720)
     # we move to arbitrary coordinates closer to the screen center
     cv.moveWindow(roi_selector_window_name, x=200, y=200)
-
     # open a roi selector in the resizeable window we just created
     roi_selection = cv.selectROI(roi_selector_window_name, input_image, showCrosshair=False)
     cv.destroyAllWindows()
