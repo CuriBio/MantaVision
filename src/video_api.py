@@ -109,13 +109,12 @@ class VideoReader:
 
     def _enableFormatBugWorkaround(self):
         """ temporary hack to stop deprecated pixel format warnings being spewed all over the console output """
+        self.tmp_std_err = None
         if not self.is_nd2:
             if 'yuvj' in self.reader.video_stream.pix_fmt:
                 self.tmp_std_err = sys.stderr
                 devnull = open(os.devnull, 'w')
                 sys.stderr = devnull
-            else:
-                self.tmp_std_err = None
 
     def _disableFormatBugWorkaround(self):
         if self.tmp_std_err is not None:
