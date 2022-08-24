@@ -8,7 +8,7 @@ from matplotlib import pyplot as plt
 from scipy import ndimage as ndifilters
 from scipy.signal import medfilt2d
 from skimage import filters as skimagefilters
-from os_functions import contentsOfDir
+from io_utils import contentsOfDir
 from track_template import matchResults, intensityAdjusted, userDrawnROI
 
 

@@ -43,7 +43,7 @@ def trackTemplate(
     user_roi_selection: bool = True,
     max_translation_per_frame: Tuple[float] = None,
     max_rotation_per_frame: float = None,
-    contraction_vector: Tuple = None,
+    contraction_vector: Tuple[int] = None
 ) -> Tuple[str, List[Dict], float, float, np.ndarray, int]:
     """
     Tracks a template image through each frame of a video.
@@ -73,13 +73,13 @@ def trackTemplate(
     frames_per_second = float(0.0)
     if input_video_path is None:
         error_msg = "ERROR. No path provided to an input video. Nothing has been tracked."
-        return error_msg, [{}], frames_per_second, None, -1
+        return error_msg, [{}], 0.0, frames_per_second, None, -1
 
     # open a video reader stream
     input_video_stream = VideoReader(input_video_path)
     if not input_video_stream.isOpened():
         error_msg = "Error. Can't open videos stream for capture. Nothing has been tracked."
-        return error_msg, [{}], frames_per_second, None, -1
+        return error_msg, [{}], 0.0, frames_per_second, None, -1
     frame_width = int(input_video_stream.frameWidth())
     frame_height = int(input_video_stream.frameHeight())
     frames_per_second = input_video_stream.avgFPS()
@@ -94,7 +94,7 @@ def trackTemplate(
             template_as_guide = intensityAdjusted(cv.cvtColor(cv.imread(template_guide_image_path), cv.COLOR_BGR2GRAY))
             if template_as_guide is None:
                 error_msg = "ERROR. Path provided for template does not point to an image file. Nothing has been tracked."
-                return error_msg, [{}], frames_per_second, None, -1
+                return error_msg, [{}], 0.0, frames_per_second, None, -1
         if guide_match_search_seconds is None:
             max_frames_to_check = None
         else:
@@ -298,7 +298,7 @@ def frequencyEstimate(tracking_info: List[Dict]) -> float:
        :param tracking_info:
        :return: estimated frequency of the tracked object movement
     """
-    # estimate a midpoint in the displacements
+    # convert time stamp and displacement data from all frames into 2 numpy arrays
     time_stamps = []
     displacements = []
     for frame_info in tracking_info:
@@ -306,6 +306,7 @@ def frequencyEstimate(tracking_info: List[Dict]) -> float:
         frame_displacement = frame_info['XY_DISPLACEMENT']
         displacements.append(frame_displacement)
     displacements = np.asarray(displacements)
+    # estimate the midpoint in the displacements (which we presume to be moving periodically)
     displacement_midpoint = np.median(displacements)
 
     # compute the sign of each displacement from the midpoint
@@ -328,6 +329,12 @@ def frequencyEstimate(tracking_info: List[Dict]) -> float:
             else:
                 pos_to_neg_crossing_times.append(time_stamp)
             previous_sign = current_sign
+
+    num_neg_to_pos_crossing_times = len(neg_to_pos_crossing_times)
+    num_pos_to_neg_crossing_times = len(pos_to_neg_crossing_times)
+    if num_neg_to_pos_crossing_times < 1 or num_pos_to_neg_crossing_times < 1:
+        # no periodicity detected
+        return 0.0
 
     # compute the frequency of the -ve to +ve change points
     num_neg_to_pos_periods = len(neg_to_pos_crossing_times) - 1

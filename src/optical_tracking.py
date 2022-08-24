@@ -1,32 +1,16 @@
-import argparse
 import os
-import shutil
 import sys
 import json
 import time
-from typing import Tuple, List, Dict
-import zipfile
-import openpyxl
+import argparse
 import cv2 as cv
 from datetime import datetime
-from os_functions import contentsOfDir, getFilePathViaGUI, getDirPathViaGUI
+from typing import Tuple, List, Dict
 from video2images import video2images
 from track_template import trackTemplate
 from video_api import supported_file_extensions
-
-
-# TODO: separate out the file system functions like contentsOfDir, fileSystemViaGUI etc
-#       put them into a file called "os_functions.py"
-
-# TODO: in the user xlsx, have a pixel displacement column and converted displacement column
-
-# TODO: for contraction measurements of regular videos
-#       we can use tracking to determine the smallest min and largest max positions
-#       that way we'd have a good approximation of where the relaxation and contractions should be
-#       and we can then pick out the time stamps of frames where there is a local min/max that is
-#       within some small margin of error (say +/-10% of the difference in (largest max - smallest min)
-#       using these time stamps for known min/max, we can plot the peaks and troughs and estimate
-#       the frequency etc.
+from xlsx_utils import metadataRequiredForXLSX, trackingResultsToXSLX, trackingResultsToXLSXforSDK
+from io_utils import contentsOfDir, getFilePathViaGUI, getDirPathViaGUI, zipDir, fileNameParametersForSDK
 
 
 def runTrackTemplate(config: Dict):
@@ -119,35 +103,22 @@ def runTrackTemplate(config: Dict):
             )
 
         # write results to xlsx files
-        meta_data = {
-            'Well Name': input_args['well_name'],
-            'Date Stamp': input_args['date_stamp'],
-            'Frames Per Second': frames_per_second,
-            'User ROI Selection': input_args['user_roi_selection'],
-            'Max Translation Per Frame': input_args['max_translation_per_frame'],
-            'Max Rotation Per Frame': input_args['max_rotation_per_frame'],
-            'Contraction Vector': input_args['contraction_vector'],
-            'Microns Per Pixel': input_args['microns_per_pixel'],
-            'Output Conversion Factor': input_args['output_conversion_factor'],
-            'Sub Pixel Search Increment': input_args['sub_pixel_search_increment'],
-            'Sub Pixel Refinement Radius': input_args['sub_pixel_refinement_radius'],
-            'Estimated Frequency': estimated_frequency
-        }
-        # fill in missing values in meta_data
-        for md_key, md_value in meta_data.items():
-            if md_value is None:
-                meta_data[md_key] = 'None'
-        resultsToCSVforUser(
-            tracking_results,
-            meta_data,
-            input_args['path_to_user_excel_results']
+        meta_data = metadataRequiredForXLSX(
+            input_args['well_name'],
+            input_args['date_stamp'],
+            frames_per_second,
+            input_args['user_roi_selection'],
+            input_args['max_translation_per_frame'],
+            input_args['max_rotation_per_frame'],
+            input_args['contraction_vector'],
+            input_args['microns_per_pixel'],
+            input_args['output_conversion_factor'],
+            input_args['sub_pixel_search_increment'],
+            input_args['sub_pixel_refinement_radius'],
+            estimated_frequency,
         )
-        resultsToCSVforSDK(
-            tracking_results,
-            meta_data,
-            input_args['path_to_excel_template'],
-            input_args['path_to_sdk_excel_results']
-        )
+        trackingResultsToXSLX(tracking_results, meta_data, input_args['path_to_user_excel_results'])
+        trackingResultsToXLSXforSDK(tracking_results, meta_data, input_args['path_to_sdk_excel_results'])
 
         # write the run config and results as json
         if input_args['output_json_path'] is not None:
@@ -163,14 +134,9 @@ def runTrackTemplate(config: Dict):
 
     # create a zip archive and write all the xlsx files to it
     xlsx_archive_file_path = os.path.join(dirs['results_dir_path'], 'xlsx-results.zip')
-    xlsx_archive = zipfile.ZipFile(xlsx_archive_file_path, 'w')
-    for dir_name, _, file_names in os.walk(dirs['results_xlsx_dir_path']):
-        for file_name in file_names:
-            if 'sdk' in file_name:  # only include the xlsx files intended for the sdk
-                file_path = os.path.join(dir_name, file_name)
-                xlsx_archive.write(file_path, os.path.basename(file_path))
-    xlsx_archive.close()
+    zipDir(input_dir_path=dirs['results_xlsx_dir_path'], zip_file_path=xlsx_archive_file_path, sdk_files_only=True)
 
+    # print out some runtime stats and finish
     num_videos_processed = len(args)
     track_templates_runtime = time.time() - track_templates_start_time
     per_video_tracking_time: float = float(total_tracking_time) / float(num_videos_processed)
@@ -181,7 +147,7 @@ def runTrackTemplate(config: Dict):
     print(f'{per_video_tracking_time}s per video')
 
 
-def verifiedInputs(config: Dict) -> Tuple[str, List[Dict]]:
+def verifiedInputs(config: Dict) -> Tuple[Dict, List[Dict]]:
     """ """
     error_msgs = []
     # check the dir path to input videos
@@ -333,17 +299,7 @@ def verifiedInputs(config: Dict) -> Tuple[str, List[Dict]]:
     # set all the values needed to run template matching on each input video
     configs = []
     for file_name, input_file_extension in video_files:
-        # if the file is long enough to contain well name and data stamp,
-        # extract them from expect
-        well_name = 'A001'
-        date_stamp = '2020-02-02'
-        num_chars_in_datestamp = len(date_stamp)
-        num_chars_in_well_name = len(well_name)
-        min_num_chars_in_file_name = num_chars_in_datestamp + num_chars_in_well_name
-        if len(file_name) >= min_num_chars_in_file_name:
-            file_name_length = len(file_name)
-            well_name = file_name[file_name_length - num_chars_in_well_name:]
-            date_stamp = file_name[:num_chars_in_datestamp]
+        well_name, date_stamp = fileNameParametersForSDK(file_name)
 
         # set all the required path values
         input_video_path = os.path.join(base_dir, file_name + input_file_extension)
@@ -379,92 +335,7 @@ def verifiedInputs(config: Dict) -> Tuple[str, List[Dict]]:
             'date_stamp': date_stamp,
         })
 
-    return (dirs, configs)
-
-
-def resultsToCSVforSDK(
-        tracking_results: List[Dict],
-        meta_data: Dict,
-        path_to_template_file: str,
-        path_to_output_file,
-):
-    # create a file from scratch or template
-    if path_to_template_file is None:
-        workbook = openpyxl.Workbook()  # open a blank workbook
-    else:  # open the template workbook
-        shutil.copyfile(path_to_template_file, path_to_output_file)
-        workbook = openpyxl.load_workbook(filename=path_to_output_file)
-    sheet = workbook.active
-
-    # add meta data
-    well_name = meta_data['Well Name']
-    if well_name is None:
-        well_name = 'Z01'
-    sheet['E2'] = well_name
-    date_stamp = meta_data['Date Stamp']
-    sheet['E3'] = date_stamp + ' 00:00:00'
-    sheet['E4'] = 'NA'  # plate barcode
-    frames_per_second = meta_data['Frames Per Second']
-    sheet['E5'] = frames_per_second
-    sheet['E6'] = 'y'  # do twiches point up
-    sheet['E7'] = 'NA'  # microscope name
-
-    # add runtime data (time, displacement etc)
-    template_start_row = 2
-    time_column = 'A'
-    displacement_column = 'B'
-    num_rows_to_write = len(tracking_results)
-    for results_row in range(num_rows_to_write):
-        tracking_result = tracking_results[results_row]
-        sheet_row = str(results_row + template_start_row)
-        sheet[time_column + sheet_row] = float(tracking_result['TIME_STAMP'])
-        sheet[displacement_column + sheet_row] = float(tracking_result['XY_DISPLACEMENT'])
-    workbook.save(filename=path_to_output_file)
-
-
-def resultsToCSVforUser(tracking_results: List[Dict], meta_data: Dict, path_to_output_file: str):
-    workbook = openpyxl.Workbook()
-    sheet = workbook.active
-
-    # add meta data
-    meta_data_name_column = 'G'
-    meta_data_value_column = 'H'
-    meta_data_row_number = 1
-    sheet[meta_data_value_column + str(meta_data_row_number)] = 'Runtime Meta Data'
-    for column_name, column_value in meta_data.items():
-        meta_data_row_number += 1
-        sheet[meta_data_name_column + str(meta_data_row_number)] = column_name
-        if isinstance(column_value, (int, float)):
-            sheet[meta_data_value_column + str(meta_data_row_number)] = column_value
-        else:
-            sheet[meta_data_value_column + str(meta_data_row_number)] = f"{column_value}"
-
-    # add runtime data
-    # heading fields
-    heading_row = 1
-    time_column = 'A'
-    sheet[time_column + str(heading_row)] = 'Time (s)'
-    displacement_column = 'B'
-    sheet[displacement_column + str(heading_row)] = 'Displacement From Min'
-    x_pos_column = 'C'
-    sheet[x_pos_column + str(heading_row)] = 'Template Match Center X (pixel pos)'
-    y_pos_column = 'D'
-    sheet[y_pos_column + str(heading_row)] = 'Template Match Center Y (pixel pos)'
-    angle_column = 'E'
-    sheet[angle_column + str(heading_row)] = 'Template Match Angle (deg)'
-
-    # time, displacement from ref position, absolute position and angle fields
-    data_row = heading_row + 1
-    num_rows_to_write = len(tracking_results)
-    for results_row in range(num_rows_to_write):
-        tracking_result = tracking_results[results_row]
-        sheet_row = str(results_row + data_row)
-        sheet[time_column + sheet_row] = float(tracking_result['TIME_STAMP'])
-        sheet[displacement_column + sheet_row] = float(tracking_result['XY_DISPLACEMENT'])
-        sheet[x_pos_column + sheet_row] = float(tracking_result['TEMPLATE_MATCH_ORIGIN_X'])
-        sheet[y_pos_column + sheet_row] = float(tracking_result['TEMPLATE_MATCH_ORIGIN_Y'])
-        sheet[angle_column + sheet_row] = float(tracking_result['TEMPLATE_MATCH_ROTATION'])
-    workbook.save(filename=path_to_output_file)
+    return dirs, configs
 
 
 def config_from_json(json_config_path) -> Tuple[str, List[Dict]]:

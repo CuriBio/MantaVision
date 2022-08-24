@@ -1,48 +1,41 @@
 import os
+import zipfile
+from math import floor
 import cv2 as cv
 import openpyxl
 import numpy as np
 import pandas as pd
 from datetime import datetime
 from typing import Tuple, Dict, List
-from track_template import userDrawnROI
-from os_functions import contentsOfDir
+from io_utils import contentsOfDir
 from waveform_analysis import waveFormAnalysis
 from video_api import VideoReader, VideoWriter, supported_file_extensions
 from morphology import morphologyMetricsForImage
-from track_template import trackTemplate, roiInfoFromTemplate
-from math import floor
-import zipfile
+from track_template import trackTemplate, roiInfoFromTemplate, userDrawnROI
+from io_utils import fileNameParametersForSDK, zipDir
+from xlsx_utils import (
+    metadataRequiredForXLSX,
+    trackingResultsToXSLX,
+    trackingResultsToXLSXforSDK,
+    ca2SignalDataToXLSXforSDK,
+    ca2AnalysisToXLSX
+)
+
 import matplotlib.pyplot as plt
 pd.set_option("display.precision", 2)
 pd.set_option("display.expand_frame_repr", False)
 
 
 # TODO: parallelize the analysis of each frame. i.e.
-#  if we have 10 processors, split up the frames into 10 contiguous sections
-#  and have each section processed independently by one process
-#  the final result is obtained by simple concatenation of each sections results in order
+#       if we have 10 processors, split up the frames into 10 contiguous sections
+#       and have each section processed independently by one process
+#       the final result is obtained by simple concatenation of each sections results in order
+#  OR
+#       just parallelize the processing of videos i.e. have more than 1 video processed at a time
 
 # TODO: attempt to determine if the video has low S/N and run morphology in low_s/n mode?
 #       it might be enough to just determine if the variance of the first frame is > blah, or
 #       even if the mean and median are more than x apart etc
-
-# TODO: add the same contraction vector drop down as is used in tracking
-#       this will then determine which edge of the tissue roi is formed by
-#       the user drawn or template guided rois
-
-# TODO: while we track the moving roi, we can perform analysis on it
-#  to determine the frequency of the contractions, that way we don't need to
-#  ask the user to guess. So we need to add the frequency analysis to track template
-#  and then report the value in Ca2+ analysis somewhere sensible
-#  the way we can tell what the frequency is, is as follows
-#  we know physically where the extreme points are (left and right in a purely horizontal contraction)
-#  and once we know where those positions are, we can check for frames that have a match
-#  that corresponds to being close to those extreme points.
-#  we can then pick a physical point mid way between those extreme points
-#  and we count how many frames on average between matches to cross that mid point in either direction
-#  and of course the time it take is just (num_frames / frames_per_second)
-#  and from that, 1/T = frequency
 
 # TODO: check there are no double peaks or troughs.
 #       would need to use the peak and trough indices
@@ -57,7 +50,7 @@ pd.set_option("display.expand_frame_repr", False)
 
 # TODO: IF the current method of estimate the various metrics where we
 #       use a polynomial fit and then find the roots of the poly FAILS,
-#       numpy warnings such as the rank is blah or the fit is ill-conditioned etc ... 
+#       numpy warnings such as the rank is blah or the fit is ill-conditioned etc ...
 #       we will have to use a method like:
 #       take the polynomial coefficients and perform a search of the function
 #       between the start and end times
@@ -70,24 +63,256 @@ pd.set_option("display.expand_frame_repr", False)
 #       to find the point the metric is for. this would clearly be inferior since
 #       we know most of these signals have exponential or polynomial shape and
 #       a linear interpolation between two points (even if close) isn't a great fit.
-#       or, 
+#  OR
 #       the alternative is to use splines which do essentially the same thing
-#       without having to explicitly code the linear interpolation, but since we have to 
+#       without having to explicitly code the linear interpolation, but since we have to
 #       compute enough splines to for the resolution we need computationally very expensive
 
 
+def analyzeCa2Data(
+    path_to_data: str,
+    expected_frequency_hz: None,
+    analysis_method: str = 'None',
+    low_signal_to_noise: bool = False,
+    save_result_plots: bool = False,
+    dynamic_roi_template_path: str = None,
+    reference_roi_template_path: str = None,
+    display_results: bool = False,
+    select_background_once: bool = False,
+    expected_min_peak_width: int = None,
+    expected_min_peak_height: float = None,
+    microns_per_pixel: float = None,
+    max_translation_per_frame: Tuple[float] = None,
+    max_rotation_per_frame: float = None,
+    contraction_vector: Tuple[int] = None
+):
+    """ """
+    if 'auto' not in analysis_method.lower():
+        if expected_frequency_hz is None:
+            print("ERROR. Expected Frequency Hint must be provided for non automatic methods")
+            return
+
+    # get paths to all the video files being processed and set up the results' directory structure
+    base_dir, files_to_analyze = contentsOfDir(dir_path=path_to_data, search_terms=supported_file_extensions)
+    dir_paths = outputDirPaths(base_dir)
+
+    # collect bg & tissue or dynamic & reference ROIs for all the videos to be analyzed, up front, so that
+    # all the videos can then be processed automatically without any user interaction
+    all_videos_rois = {}
+    background_roi = None
+    for file_name, file_extension in files_to_analyze:
+        well_name, date_stamp = fileNameParametersForSDK(file_name)
+        input_video_file_path = os.path.join(base_dir, file_name + file_extension)
+        video_rois = videoROIs(
+            input_video_file_path,
+            analysis_method,
+            dynamic_roi_template_path,
+            reference_roi_template_path,
+            background_roi
+        )
+        all_videos_rois[file_name] = video_rois
+        if select_background_once:
+            background_roi = video_rois['background']
+
+    num_files_to_analyze = len(files_to_analyze)
+    file_num_being_analyzed = 0
+    print()
+    for file_name, file_extension in files_to_analyze:
+        file_num_being_analyzed += 1
+        print(f"\nAnalyzing {file_name} ({file_num_being_analyzed} of {num_files_to_analyze})...")
+
+        if all_videos_rois is None:
+            video_roi_info = None
+            output_video_path = None
+        else:
+            video_roi_info = all_videos_rois[file_name]
+            if "nd2" in file_extension.lower():
+                output_file_extension = ".avi"
+            else:
+                output_file_extension = file_extension
+            output_video_file_name = file_name + "-with_rois" + output_file_extension
+
+            output_video_path = os.path.join(dir_paths['video_dir'], output_video_file_name)
+        input_video_file_path = os.path.join(base_dir, file_name + file_extension)
+        signal_data = signalDataFromVideo(
+            input_video_file_path,
+            output_video_path,
+            low_signal_to_noise,
+            analysis_method,
+            video_roi_info,
+            microns_per_pixel,
+            max_translation_per_frame,
+            max_rotation_per_frame,
+            contraction_vector
+        )
+        if signal_data is None:
+            raise RuntimeError("Error. Signal from video could not be extracted")
+
+        # write out the analysis results
+        time_stamps = signal_data['time_stamps']
+        input_signal = signal_data['signal_values']
+        if signal_data['estimated_frequency'] is not None:
+            expected_frequency_hz = signal_data['estimated_frequency']
+            # TODO: should we be setting expected_min_peak_width & expected_min_peak_height to None in this case?
+        ca2_analysis = waveFormAnalysis(
+            input_signal,
+            time_stamps,
+            expected_frequency_hz=expected_frequency_hz,
+            expected_min_peak_width=expected_min_peak_width,
+            expected_min_peak_height=expected_min_peak_height
+        )
+        if ca2_analysis is None:
+            print("\n")
+            print("Error. Could not extract sensible peaks/troughs from data")
+            print("Was expected frequency set to within +/- 0.5Hz of actual frequency?")
+            print("No analysis results were written")
+            print("\n")
+            continue
+        else:
+            tissue_means = signal_data['tissue_means']
+            background_means = signal_data['background_means']
+            path_to_ca2_analysis_results_file = os.path.join(
+                dir_paths['xlsx_dir'], file_name + '-ca2_analysis_results.xlsx'
+            )
+            ca2AnalysisToXLSX(
+                time_stamps,
+                input_signal,
+                tissue_means,
+                background_means,
+                ca2_analysis,
+                path_to_ca2_analysis_results_file
+            )
+
+        if display_results:
+            print()
+            print(f'metrics for {file_name}')
+            for metrics in ca2_analysis['metrics']:
+                p2p_order = metrics['p2p_order']
+                average_metrics = metrics['mean_metric_data']
+                metric_failure_proportions = metrics['metric_failure_proportions']
+                if display_results:
+                    print(f'{p2p_order} average metrics (failure %): {average_metrics} ({metric_failure_proportions})')
+
+        if display_results or save_result_plots is not None:
+            if save_result_plots:
+                plot_file_path = os.path.join(dir_paths['plot_dir'], file_name + '-plot.png')
+            else:
+                plot_file_path = None
+            plotCa2Signals(
+                time_stamps,
+                input_signal,
+                ca2_analysis['peak_indices'],
+                ca2_analysis['trough_indices'],
+                file_name,
+                display_results=display_results,
+                plot_file_path=plot_file_path
+            )
+
+        # write out Ca2 signal data for SDK
+        signal_data_for_sdk_file_path = os.path.join(
+            dir_paths['sdk_results_xlsx_ca2_dir_path'],
+            file_name + '-ca2_signal_data_for_sdk.xlsx'
+        )
+        frames_per_second = signal_data['frames_per_second']
+        if frames_per_second is None:
+            input_video_stream = VideoReader(input_video_file_path)
+            frames_per_second = input_video_stream.avgFPS()
+            input_video_stream.close()
+        video_meta_data = {
+            'well_name': well_name,
+            'video_date': date_stamp,
+            'frames_per_second': frames_per_second
+        }
+        ca2SignalDataToXLSXforSDK(
+            time_stamps,
+            input_signal,
+            signal_data_for_sdk_file_path,
+            video_meta_data
+        )
+
+        # write out the contraction (dynamic ROI tracking) results
+        contraction_data = signal_data['contraction_results']
+        user_roi_selection = dynamic_roi_template_path is None
+        meta_data = metadataRequiredForXLSX(
+            well_name=well_name,
+            date_stamp=date_stamp,
+            frames_per_second=frames_per_second,
+            user_roi_selection=user_roi_selection,
+            max_translation_per_frame=max_translation_per_frame,
+            max_rotation_per_frame=max_rotation_per_frame,
+            contraction_vector=contraction_vector,
+            microns_per_pixel=microns_per_pixel,
+            output_conversion_factor=None,
+            sub_pixel_search_increment=None,
+            sub_pixel_refinement_radius=None,
+            estimated_frequency=signal_data['estimated_frequency'],
+        )
+        contraction_results_file_path = os.path.join(
+            dir_paths['xlsx_dir'], file_name + '-contraction_results.xlsx'
+        )
+        trackingResultsToXSLX(contraction_data, meta_data, contraction_results_file_path)
+        contraction_results_for_sdk_file_path = os.path.join(
+            dir_paths['sdk_results_xlsx_contraction_dir_path'], file_name + '-contraction_data_for_sdk.xlsx'
+        )
+        trackingResultsToXLSXforSDK(contraction_data, meta_data, contraction_results_for_sdk_file_path)
+
+    # create a zip archive of the Ca2+ and contraction (dynamic ROI tracking) results for SDK
+    ca2_signal_zip_file_path = os.path.join(dir_paths['sdk_results_zip_dir_path'], 'ca2_signal_data_for_sdk.zip')
+    zipDir(
+        input_dir_path=dir_paths['sdk_results_xlsx_ca2_dir_path'],
+        zip_file_path=ca2_signal_zip_file_path,
+        sdk_files_only=True
+    )
+    contraction_zip_file_path = os.path.join(dir_paths['sdk_results_zip_dir_path'], 'contraction_data_for_sdk.zip')
+    zipDir(
+        input_dir_path=dir_paths['sdk_results_xlsx_contraction_dir_path'],
+        zip_file_path=contraction_zip_file_path,
+        sdk_files_only=True
+    )
+
+
+def outputDirPaths(base_dir: str) -> Dict:
+    results_dir_name = "results_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    results_dir_path = os.path.join(base_dir, results_dir_name)
+    sdk_results_dir_path = os.path.join(results_dir_path, 'sdk')
+    sdk_results_xlsx_dir_path = os.path.join(sdk_results_dir_path, 'xlsx')
+    # define the dir structure
+    dir_paths = {
+        'results_dir': results_dir_path,
+        'video_dir': os.path.join(results_dir_path, 'video'),
+        'xlsx_dir': os.path.join(results_dir_path, 'xlsx'),
+        'plot_dir': os.path.join(results_dir_path, 'plot'),
+        'sdk_results_dir': sdk_results_dir_path,
+        'sdk_results_zip_dir_path': os.path.join(sdk_results_dir_path, 'zip'),
+        'sdk_results_xlsx_dir_path': sdk_results_xlsx_dir_path,
+        'sdk_results_xlsx_ca2_dir_path': os.path.join(sdk_results_xlsx_dir_path, 'ca2'),
+        'sdk_results_xlsx_contraction_dir_path': os.path.join(sdk_results_xlsx_dir_path, 'contraction')
+    }
+    # create the dir structure
+    for _, dir_path in dir_paths.items():
+        os.mkdir(dir_path)
+    return dir_paths
+
+
 def videoROIsInfo(
-        video_path: str,
-        template_info: Dict,
-        reference_roi_captures_tissue: bool
-) -> Tuple[List[Dict], float]:
+    video_path: str,
+    template_info: Dict,
+    reference_roi_captures_tissue: bool,
+    microns_per_pixel: float = None,
+    max_translation_per_frame: Tuple[float] = None,
+    max_rotation_per_frame: float = None,
+    contraction_vector: Tuple[int] = None
+) -> Tuple[List[Dict], List[Dict], float, float]:
     """ """
     dynamic_roi_template_image = template_info['dynamic']['image']
-    _, dynamic_roi, estimate_frequency, _, _, _ = trackTemplate(
+    _, dynamic_roi, estimated_frequency, frames_per_second, _, _ = trackTemplate(
         input_video_path=video_path,
         template_guide_image_path=None,
         template_rgb=dynamic_roi_template_image,
-        max_translation_per_frame=[50, 50]
+        microns_per_pixel=microns_per_pixel,
+        max_translation_per_frame=max_translation_per_frame,
+        max_rotation_per_frame=max_rotation_per_frame,
+        contraction_vector=contraction_vector
     )
     num_frames = len(dynamic_roi)
     rois_info = []
@@ -112,7 +337,10 @@ def videoROIsInfo(
             input_video_path=video_path,
             template_guide_image_path=None,
             template_rgb=reference_roi_template_image,
-            max_translation_per_frame=[50, 50]
+            microns_per_pixel=microns_per_pixel,
+            max_translation_per_frame=max_translation_per_frame,
+            max_rotation_per_frame=max_rotation_per_frame,
+            contraction_vector=contraction_vector
         )
         for frame_num in range(num_frames):
             rois_info.append(
@@ -132,7 +360,7 @@ def videoROIsInfo(
                 }
             )
 
-    return rois_info, estimate_frequency
+    return rois_info, dynamic_roi, estimated_frequency, frames_per_second
 
 
 def signalDataFromVideo(
@@ -140,16 +368,25 @@ def signalDataFromVideo(
     output_video_path: str = None,
     low_signal_to_noise: bool = False,
     analysis_method: str = 'None',
-    video_roi_info: Dict = None
+    video_roi_info: Dict = None,
+    microns_per_pixel: float = None,
+    max_translation_per_frame: Tuple[float] = None,
+    max_rotation_per_frame: float = None,
+    contraction_vector: Tuple[int] = None
 ) -> Dict:
     """ """
-
-    estimate_frequency = None
+    frames_per_second = None
+    estimated_frequency = None
+    contraction_results = None
     if 'auto' in analysis_method.lower():
-        video_frames_rois, estimate_frequency = videoROIsInfo(
+        video_frames_rois, contraction_results, estimated_frequency, frames_per_second = videoROIsInfo(
             video_path=input_video_path,
             template_info=video_roi_info['template_info'],
-            reference_roi_captures_tissue=video_roi_info['reference_roi_captures_tissue']
+            reference_roi_captures_tissue=video_roi_info['reference_roi_captures_tissue'],
+            microns_per_pixel=microns_per_pixel,
+            max_translation_per_frame=max_translation_per_frame,
+            max_rotation_per_frame=max_rotation_per_frame,
+            contraction_vector=contraction_vector
         )
         video_rois = iter(video_frames_rois)
 
@@ -191,9 +428,12 @@ def signalDataFromVideo(
                     template_refinement_radius=0,
                     edge_finding_smoothing_radius=10,
                     draw_tissue_roi_only=True,
-                    low_signal_to_noise=low_signal_to_noise
+                    low_signal_to_noise=low_signal_to_noise,
+                    microns_per_pixel=microns_per_pixel
                 )
                 # compute the mean of the tissue only region
+                # rotate the input image so the roi description of vertical sections becomes horizontal sections
+                # this is just much simpler to define and faster to run than working with the vertical sections
                 frame_gray_rotated = np.rot90(frame_gray, k=-1)
                 frame_gray_rotated_width = frame_gray_rotated.shape[1]
                 y_pos = list(
@@ -290,7 +530,9 @@ def signalDataFromVideo(
         'signal_values': np.array(signal_values, dtype=float),
         'tissue_means': np.array(fg_means, dtype=float),
         'background_means': np.array(bg_means, dtype=float),
-        'estimated_frequency': estimate_frequency
+        'contraction_results': contraction_results,
+        'estimated_frequency': estimated_frequency,
+        'frames_per_second': frames_per_second
     }
 
 
@@ -390,172 +632,13 @@ def videoROIs(
     return rois
 
 
-def analyzeCa2Data(
-    path_to_data: str,
-    expected_frequency_hz: None,
-    analysis_method: str = 'None',
-    low_signal_to_noise: bool = False,
-    save_result_plots: bool = False,
-    dynamic_roi_template_path: str = None,
-    reference_roi_template_path: str = None,
-    display_results: bool = False,
-    select_background_once: bool = False,
-    expected_min_peak_width: int = None,
-    expected_min_peak_height: float = None
-):
-    """ """
-
-    if expected_frequency_hz is None:
-        if 'auto' not in analysis_method.lower():
-            print("ERROR. Expected Frequency Hint must be provided for non automatic methods")
-            return
-
-    # get all the video files to be processed and set up the results directory structure
-    base_dir, files_to_analyze = contentsOfDir(dir_path=path_to_data, search_terms=supported_file_extensions)
-    results_dir_name = "results_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    results_dir = os.path.join(base_dir, results_dir_name)
-    os.mkdir(results_dir)
-    video_dir = os.path.join(results_dir, 'video')
-    os.mkdir(video_dir)
-    xlsx_dir = os.path.join(results_dir, 'xlsx')
-    os.mkdir(xlsx_dir)
-    plot_dir = os.path.join(results_dir, 'plot')
-    os.mkdir(plot_dir)
-    sdk_results_dir = os.path.join(results_dir, 'sdk')
-    os.mkdir(sdk_results_dir)
-    sdk_xlsx_dir = os.path.join(sdk_results_dir, 'xlsx')
-    os.mkdir(sdk_xlsx_dir)
-
-    # collect bg & tissue or dynamic & reference ROIs for all the videos to be analyzed, up front, so that
-    # all the videos can then be processed automatically without any user interaction
-    all_videos_rois = {}
-    background_roi = None
-    for file_name, file_extension in files_to_analyze:
-        input_video_file_path = os.path.join(base_dir, file_name + file_extension)
-        video_rois = videoROIs(
-            input_video_file_path,
-            analysis_method,
-            dynamic_roi_template_path,
-            reference_roi_template_path,
-            background_roi
-        )
-        all_videos_rois[file_name] = video_rois
-        if select_background_once:
-            background_roi = video_rois['background']
-
-    num_files_to_analyze = len(files_to_analyze)
-    file_num_being_analyzed = 0
-    print()
-    for file_name, file_extension in files_to_analyze:
-        file_num_being_analyzed += 1
-        print(f"\nAnalyzing {file_name} ({file_num_being_analyzed} of {num_files_to_analyze})...")
-
-        if all_videos_rois is None:
-            video_roi_info = None
-            output_video_path = None
-        else:
-            video_roi_info = all_videos_rois[file_name]
-            if "nd2" in file_extension.lower():
-                output_file_extension = ".avi"
-            else:
-                output_file_extension = file_extension
-            output_video_file_name = file_name + "-with_rois" + output_file_extension
-
-            output_video_path = os.path.join(video_dir, output_video_file_name)
-        input_video_file_path = os.path.join(base_dir, file_name + file_extension)
-        signal_data = signalDataFromVideo(
-            input_video_file_path,
-            output_video_path,
-            low_signal_to_noise,
-            analysis_method,
-            video_roi_info
-        )
-        if signal_data is None:
-            raise RuntimeError("Error. Signal from video could not be extracted")
-
-        # write out the analysis results
-        time_stamps = signal_data['time_stamps']
-        input_signal = signal_data['signal_values']
-        if signal_data['estimated_frequency'] is not None:
-            expected_frequency_hz = signal_data['estimated_frequency']
-            # TODO: should we be setting expected_min_peak_width & expected_min_peak_height to None in this case?
-        ca2_analysis = waveFormAnalysis(
-            input_signal,
-            time_stamps,
-            expected_frequency_hz=expected_frequency_hz,
-            expected_min_peak_width=expected_min_peak_width,
-            expected_min_peak_height=expected_min_peak_height
-        )
-        if ca2_analysis is None:
-            print("\n")
-            print("Error. Could not extract sensible peaks/troughs from data")
-            print("Was expected frequency set to +/- 0.5Hz of expected frequency?")
-            print("No analysis results were written")
-            print("\n")
-            continue
-        else:
-            tissue_means = signal_data['tissue_means']
-            background_means = signal_data['background_means']
-            path_to_ca2_analysis_results_file = os.path.join(xlsx_dir, file_name + '-results.xlsx')
-            ca2AnalysisResultsToCSV(
-                time_stamps,
-                input_signal,
-                tissue_means,
-                background_means,
-                ca2_analysis,
-                path_to_ca2_analysis_results_file
-            )
-
-        if display_results:
-            print()
-            print(f'metrics for {file_name}')
-            for metrics in ca2_analysis['metrics']:
-                p2p_order = metrics['p2p_order']
-                average_metrics = metrics['mean_metric_data']
-                metric_failure_proportions = metrics['metric_failure_proportions']
-                if display_results:
-                    print(f'{p2p_order} average metrics (failure %): {average_metrics} ({metric_failure_proportions})')
-
-        if display_results or save_result_plots is not None:
-            if save_result_plots:
-                plot_file_path = os.path.join(plot_dir, file_name + '-plot.png')
-            else:
-                plot_file_path = None
-            plotCa2Signals(
-                time_stamps, 
-                input_signal,
-                ca2_analysis['peak_indices'],
-                ca2_analysis['trough_indices'],
-                file_name,
-                display_results=display_results,
-                plot_file_path=plot_file_path
-            )
-
-        signal_data_for_sdk_file_path = os.path.join(sdk_xlsx_dir, file_name + '-signal_data_for_sdk.xlsx')
-        signalDataForSDK(
-            time_stamps,
-            input_signal,
-            signal_data_for_sdk_file_path,
-            videoMetaDataForSDK(base_dir, file_name, file_extension)
-        )
-        # create a zip archive and write all the xlsx files to it
-        xlsx_archive_file_path = os.path.join(sdk_results_dir, 'sdk_xlsx-results.zip')
-        xlsx_archive = zipfile.ZipFile(xlsx_archive_file_path, 'w')
-        for sdk_dir_name, _, sdk_file_names in os.walk(sdk_xlsx_dir):
-            for sdk_file_name in sdk_file_names:
-                if 'sdk' in sdk_file_name:  # only include the xlsx files intended for the sdk
-                    file_path = os.path.join(sdk_dir_name, sdk_file_name)
-                    xlsx_archive.write(file_path, os.path.basename(file_path))
-        xlsx_archive.close()
-
-
 def plotCa2Signals(
     time_stamps: np.ndarray,
     signal: np.ndarray,
     peak_indices: np.ndarray,
     trough_indices: np.ndarray,
-    plot_title: str='',
-    plot_smoothed_signal: bool=True,
+    plot_title: str = '',
+    plot_smoothed_signal: bool = True,
     display_results: bool = True,
     plot_file_path: str = None
 ):
@@ -576,153 +659,6 @@ def plotCa2Signals(
     if display_results:
         plt.show()
     plt.close()
-
-
-def ca2AnalysisResultsToCSV(
-    time_stamps: np.ndarray,
-    input_signal: np.ndarray,
-    tissue_means: np.ndarray,
-    background_means: np.ndarray,
-    ca2_analysis: Dict,
-    output_file_path: str
-):
-    """ """
-
-    workbook = openpyxl.Workbook()
-
-    # create the first worksheet with the raw signal data
-    sheet = workbook.active
-    sheet.title = 'Signal Data'
-
-    # set the column headings
-    heading_row = 1
-    frame_number_column = 1
-    sheet.cell(heading_row, frame_number_column).value = 'frame number'
-    time_stamp_column = frame_number_column + 1
-    sheet.cell(heading_row, time_stamp_column).value = 'time'
-    signal_value_column = time_stamp_column + 1
-    sheet.cell(heading_row, signal_value_column).value = 'signal'
-    fg_mean_value_column = signal_value_column + 1
-    sheet.cell(heading_row, fg_mean_value_column).value = 'fg_mean'
-    bg_mean_value_column = fg_mean_value_column + 1
-    sheet.cell(heading_row, bg_mean_value_column).value = 'bg_mean'
-
-    # set the data values
-    data_row_start = heading_row + 1
-    num_data_points = len(time_stamps)
-    for data_point_index in range(0, num_data_points):
-        row_num = data_point_index + data_row_start
-        sheet.cell(row_num, frame_number_column).value = data_point_index
-        sheet.cell(row_num, time_stamp_column).value = time_stamps[data_point_index]
-        sheet.cell(row_num, signal_value_column).value = input_signal[data_point_index]
-        sheet.cell(row_num, fg_mean_value_column).value = tissue_means[data_point_index]
-        sheet.cell(row_num, bg_mean_value_column).value = background_means[data_point_index]
-
-    # create a second worksheet and write out the analysis results
-    sheet = workbook.create_sheet('Ca2+ Analysis')
-
-    # set the column headings
-    heading_row = 1
-    metric_type_column = 1
-    sheet.cell(heading_row, metric_type_column).value = 'metric type'
-    metric_value_column = metric_type_column + 1
-    sheet.cell(heading_row, metric_value_column).value = 'metric average'
-    normalized_metric_value_column = metric_value_column + 1
-    sheet.cell(heading_row, normalized_metric_value_column).value = 'normalized metric average'
-    num_points_column = normalized_metric_value_column + 1
-    sheet.cell(heading_row, num_points_column).value = 'num points'
-    num_failed_points_column = num_points_column + 1
-    sheet.cell(heading_row, num_failed_points_column).value = 'num failed points'
-    percent_failed_points_column = num_failed_points_column + 1
-    sheet.cell(heading_row, percent_failed_points_column).value = '% failed points'
-
-    # set the column values for each metric
-    row_num = heading_row + 1
-    num_p2p_types = len(ca2_analysis['metrics'])
-    for p2p_type_num in range(num_p2p_types):
-        metrics = ca2_analysis['metrics'][p2p_type_num]
-        metric_labels = metrics['metrics_labels']
-        metric_values = metrics['mean_metric_data']
-        normalized_metric_values = metrics['normalized_metric_data']
-        num_points = metrics['num_metric_points']
-        num_failed_points = metrics['num_metric_failures']
-        failure_percentages = metrics['metric_failure_proportions']
-
-        num_metrics = len(metric_values)
-        for metric_num in range(num_metrics):
-            sheet.cell(row_num, metric_type_column).value = metric_labels[metric_num]
-            sheet.cell(row_num, metric_value_column).value = metric_values[metric_num]
-            sheet.cell(row_num, normalized_metric_value_column).value = normalized_metric_values[metric_num]
-            sheet.cell(row_num, num_points_column).value = num_points
-            sheet.cell(row_num, num_failed_points_column).value = num_failed_points[metric_num]
-            sheet.cell(row_num, percent_failed_points_column).value = failure_percentages[metric_num]
-            row_num += 1
-
-    # add a measure of average frequency
-    row_num += 1
-    avg_frequency = ca2_analysis['avg_frequency']
-    sheet.cell(row_num, metric_type_column).value = 'frequency'
-    sheet.cell(row_num, metric_value_column).value = avg_frequency
-
-    workbook.save(filename=output_file_path)
-
-
-def signalDataForSDK(
-    time_stamps: np.ndarray,
-    input_signal: np.ndarray,
-    sdk_signal_data_file_path: str,
-    video_meta_data: Dict
-):
-    workbook = openpyxl.Workbook()
-    sheet = workbook.active
-
-    # set the column headings
-    heading_row = 1
-    time_stamp_column = 1
-    sheet.cell(heading_row, time_stamp_column).value = 'time'
-    signal_value_column = time_stamp_column + 1
-    sheet.cell(heading_row, signal_value_column).value = 'signal'
-
-    # set the data values
-    data_row_start = heading_row + 1
-    num_data_points = len(time_stamps)
-    for data_point_index in range(0, num_data_points):
-        row_num = data_point_index + data_row_start
-        sheet.cell(row_num, time_stamp_column).value = time_stamps[data_point_index]
-        sheet.cell(row_num, signal_value_column).value = input_signal[data_point_index]
-
-    # add meta data
-    sheet['E2'] = video_meta_data['well_name']
-    sheet['E3'] = video_meta_data['video_date'] + ' 00:00:00'
-    sheet['E4'] = 'NA'  # plate barcode
-    sheet['E5'] = video_meta_data['frames_per_second']
-    sheet['E6'] = 'y'  # do twitch's point up
-    sheet['E7'] = 'NA'  # microscope name
-
-    workbook.save(filename=sdk_signal_data_file_path)
-
-
-def videoMetaDataForSDK(base_dir: str, file_name: str, file_extension: str) -> Dict:
-    well_name = 'X000'
-    date_stamp = '2020-02-02'
-    num_chars_in_datestamp = len(date_stamp)
-    num_chars_in_well_name = len(well_name)
-    min_num_chars_in_file_name = num_chars_in_datestamp + num_chars_in_well_name
-    if len(file_name) >= min_num_chars_in_file_name:
-        file_name_length = len(file_name)
-        well_name = file_name[file_name_length - num_chars_in_well_name:]
-        date_stamp = file_name[:num_chars_in_datestamp]
-
-    video_file_path = os.path.join(base_dir, file_name + file_extension)
-    input_video_stream = VideoReader(video_file_path)
-    frames_per_second = input_video_stream.avgFPS()
-    input_video_stream.close()
-
-    return {
-        'well_name': well_name,
-        'video_date': date_stamp,
-        'frames_per_second': frames_per_second
-    }
 
 
 def signalDataFromXLSX(path_to_data: str) -> Tuple[np.ndarray]:
