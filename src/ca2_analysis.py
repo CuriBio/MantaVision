@@ -230,31 +230,32 @@ def analyzeCa2Data(
             video_meta_data
         )
 
-        # write out the contraction (dynamic ROI tracking) results
-        contraction_data = signal_data['contraction_results']
-        user_roi_selection = dynamic_roi_template_path is None
-        meta_data = metadataRequiredForXLSX(
-            well_name=well_name,
-            date_stamp=date_stamp,
-            frames_per_second=frames_per_second,
-            user_roi_selection=user_roi_selection,
-            max_translation_per_frame=max_translation_per_frame,
-            max_rotation_per_frame=max_rotation_per_frame,
-            contraction_vector=contraction_vector,
-            microns_per_pixel=microns_per_pixel,
-            output_conversion_factor=None,
-            sub_pixel_search_increment=None,
-            sub_pixel_refinement_radius=None,
-            estimated_frequency=signal_data['estimated_frequency'],
-        )
-        contraction_results_file_path = os.path.join(
-            dir_paths['xlsx_dir'], file_name + '-contraction_results.xlsx'
-        )
-        trackingResultsToXSLX(contraction_data, meta_data, contraction_results_file_path)
-        contraction_results_for_sdk_file_path = os.path.join(
-            dir_paths['sdk_results_xlsx_contraction_dir_path'], file_name + '-contraction_data_for_sdk.xlsx'
-        )
-        trackingResultsToXLSXforSDK(contraction_data, meta_data, contraction_results_for_sdk_file_path)
+        # write out the contraction (dynamic ROI tracking) results if necessary
+        if 'auto' in analysis_method.lower():
+            contraction_data = signal_data['contraction_results']
+            user_roi_selection = dynamic_roi_template_path is None
+            meta_data = metadataRequiredForXLSX(
+                well_name=well_name,
+                date_stamp=date_stamp,
+                frames_per_second=frames_per_second,
+                user_roi_selection=user_roi_selection,
+                max_translation_per_frame=max_translation_per_frame,
+                max_rotation_per_frame=max_rotation_per_frame,
+                contraction_vector=contraction_vector,
+                microns_per_pixel=microns_per_pixel,
+                output_conversion_factor=None,
+                sub_pixel_search_increment=None,
+                sub_pixel_refinement_radius=None,
+                estimated_frequency=signal_data['estimated_frequency'],
+            )
+            contraction_results_file_path = os.path.join(
+                dir_paths['xlsx_dir'], file_name + '-contraction_results.xlsx'
+            )
+            trackingResultsToXSLX(contraction_data, meta_data, contraction_results_file_path)
+            contraction_results_for_sdk_file_path = os.path.join(
+                dir_paths['sdk_results_xlsx_contraction_dir_path'], file_name + '-contraction_data_for_sdk.xlsx'
+            )
+            trackingResultsToXLSXforSDK(contraction_data, meta_data, contraction_results_for_sdk_file_path)
 
     # create a zip archive of the Ca2+ and contraction (dynamic ROI tracking) results for SDK
     ca2_signal_zip_file_path = os.path.join(dir_paths['sdk_results_zip_dir_path'], 'ca2_signal_data_for_sdk.zip')
@@ -263,12 +264,13 @@ def analyzeCa2Data(
         zip_file_path=ca2_signal_zip_file_path,
         sdk_files_only=True
     )
-    contraction_zip_file_path = os.path.join(dir_paths['sdk_results_zip_dir_path'], 'contraction_data_for_sdk.zip')
-    zipDir(
-        input_dir_path=dir_paths['sdk_results_xlsx_contraction_dir_path'],
-        zip_file_path=contraction_zip_file_path,
-        sdk_files_only=True
-    )
+    if 'auto' in analysis_method.lower():
+        contraction_zip_file_path = os.path.join(dir_paths['sdk_results_zip_dir_path'], 'contraction_data_for_sdk.zip')
+        zipDir(
+            input_dir_path=dir_paths['sdk_results_xlsx_contraction_dir_path'],
+            zip_file_path=contraction_zip_file_path,
+            sdk_files_only=True
+        )
 
 
 def outputDirPaths(base_dir: str) -> Dict:
