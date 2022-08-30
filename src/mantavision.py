@@ -32,7 +32,7 @@ def runCa2Analysis(args: Dict):
         dynamic_roi_template_path=args.ca2_analysis_dynamic_roi_template_path,
         reference_roi_template_path=args.ca2_analysis_reference_roi_template_path,
         select_background_once=args.ca2_analysis_select_background_once,
-        microns_per_pixel=args.ca2_analysis_parser_microns_per_pixel,
+        microns_per_pixel=args.ca2_analysis_microns_per_pixel,
         max_translation_per_frame=ca2_analysis_max_translation_per_frame,
         max_rotation_per_frame=args.ca2_analysis_max_rotation_per_frame,
         contraction_vector=contraction_vector
@@ -144,7 +144,7 @@ def saveCurrentFieldValues(
         field_values['morphology_microns_per_pixel'] = args.morphology_microns_per_pixel
         field_values['morphology_sub_pixel_search_increment'] = args.morphology_sub_pixel_search_increment
         field_values['morphology_sub_pixel_refinement_radius'] = args.morphology_sub_pixel_refinement_radius
-    elif args.actions == 'Ca2+_Analysis':
+    elif args.actions == 'Ca2+_Analysis':  # TODO: change == to like 'Ca2+'
         field_values['ca2_analysis_path_to_data'] = args.ca2_analysis_path_to_data
         field_values['ca2_analysis_expected_frequency_hz'] = args.ca2_analysis_expected_frequency_hz
         field_values['ca2_analysis_save_result_plots'] = args.ca2_analysis_save_result_plots
@@ -153,7 +153,7 @@ def saveCurrentFieldValues(
         field_values['ca2_analysis_dynamic_roi_template_path'] = args.ca2_analysis_dynamic_roi_template_path
         field_values['ca2_analysis_reference_roi_template_path'] = args.ca2_analysis_reference_roi_template_path
         field_values['ca2_analysis_select_background_once'] = args.ca2_analysis_select_background_once
-        field_values['ca2_analysis_parser_microns_per_pixel'] = args.ca2_analysis_parser_microns_per_pixel
+        field_values['ca2_analysis_microns_per_pixel'] = args.ca2_analysis_microns_per_pixel
         field_values['ca2_analysis_max_translation_per_frame'] = args.ca2_analysis_max_translation_per_frame
         field_values['ca2_analysis_max_rotation_per_frame'] = args.ca2_analysis_max_rotation_per_frame
         field_values['ca2_analysis_horizontal_contraction_direction'] = args.ca2_analysis_horizontal_contraction_direction
@@ -193,7 +193,7 @@ def defaultFieldValues() -> Dict:
         'ca2_analysis_dynamic_roi_template_path': None,
         'ca2_analysis_reference_roi_template_path': None,
         'ca2_analysis_select_background_once': False,
-        'ca2_analysis_parser_microns_per_pixel': None,
+        'ca2_analysis_microns_per_pixel': None,
         'ca2_analysis_max_translation_per_frame': 50,
         'ca2_analysis_max_rotation_per_frame': None,
         'ca2_analysis_horizontal_contraction_direction': 'right',
@@ -216,7 +216,8 @@ GUI_HEIGHT = 1000
     program_name="CuriBio MantaVision Toolkit",
     default_size=(GUI_WIDTH, GUI_HEIGHT),
     optional_cols=3,
-    # disable_progress_bar_animation=True
+    navigation='TABBED',
+    disable_progress_bar_animation=False
 )
 def main():
     """ Mantavision (MV) GUI description/layout """
@@ -230,14 +231,14 @@ def main():
 
     initial_values = previousFieldValues(mv_config_file_path)
 
-    ####################
-    # Ca2+ Analysis UI #
-    ####################
-    ca2_analysis_parser = subs.add_parser(
-        'Ca2+_Analysis',
+    ########################################################
+    # Ca2+ Analysis UI using Auto Morphological ROI method #
+    ########################################################
+    ca2_morphological_roi_parser = subs.add_parser(
+        'Ca2+_Auto_Morphological_ROI',
         help='Analyze Ca2+ Videos'
     )
-    ca2_analysis_parser.add_argument(
+    ca2_morphological_roi_parser.add_argument(
         'ca2_analysis_path_to_data',
         metavar='Input Dir Path',
         help='path to a directory with videos to analyze',
@@ -245,79 +246,54 @@ def main():
         type=str,
         gooey_options={'full_width': True, 'initial_value': initial_values['ca2_analysis_path_to_data']}
     )
-    ca2_analysis_parser.add_argument(
-        'ca2_analysis_method',
-        metavar='Method',
-        help='Method to Extract Signal',
-        choices=[
-            'Auto_Determine_Tissue_Morphology',
-            'Auto_Adjusted_Tissue_ROI',
-            'Fixed_Tissue_ROI'
-        ],
-        default=initial_values['ca2_analysis_method']
-    )
-    ca2_analysis_parser.add_argument(
+    ca2_morphological_roi_parser.add_argument(
         '--ca2_analysis_save_result_plots',
         metavar='Plots',
         help=' Generate plots of detected signal\n with peaks and troughs marked',
         action='store_true',
         gooey_options={'initial_value': initial_values['ca2_analysis_save_result_plots']}
     )
-    ca2_analysis_parser.add_argument(
+    ca2_morphological_roi_parser.add_argument(
         '--ca2_analysis_select_background_once',
         metavar='Draw Background ROI Once',
         help=' Draw background ROI once per batch,\n from the first video processed',
         action='store_true',
         gooey_options={'initial_value': initial_values['ca2_analysis_select_background_once']}
     )
-    ca2_analysis_parser.add_argument(
+    ca2_morphological_roi_parser.add_argument(
         '--ca2_analysis_low_signal_to_noise',
         metavar='Low Signal to Noise Adjustment',
-        help=' Auto detection of tissue ROI will compensate for low signal to noise (VERY SLOW)',
+        help=' Compensate for low signal to noise\n (VERY SLOW)',
         action='store_true',
         gooey_options={'initial_value': initial_values['ca2_analysis_low_signal_to_noise']}
     )
-    ca2_analysis_parser.add_argument(
-        '--ca2_analysis_dynamic_roi_template_path',
-        metavar='Dynamic ROI Template Path',
-        help='path to a template image of the dynamic roi to track',
-        widget='FileChooser',
-        type=str,
-        default=None,
-        gooey_options={'full_width': True, 'initial_value': initial_values['ca2_analysis_dynamic_roi_template_path']}
-    )
-    ca2_analysis_parser.add_argument(
+    ca2_morphological_roi_parser.add_argument(
         '--ca2_analysis_reference_roi_template_path',
-        metavar='Reference ROI Template Path',
-        help='path to a template image of the reference roi',
+        metavar='Fixed Post ROI Template Path',
+        help='Path to a template image of the Fixed Post ROI [Leave blank to draw the ROI]',
         widget='FileChooser',
         type=str,
         default=None,
         gooey_options={'full_width': True, 'initial_value': initial_values['ca2_analysis_reference_roi_template_path']}
     )
-    ca2_analysis_parser.add_argument(
-        '--ca2_analysis_max_translation_per_frame',
-        metavar='Max Translation',
-        help='search this (e.g. 50) from the last result\n [leave blank to search the entire frame]',
+    ca2_morphological_roi_parser.add_argument(
+        '--ca2_analysis_dynamic_roi_template_path',
+        metavar='Flexible Post ROI Template Path',
+        help='Path to a template image of the Flexible Post ROI [Leave blank to draw the ROI]',
+        widget='FileChooser',
+        type=str,
+        default=None,
+        gooey_options={'full_width': True, 'initial_value': initial_values['ca2_analysis_dynamic_roi_template_path']}
+    )
+    ca2_morphological_roi_parser.add_argument(
+        '--ca2_analysis_microns_per_pixel',
+        metavar='Microns per Pixel',
+        help='Microns per pixel conversion factor\n [leave blank for displacement in pixels]',
         type=float,
         default=None,
-        gooey_options={'initial_value': initial_values['ca2_analysis_max_translation_per_frame']}
+        gooey_options={'initial_value': initial_values['ca2_analysis_microns_per_pixel']}
     )
-    ca2_analysis_parser.add_argument(
-        '--ca2_analysis_horizontal_contraction_direction',
-        metavar='Horizontal Contraction Direction',
-        help='Horizontal direction component of contraction',
-        choices=['left', 'right', 'none'],
-        default=initial_values['ca2_analysis_horizontal_contraction_direction']
-    )
-    ca2_analysis_parser.add_argument(
-        '--ca2_analysis_vertical_contraction_direction',
-        metavar='Vertical Contraction Direction',
-        help='Vertical direction component of contraction',
-        choices=['up', 'down', 'none'],
-        default=initial_values['ca2_analysis_vertical_contraction_direction']
-    )
-    ca2_analysis_parser.add_argument(
+    ca2_morphological_roi_parser.add_argument(
         '--ca2_analysis_max_rotation_per_frame',
         metavar='Max Rotation',
         help='search +/- this (e.g. 2.0) from the last result\n [leave blank to ignore rotation]',
@@ -325,22 +301,307 @@ def main():
         default=None,
         gooey_options={'initial_value': initial_values['ca2_analysis_max_rotation_per_frame']}
     )
-    ca2_analysis_parser.add_argument(
-        '--ca2_analysis_expected_frequency_hz',
-        metavar='Frequency (Hz) Hint for Fixed ROI',
-        help='Fixed ROI method requires this.\n Must be +/- 0.5Hz from actual',
+    ca2_morphological_roi_parser.add_argument(
+        '--ca2_analysis_max_translation_per_frame',
+        metavar='Max Translation',
+        help='search this (e.g. 50) from the last result\n [leave blank to search the entire frame]',
         type=float,
-        gooey_options={'initial_value': initial_values['ca2_analysis_expected_frequency_hz']}
+        default=None,
+        gooey_options={'initial_value': initial_values['ca2_analysis_max_translation_per_frame']}
     )
-    ca2_analysis_parser.add_argument(
-        '--ca2_analysis_parser_microns_per_pixel',
+    ca2_morphological_roi_parser.add_argument(
+        '--ca2_analysis_horizontal_contraction_direction',
+        metavar='Horizontal Contraction Direction',
+        help='Horizontal direction component of contraction',
+        choices=['left', 'right', 'none'],
+        default=initial_values['ca2_analysis_horizontal_contraction_direction']
+    )
+    ca2_morphological_roi_parser.add_argument(
+        '--ca2_analysis_vertical_contraction_direction',
+        metavar='Vertical Contraction Direction',
+        help='Vertical direction component of contraction',
+        choices=['up', 'down', 'none'],
+        default=initial_values['ca2_analysis_vertical_contraction_direction']
+    )
+    ca2_morphological_roi_parser.add_argument(
+        '--ca2_analysis_expected_frequency_hz',
+        gooey_options={'visible': False, 'initial_value': None}
+    )
+    ca2_morphological_roi_parser.add_argument(
+        '--ca2_analysis_method',
+        gooey_options={'visible': False, 'initial_value': 'Auto_Morphology'}
+    )
+    ###################################################
+    # Ca2+ Analysis UI using Auto Adjusted ROI method #
+    ###################################################
+    ca2_auto_adjust_roi_parser = subs.add_parser(
+        'Ca2+_Auto_Adjusted_Tissue_ROI',
+        help='Analyze Ca2+ Videos'
+    )
+    ca2_auto_adjust_roi_parser.add_argument(
+        'ca2_analysis_path_to_data',
+        metavar='Input Dir Path',
+        help='path to a directory with videos to analyze',
+        widget='DirChooser',
+        type=str,
+        gooey_options={'full_width': True, 'initial_value': initial_values['ca2_analysis_path_to_data']}
+    )
+    ca2_auto_adjust_roi_parser.add_argument(
+        '--ca2_analysis_save_result_plots',
+        metavar='Plots',
+        help=' Generate plots of detected signal\n with peaks and troughs marked',
+        action='store_true',
+        gooey_options={'initial_value': initial_values['ca2_analysis_save_result_plots']}
+    )
+    ca2_auto_adjust_roi_parser.add_argument(
+        '--ca2_analysis_select_background_once',
+        metavar='Draw Background ROI Once',
+        help=' Draw background ROI once per batch,\n from the first video processed',
+        action='store_true',
+        gooey_options={'initial_value': initial_values['ca2_analysis_select_background_once']}
+    )
+    ca2_auto_adjust_roi_parser.add_argument(
+        '--ca2_analysis_expected_frequency_hz',
+        gooey_options={'visible': False, 'initial_value': None}
+    )
+    ca2_auto_adjust_roi_parser.add_argument(
+        '--ca2_analysis_reference_roi_template_path',
+        metavar='Tissue ROI Template Path',
+        help='Path to a template image of the Tissue ROI [Leave blank to draw the ROI]',
+        widget='FileChooser',
+        type=str,
+        default=None,
+        gooey_options={'full_width': True, 'initial_value': initial_values['ca2_analysis_reference_roi_template_path']}
+    )
+    ca2_auto_adjust_roi_parser.add_argument(
+        '--ca2_analysis_dynamic_roi_template_path',
+        metavar='Flexible Post ROI Template Path',
+        help='Path to a template image of the Flexible Post ROI [Leave blank to draw the ROI]',
+        widget='FileChooser',
+        type=str,
+        default=None,
+        gooey_options={'full_width': True, 'initial_value': initial_values['ca2_analysis_dynamic_roi_template_path']}
+    )
+    ca2_auto_adjust_roi_parser.add_argument(
+        '--ca2_analysis_microns_per_pixel',
         metavar='Microns per Pixel',
         help='Microns per pixel conversion factor\n [leave blank for displacement in pixels]',
         type=float,
         default=None,
-        gooey_options={'initial_value': initial_values['ca2_analysis_parser_microns_per_pixel']}
+        gooey_options={'initial_value': initial_values['ca2_analysis_microns_per_pixel']}
     )
-
+    ca2_auto_adjust_roi_parser.add_argument(
+        '--ca2_analysis_max_rotation_per_frame',
+        metavar='Max Rotation',
+        help='search +/- this (e.g. 2.0) from the last result\n [leave blank to ignore rotation]',
+        type=float,
+        default=None,
+        gooey_options={'initial_value': initial_values['ca2_analysis_max_rotation_per_frame']}
+    )
+    ca2_auto_adjust_roi_parser.add_argument(
+        '--ca2_analysis_max_translation_per_frame',
+        metavar='Max Translation',
+        help='search this (e.g. 50) from the last result\n [leave blank to search the entire frame]',
+        type=float,
+        default=None,
+        gooey_options={'initial_value': initial_values['ca2_analysis_max_translation_per_frame']}
+    )
+    ca2_auto_adjust_roi_parser.add_argument(
+        '--ca2_analysis_horizontal_contraction_direction',
+        metavar='Horizontal Contraction Direction',
+        help='Horizontal direction component of contraction',
+        choices=['left', 'right', 'none'],
+        default=initial_values['ca2_analysis_horizontal_contraction_direction']
+    )
+    ca2_auto_adjust_roi_parser.add_argument(
+        '--ca2_analysis_vertical_contraction_direction',
+        metavar='Vertical Contraction Direction',
+        help='Vertical direction component of contraction',
+        choices=['up', 'down', 'none'],
+        default=initial_values['ca2_analysis_vertical_contraction_direction']
+    )
+    ca2_auto_adjust_roi_parser.add_argument(
+        '--ca2_analysis_low_signal_to_noise',
+        gooey_options={'visible': False, 'initial_value': False}
+    )
+    ca2_auto_adjust_roi_parser.add_argument(
+        '--ca2_analysis_method',
+        gooey_options={'visible': False, 'initial_value': 'Auto_Adjusted_Tissue_ROI'}
+    )
+    ###########################################
+    # Ca2+ Analysis UI using Fixed Tissue ROI method #
+    ###########################################
+    ca2_fixed_roi_parser = subs.add_parser(
+        'Ca2+_Fixed_Tissue_ROI',
+        help='Analyze Ca2+ Videos'
+    )
+    ca2_fixed_roi_parser.add_argument(
+        'ca2_analysis_path_to_data',
+        metavar='Input Dir Path',
+        help='path to a directory with videos to analyze',
+        widget='DirChooser',
+        type=str,
+        gooey_options={'full_width': True, 'initial_value': initial_values['ca2_analysis_path_to_data']}
+    )
+    ca2_fixed_roi_parser.add_argument(
+        'ca2_analysis_expected_frequency_hz',
+        metavar='Expected Frequency (Hz)',
+        help='Estimate of the expected frequency. Must be within +/- 0.5 of actual frequency for analysis to succeed',
+        type=float,
+        gooey_options={'initial_value': initial_values['ca2_analysis_expected_frequency_hz']}
+    )
+    ca2_fixed_roi_parser.add_argument(
+        '--ca2_analysis_save_result_plots',
+        metavar='Plots',
+        help=' Generate plots of detected signal\n with peaks and troughs marked',
+        action='store_true',
+        gooey_options={'initial_value': initial_values['ca2_analysis_save_result_plots']}
+    )
+    ca2_fixed_roi_parser.add_argument(
+        '--ca2_analysis_select_background_once',
+        metavar='Draw Background ROI Once',
+        help=' Draw background ROI once per batch,\n from the first video processed',
+        action='store_true',
+        gooey_options={'initial_value': initial_values['ca2_analysis_select_background_once']}
+    )
+    ca2_fixed_roi_parser.add_argument(
+        '--ca2_analysis_reference_roi_template_path',
+        metavar='Tissue ROI Template Path',
+        help='Path to a template image of the Tissue ROI [Leave blank to draw the ROI]',
+        widget='FileChooser',
+        type=str,
+        default=None,
+        gooey_options={'visible': False, 'initial_value': None}
+    )
+    ca2_fixed_roi_parser.add_argument(
+        '--ca2_analysis_dynamic_roi_template_path',
+        metavar='Flexible Post ROI Template Path',
+        help='Path to a template image of the Flexible Post ROI [Leave blank to draw the ROI]',
+        widget='FileChooser',
+        type=str,
+        default=None,
+        gooey_options={'visible': False, 'initial_value': None}
+    )
+    ca2_fixed_roi_parser.add_argument(
+        '--ca2_analysis_microns_per_pixel',
+        metavar='Microns per Pixel',
+        help='Microns per pixel conversion factor\n [leave blank for displacement in pixels]',
+        type=float,
+        default=None,
+        gooey_options={'initial_value': initial_values['ca2_analysis_microns_per_pixel']}
+    )
+    ca2_fixed_roi_parser.add_argument(
+        '--ca2_analysis_max_rotation_per_frame',
+        metavar='Max Rotation',
+        help='search +/- this (e.g. 2.0) from the last result\n [leave blank to ignore rotation]',
+        type=float,
+        default=None,
+        gooey_options={'visible': False, 'initial_value': None}
+    )
+    ca2_fixed_roi_parser.add_argument(
+        '--ca2_analysis_max_translation_per_frame',
+        metavar='Max Translation',
+        help='search this (e.g. 50) from the last result\n [leave blank to search the entire frame]',
+        type=float,
+        default=None,
+        gooey_options={'visible': False, 'initial_value': None}
+    )
+    ca2_fixed_roi_parser.add_argument(
+        '--ca2_analysis_horizontal_contraction_direction',
+        metavar='Horizontal Contraction Direction',
+        help='Horizontal direction component of contraction',
+        choices=['left', 'right', 'none'],
+        default=None,
+        gooey_options={'visible': False, 'initial_value': 'none'}
+    )
+    ca2_fixed_roi_parser.add_argument(
+        '--ca2_analysis_vertical_contraction_direction',
+        metavar='Vertical Contraction Direction',
+        help='Vertical direction component of contraction',
+        default=None,
+        gooey_options={'visible': False, 'initial_value': 'none'}
+    )
+    ca2_fixed_roi_parser.add_argument(
+        '--ca2_analysis_low_signal_to_noise',
+        gooey_options={'visible': False, 'initial_value': False}
+    )
+    ca2_fixed_roi_parser.add_argument(
+        '--ca2_analysis_method',
+        gooey_options={'visible': False, 'initial_value': 'Fixed_ROI'}
+    )
+    #################
+    # Morphology UI #
+    #################
+    morphology_parser = subs.add_parser(
+        'Morphology',
+        help='Compute Morphology Metrics in Images'
+    )
+    morphology_parser.add_argument(
+        'morphology_search_image_path',
+        metavar='Input Dir Path',
+        help='path to a directory with images to analyze',
+        widget='DirChooser',
+        type=str,
+        gooey_options={'full_width': True, 'initial_value': initial_values['morphology_search_image_path']}
+    )
+    morphology_parser.add_argument(
+        '--morphology_left_template_image_path',
+        metavar='Left Template Path',
+        help='path to a template image of the left post',
+        widget='FileChooser',
+        type=str,
+        default=None,
+        gooey_options={'full_width': True, 'initial_value': initial_values['morphology_left_template_image_path']}
+    )
+    morphology_parser.add_argument(
+        '--morphology_right_template_image_path',
+        metavar='Right Template Path',
+        help='path to a template image of the right post',
+        widget='FileChooser',
+        type=str,
+        default=None,
+        gooey_options={'full_width': True, 'initial_value': initial_values['morphology_right_template_image_path']}
+    )
+    morphology_parser.add_argument(
+        '--morphology_template_refinement_radius',
+        metavar='Template Edge Refinement Radius',
+        help='search +/- this value at the inner edge of each template for a better match (e.g. 40)\n[leave blank for no refinement]',
+        type=int,
+        default=None,
+        gooey_options={'initial_value': initial_values['morphology_template_refinement_radius']}
+    )
+    morphology_parser.add_argument(
+        '--morphology_edge_finding_smoothing_radius',
+        metavar='Tissue Edge Smoothing Window',
+        help='smooth tissue edges with a windowed rolling average of this many pixels (e.g. 10)\n[leave blank for no smoothing]',
+        type=int,
+        default=None,
+        gooey_options={'initial_value': initial_values['morphology_edge_finding_smoothing_radius']}
+    )
+    morphology_parser.add_argument(
+        '--morphology_microns_per_pixel',
+        metavar='Microns per Pixel',
+        help='report displacement values in microns using this value to convert from pixels\n[leave blank for 1:1]',
+        type=float,
+        default=None,
+        gooey_options={'initial_value': initial_values['morphology_microns_per_pixel']}
+    )
+    morphology_parser.add_argument(
+        '--morphology_sub_pixel_search_increment',
+        metavar='Subpixel Search Increment',
+        help='search will be sub pixel accurate to within +/- this fraction of a pixel (e.g. 0.5)\n[leave blank for no sub pixel accuracy]',
+        type=float,
+        default=None,
+        gooey_options={'initial_value': initial_values['morphology_sub_pixel_search_increment']}
+    )
+    morphology_parser.add_argument(
+        '--morphology_sub_pixel_refinement_radius',
+        metavar='Subpixel Refinement Radius',
+        help='sub pixel search will be limited to +/- this amount in each dimension (e.g. 2.0)\n[leave blank for no sub pixel accuracy]',
+        type=float,
+        default=None,
+        gooey_options={'initial_value': initial_values['morphology_sub_pixel_refinement_radius']}
+    )
     ###############
     # Tracking UI #
     ###############
@@ -429,7 +690,7 @@ def main():
     track_template_parser.add_argument(
         '--tracking_output_conversion_factor',
         metavar='Conversion Factor',        
-        help='multiply all distance calculations by this value (e.g. 1.0 is no change)\n[leave blank for no change]',
+        help='multiply distance calculations by this value (e.g. 1.0 is no change) [leave blank for no change]',
         type=float,
         default=None,
         gooey_options={'initial_value': initial_values['tracking_output_conversion_factor']}
@@ -437,7 +698,7 @@ def main():
     track_template_parser.add_argument(
         '--tracking_microns_per_pixel',
         metavar='Microns per Pixel',
-        help='report displacement values in microns using this value to convert from pixels\n[leave blank for 1:1]',
+        help='report displacement in microns using this value to convert from pixels [leave blank for 1:1]',
         type=float,
         default=None,
         gooey_options={'initial_value': initial_values['tracking_microns_per_pixel']}
@@ -462,79 +723,6 @@ def main():
         default=None,
         gooey_options={'initial_value': initial_values['tracking_sub_pixel_refinement_radius']}        
     )
-    #################
-    # Morphology UI #
-    #################
-    morphology_parser = subs.add_parser(
-        'Morphology',
-        help='Compute Morphology Metrics in Images'
-    )
-    morphology_parser.add_argument(
-        'morphology_search_image_path',
-        metavar='Input Dir Path',
-        help='path to a directory with images to analyze',
-        widget='DirChooser',
-        type=str,
-        gooey_options={'full_width': True, 'initial_value': initial_values['morphology_search_image_path']}
-    )
-    morphology_parser.add_argument(
-        '--morphology_left_template_image_path',
-        metavar='Left Template Path',
-        help='path to a template image of the left post',
-        widget='FileChooser',
-        type=str,
-        default=None,
-        gooey_options={'full_width': True, 'initial_value': initial_values['morphology_left_template_image_path']}
-    )
-    morphology_parser.add_argument(
-        '--morphology_right_template_image_path',
-        metavar='Right Template Path',
-        help='path to a template image of the right post',
-        widget='FileChooser',
-        type=str,
-        default=None,
-        gooey_options={'full_width': True, 'initial_value': initial_values['morphology_right_template_image_path']}
-    )    
-    morphology_parser.add_argument(
-        '--morphology_template_refinement_radius',
-        metavar='Template Edge Refinement Radius',
-        help='search +/- this value at the inner edge of each template for a better match (e.g. 40)\n[leave blank for no refinement]',
-        type=int,
-        default=None,
-        gooey_options={'initial_value': initial_values['morphology_template_refinement_radius']}
-    )
-    morphology_parser.add_argument(
-        '--morphology_edge_finding_smoothing_radius',
-        metavar='Tissue Edge Smoothing Window',
-        help='smooth tissue edges with a windowed rolling average of this many pixels (e.g. 10)\n[leave blank for no smoothing]',
-        type=int,
-        default=None,
-        gooey_options={'initial_value': initial_values['morphology_edge_finding_smoothing_radius']}
-    )        
-    morphology_parser.add_argument(
-        '--morphology_microns_per_pixel',
-        metavar='Microns per Pixel',
-        help='report displacement values in microns using this value to convert from pixels\n[leave blank for 1:1]',
-        type=float,
-        default=None,
-        gooey_options={'initial_value': initial_values['morphology_microns_per_pixel']}
-    )
-    morphology_parser.add_argument(
-        '--morphology_sub_pixel_search_increment',
-        metavar='Subpixel Search Increment',
-        help='search will be sub pixel accurate to within +/- this fraction of a pixel (e.g. 0.5)\n[leave blank for no sub pixel accuracy]',
-        type=float,
-        default=None,
-        gooey_options={'initial_value': initial_values['morphology_sub_pixel_search_increment']}
-    )
-    morphology_parser.add_argument(
-        '--morphology_sub_pixel_refinement_radius',
-        metavar='Subpixel Refinement Radius',
-        help='sub pixel search will be limited to +/- this amount in each dimension (e.g. 2.0)\n[leave blank for no sub pixel accuracy]',
-        type=float,
-        default=None,
-        gooey_options={'initial_value': initial_values['morphology_sub_pixel_refinement_radius']}
-    )
 
     args = parser.parse_args()
     saveCurrentFieldValues(args, initial_values, mv_config_file_path)
@@ -543,7 +731,7 @@ def main():
         runTracking(args)
     elif args.actions == 'Morphology':
         runMorphology(args)
-    elif args.actions == 'Ca2+_Analysis':
+    elif 'Ca2+' in args.actions:
         runCa2Analysis(args)
     else:
         raise RuntimeError('Invalid Action Chosen')

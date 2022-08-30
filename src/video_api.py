@@ -105,20 +105,20 @@ class VideoReader:
         self.is_nd2 = False
         self.video_path = video_path
         self.reader = self._set_reader(reader_api, direction_sense)
-        self._enableFormatBugWorkaround()
+        # self._enableFormatBugWorkaround()
 
-    def _enableFormatBugWorkaround(self):
-        """ temporary hack to stop deprecated pixel format warnings being spewed all over the console output """
-        self.tmp_std_err = None
-        if not self.is_nd2:
-            if 'yuvj' in self.reader.video_stream.pix_fmt:
-                self.tmp_std_err = sys.stderr
-                devnull = open(os.devnull, 'w')
-                sys.stderr = devnull
-
-    def _disableFormatBugWorkaround(self):
-        if self.tmp_std_err is not None:
-            sys.stderr = self.tmp_std_err
+    # def _enableFormatBugWorkaround(self):
+    #     """ temporary hack to stop deprecated pixel format warnings being spewed all over the console output """
+    #     self.tmp_std_err = None
+    #     if not self.is_nd2:
+    #         if 'yuvj' in self.reader.video_stream.pix_fmt:
+    #             self.tmp_std_err = sys.stderr
+    #             devnull = open(os.devnull, 'w')
+    #             sys.stderr = devnull
+    #
+    # def _disableFormatBugWorkaround(self):
+    #     if self.tmp_std_err is not None:
+    #         sys.stderr = self.tmp_std_err
 
     def _apiFromPath(self) -> str:
         self.format_apis = [
@@ -212,7 +212,7 @@ class VideoReader:
         return self.reader.initialiseStream()
 
     def close(self):
-        self._disableFormatBugWorkaround()
+        # self._disableFormatBugWorkaround()
         return self.reader.close()
 
 

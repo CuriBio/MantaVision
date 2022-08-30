@@ -1,8 +1,7 @@
 import os
-import zipfile
+from sys import exit as sys_exit
 from math import floor
 import cv2 as cv
-import openpyxl
 import numpy as np
 import pandas as pd
 from datetime import datetime
@@ -25,6 +24,11 @@ import matplotlib.pyplot as plt
 pd.set_option("display.precision", 2)
 pd.set_option("display.expand_frame_repr", False)
 
+
+# TODO: in order to allow for the ca2+ videos to contract in any direction,
+#       we'll need to use the "main axis" of movement to determine if we adjust the
+#       horizontal or vertical positions of the tissue roi.
+#       we can do this using major_movement_direction returned by the dynamic_roi tracking
 
 # TODO: parallelize the analysis of each frame. i.e.
 #       if we have 10 processors, split up the frames into 10 contiguous sections
@@ -89,11 +93,14 @@ def analyzeCa2Data(
     """ """
     if 'auto' not in analysis_method.lower():
         if expected_frequency_hz is None:
-            print("ERROR. Expected Frequency Hint must be provided for non automatic methods")
-            return
+            print("ERROR!\nExpected Frequency Hint must be provided for non automatic methods\nExiting")
+            sys_exit(1)
 
     # get paths to all the video files being processed and set up the results' directory structure
     base_dir, files_to_analyze = contentsOfDir(dir_path=path_to_data, search_terms=supported_file_extensions)
+    if files_to_analyze is None or len(files_to_analyze) < 1:
+        print("ERROR!\nNo video files to analyze in the directory specified\nExiting")
+        sys_exit(1)
     dir_paths = outputDirPaths(base_dir)
 
     # collect bg & tissue or dynamic & reference ROIs for all the videos to be analyzed, up front, so that
@@ -304,10 +311,10 @@ def videoROIsInfo(
     max_translation_per_frame: Tuple[float] = None,
     max_rotation_per_frame: float = None,
     contraction_vector: Tuple[int] = None
-) -> Tuple[List[Dict], List[Dict], float, float]:
+) -> Tuple[List[Dict], List[Dict], str, float, float]:
     """ """
     dynamic_roi_template_image = template_info['dynamic']['image']
-    _, dynamic_roi, estimated_frequency, frames_per_second, _, _ = trackTemplate(
+    _, dynamic_roi, major_movement_direction, estimated_frequency, frames_per_second, _, _ = trackTemplate(
         input_video_path=video_path,
         template_guide_image_path=None,
         template_rgb=dynamic_roi_template_image,
@@ -322,11 +329,18 @@ def videoROIsInfo(
     if reference_roi_captures_tissue:
         # we will only be using the reference roi, and, the top, bottom and rhs don't change,
         # only the dynamic roi side changes with the results of the tracking of the dynamic roi
+
+        # to make the tissue roi that the user drew have its lhs adjusted with tracking, rather than
+        # just making the tissue roi lhs the dynamic roi rhs, we compute the distance between the
+        # dynamic & reference roi for the initial frame which == the amount to shift the dynamic roi to
+        # in order to place it where the tissue roi would be with the same movement as the dynamic roi
+        # dynamic_roi_reference_roi_diff = template_info['reference']['roi']['x_start'] - dynamic_roi[0]['x_end']
+        dynamic_roi_reference_roi_diff = 0
         for frame_num in range(num_frames):
             rois_info.append(
                 {
                     'reference': {
-                        'x_start': int(dynamic_roi[frame_num]['x_end']),
+                        'x_start': int(dynamic_roi[frame_num]['x_end'] + dynamic_roi_reference_roi_diff),
                         'x_end': template_info['reference']['roi']['x_end'],
                         'y_start': template_info['reference']['roi']['y_start'],
                         'y_end': template_info['reference']['roi']['y_end']
@@ -335,7 +349,7 @@ def videoROIsInfo(
             )
     else:
         reference_roi_template_image = template_info['reference']['image']
-        _, reference_roi, _, _, _, _ = trackTemplate(
+        _, reference_roi, _, _, _, _, _ = trackTemplate(
             input_video_path=video_path,
             template_guide_image_path=None,
             template_rgb=reference_roi_template_image,
@@ -362,7 +376,7 @@ def videoROIsInfo(
                 }
             )
 
-    return rois_info, dynamic_roi, estimated_frequency, frames_per_second
+    return rois_info, dynamic_roi, major_movement_direction, estimated_frequency, frames_per_second
 
 
 def signalDataFromVideo(
@@ -377,11 +391,12 @@ def signalDataFromVideo(
     contraction_vector: Tuple[int] = None
 ) -> Dict:
     """ """
+    major_movement_direction = None
     frames_per_second = None
     estimated_frequency = None
     contraction_results = None
     if 'auto' in analysis_method.lower():
-        video_frames_rois, contraction_results, estimated_frequency, frames_per_second = videoROIsInfo(
+        video_frames_rois, contraction_results, major_movement_direction, estimated_frequency, frames_per_second = videoROIsInfo(
             video_path=input_video_path,
             template_info=video_roi_info['template_info'],
             reference_roi_captures_tissue=video_roi_info['reference_roi_captures_tissue'],
@@ -533,6 +548,7 @@ def signalDataFromVideo(
         'tissue_means': np.array(fg_means, dtype=float),
         'background_means': np.array(bg_means, dtype=float),
         'contraction_results': contraction_results,
+        'major_movement_direction': major_movement_direction,
         'estimated_frequency': estimated_frequency,
         'frames_per_second': frames_per_second
     }
