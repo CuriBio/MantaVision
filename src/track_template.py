@@ -8,6 +8,8 @@ from video_api import VideoReader, VideoWriter
 from typing import Tuple, List, Dict
 
 
+# TODO: change trackTemplate to return a dict
+
 # TODO: parallelize the computation of matching for each frame. i.e. if we have 10 processors,
 #       split up the search space into
 #       10 disjoint regions and have each thread process those regions independently then combine results
@@ -44,7 +46,7 @@ def trackTemplate(
     max_translation_per_frame: Tuple[float] = None,
     max_rotation_per_frame: float = None,
     contraction_vector: Tuple[int] = None
-) -> Tuple[str, List[Dict], float, float, np.ndarray, int]:
+) -> Tuple[Tuple[str, str], List[Dict], 'str', float, float, np.ndarray, int]:
     """
     Tracks a template image through each frame of a video.
     Args:
@@ -270,7 +272,7 @@ def trackTemplate(
     input_video_stream.close()
 
     # adjust match displacements, so they're relative to the match closest to the origin
-    displacement_adjusted_results, min_contraction_frame_number = displacementAdjustedResults(
+    displacement_adjusted_results, min_contraction_frame_number, major_movement_direction = displacementAdjustedResults(
         results_to_adjust=tracking_results,
         microns_per_pixel=microns_per_pixel,
         output_conversion_factor=output_conversion_factor,
@@ -286,6 +288,7 @@ def trackTemplate(
     return (
         (warning_msg, error_msg),
         displacement_adjusted_results,
+        major_movement_direction,
         estimated_frequency,
         frames_per_second,
         template_rgb,
@@ -440,7 +443,7 @@ def displacementAdjustedResults(
     contraction_vector: Tuple[int, int],
     template_half_height: float,
     template_half_width: float
-) -> List[Dict]:
+) -> Tuple[List[Dict], int, str]:
     """ Adjust displacement values for matches in all frames so they are relative to the
         point in the video stream where the template (roi) match is closest to the origin
         instead of the being relative to the actual video frame origin. """
@@ -456,6 +459,7 @@ def displacementAdjustedResults(
     range_of_x_movement = abs(max_x_origin[0] - min_x_origin[0])
     range_of_y_movement = abs(max_y_origin[1] - min_y_origin[1])
     if range_of_x_movement > range_of_y_movement:
+        major_movement_direction = 'x'
         if contraction_moves_right:
             min_frame_number = min_frame_numbers[0]
             min_template_origin_x = min_x_origin[0]
@@ -465,6 +469,7 @@ def displacementAdjustedResults(
             min_template_origin_x = max_x_origin[0]
             min_template_origin_y = max_x_origin[1]
     else:
+        major_movement_direction = 'y'
         if contraction_moves_down:
             min_frame_number = min_frame_numbers[1]
             min_template_origin_y = min_y_origin[1]
@@ -490,7 +495,7 @@ def displacementAdjustedResults(
         frame_info['TEMPLATE_MATCH_ORIGIN_X'] += template_half_width
         frame_info['TEMPLATE_MATCH_ORIGIN_Y'] += template_half_height
         adjusted_tracking_results.append(frame_info)
-    return adjusted_tracking_results, min_frame_number
+    return adjusted_tracking_results, min_frame_number, major_movement_direction
 
 
 def inputImageSubRegion(

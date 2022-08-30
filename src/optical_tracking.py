@@ -55,7 +55,7 @@ def runTrackTemplate(config: Dict):
     for input_args in args:
         print(f'processing: {input_args["input_video_path"]}')
         video_tracking_start_time = time.time()
-        messages, tracking_results, estimated_frequency, frames_per_second, template, min_frame_number = trackTemplate(
+        messages, tracking_results, _, estimated_frequency, frames_per_second, template, min_frame_number = trackTemplate(
             input_args['input_video_path'],
             input_args['template_guide_image_path'],
             template_image,

@@ -44,7 +44,7 @@ def computeMorphologyMetrics(
     }
     for template_position, template_data in template_info.items():
         if template_data['path'] is not None:
-            template_data['image'] = cv.imread(template_image_path)
+            template_data['image'] = cv.imread(template_data['path'])
         else:
             drawn_roi_templates_dir = os.path.join(results_dir, 'drawn_template_images')
             if not os.path.exists(drawn_roi_templates_dir):
@@ -82,7 +82,8 @@ def computeMorphologyMetrics(
             rois_info=rois_info,
             microns_per_pixel=microns_per_pixel,
             template_refinement_radius=template_refinement_radius,
-            edge_finding_smoothing_radius=edge_finding_smoothing_radius
+            edge_finding_smoothing_radius=edge_finding_smoothing_radius,
+            low_signal_to_noise=True
         )
         all_metrics.append(
             {
@@ -722,14 +723,20 @@ def maxEdges(
   # then find what we presume is the other edge on the opposite side of the horizontal midpoint
   # we presume the tissue is mostly symmetric and so look for the other edge in the vacinity 
   # of the first edge mirrored on the opposite side of the horizontal midline 
+
   half_width = max_intensity_pos - line_midpoint
   second_edge_candidate_pos: int = int(line_midpoint - half_width)
-  # create a buffer of +/- 20% of image height to look for the other edge
   vertical_height = input_array_gradmag_ma.shape[0]
+  if second_edge_candidate_pos > vertical_height:
+      second_edge_candidate_pos = vertical_height
+  elif second_edge_candidate_pos < 0:
+      second_edge_candidate_pos = 0
+  # create a buffer of +/- 20% of image height to look for the other edge
   candidate_range_buffer = int(vertical_height * 0.25)
   candidate_start_pos = max(0, second_edge_candidate_pos - candidate_range_buffer)
   candidate_end_pos = min(second_edge_candidate_pos + candidate_range_buffer, vertical_height)
-  other_peak_max_pos = np.argmax(input_array_gradmag_ma[candidate_start_pos:candidate_end_pos]) + candidate_start_pos
+  gradmag_ma_slice = input_array_gradmag_ma[candidate_start_pos:candidate_end_pos]
+  other_peak_max_pos = np.argmax(gradmag_ma_slice) + candidate_start_pos
   if max_intensity_pos < other_peak_max_pos:
     return {
         'lower_edge_pos': other_peak_max_pos,
@@ -802,10 +809,12 @@ def resultsToCSV(
   sheet[runtime_config_lables_column + str(data_row + 1)] = 'input templates'
   template_paths = ''
   template_image_paths = runtime_parameters['template_image_paths']
-  for template_position, template_path_details in template_image_paths.items():
-    for template_type, template_path in template_path_details.items():
-      if template_path is not None:
-        template_paths += template_path + ', '
+  # for template_position, template_path_details in template_image_paths.items():
+    # for template_type, template_path in template_path_details.items():
+    #   if template_path is not None:
+    #     template_paths += template_path + ', '
+  for template_position, template_path in template_image_paths.items():
+    template_paths += template_path + ', '
   template_paths = template_paths[:-2]  # remove the last ', '
   sheet[runtime_config_data_column + str(data_row + 1)] = template_paths
   sheet[runtime_config_lables_column + str(data_row + 2)] = 'microns per pixel'
