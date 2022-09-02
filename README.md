@@ -35,12 +35,8 @@ macOS, Linux:
 
 </br></br>
 ### Issues  ###
-1) python-opencv has been set to a specific version in the requirements file. 
-This is because there is a known bug with later opencv versions
-(that only seems to affect building an exe with pyinstaller) 
-which results in launch failure due to a recursive import problem.
+1) In the GitHub actions yml file, the python interpreter has been set to a specific version because the GUI (built with Gooey) relies on wxWindows which has a broken build for python 3.10+.
 
-2) In the GitHub actions yml file, the python interpreter has been set to a specific version.
-This is because the GUI (built with Gooey) relies on wxWindows which has a broken build for python 3.10+.
+2) In the GitHub actions yml file, pyinstaller has been set to a specific version because newer version trip the windows anti-virus.
 
-3) The pyinstaller version has been set to a specific version so as to not trip up windows anti-virus.
+3) In the requirements.txt file, python-opencv has been set to a specific version because there is a bug with later opencv versions on windows (that only seems to affect building an exe with pyinstaller) which results in launch failure due to a recursive import problem.
