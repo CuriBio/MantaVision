@@ -42,3 +42,5 @@ which results in launch failure due to a recursive import problem.
 
 2) In the GitHub actions yml file, the python interpreter has been set to a specific version.
 This is because the GUI (built with Gooey) relies on wxWindows which has a broken build for python 3.10+.
+
+3) The pyinstaller version has been set to a specific version so as to not trip up windows anti-virus.
