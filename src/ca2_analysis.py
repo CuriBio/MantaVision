@@ -88,7 +88,8 @@ def analyzeCa2Data(
     microns_per_pixel: float = None,
     max_translation_per_frame: Tuple[float] = None,
     max_rotation_per_frame: float = None,
-    contraction_vector: Tuple[int] = None
+    contraction_vector: Tuple[int] = None,
+    output_conversion_factor: float = None,
 ):
     """ """
     if 'auto' not in analysis_method.lower():
@@ -117,7 +118,15 @@ def analyzeCa2Data(
             reference_roi_template_path,
             background_roi
         )
+
+        saveROITemplates(
+            dir_path=dir_paths['template_dir'],
+            video_file_name=file_name,
+            rois=video_rois
+        )
+
         all_videos_rois[file_name] = video_rois
+
         if select_background_once:
             background_roi = video_rois['background']
 
@@ -148,6 +157,7 @@ def analyzeCa2Data(
             analysis_method,
             video_roi_info,
             microns_per_pixel,
+            output_conversion_factor,
             max_translation_per_frame,
             max_rotation_per_frame,
             contraction_vector
@@ -250,7 +260,7 @@ def analyzeCa2Data(
                 max_rotation_per_frame=max_rotation_per_frame,
                 contraction_vector=contraction_vector,
                 microns_per_pixel=microns_per_pixel,
-                output_conversion_factor=None,
+                output_conversion_factor=output_conversion_factor,
                 sub_pixel_search_increment=None,
                 sub_pixel_refinement_radius=None,
                 estimated_frequency=signal_data['estimated_frequency'],
@@ -280,6 +290,18 @@ def analyzeCa2Data(
         )
 
 
+def saveROITemplates(
+    dir_path: str,
+    video_file_name: str,
+    rois: Dict
+):
+    for roi_label, roi_image in rois['template_images'].items():
+        roi_template_file_path = os.path.join(
+            dir_path, video_file_name + '-' + roi_label + '.png'
+        )
+        cv.imwrite(roi_template_file_path, roi_image)
+
+
 def outputDirPaths(base_dir: str) -> Dict:
     results_dir_name = "results_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     results_dir_path = os.path.join(base_dir, results_dir_name)
@@ -291,6 +313,7 @@ def outputDirPaths(base_dir: str) -> Dict:
         'video_dir': os.path.join(results_dir_path, 'video'),
         'xlsx_dir': os.path.join(results_dir_path, 'xlsx'),
         'plot_dir': os.path.join(results_dir_path, 'plot'),
+        'template_dir': os.path.join(results_dir_path, 'roi_template'),
         'sdk_results_dir': sdk_results_dir_path,
         'sdk_results_zip_dir_path': os.path.join(sdk_results_dir_path, 'zip'),
         'sdk_results_xlsx_dir_path': sdk_results_xlsx_dir_path,
@@ -308,6 +331,7 @@ def videoROIsInfo(
     template_info: Dict,
     reference_roi_captures_tissue: bool,
     microns_per_pixel: float = None,
+    output_conversion_factor: float = None,
     max_translation_per_frame: Tuple[float] = None,
     max_rotation_per_frame: float = None,
     contraction_vector: Tuple[int] = None
@@ -319,6 +343,7 @@ def videoROIsInfo(
         template_guide_image_path=None,
         template_rgb=dynamic_roi_template_image,
         microns_per_pixel=microns_per_pixel,
+        output_conversion_factor=output_conversion_factor,
         max_translation_per_frame=max_translation_per_frame,
         max_rotation_per_frame=max_rotation_per_frame,
         contraction_vector=contraction_vector
@@ -354,6 +379,7 @@ def videoROIsInfo(
             template_guide_image_path=None,
             template_rgb=reference_roi_template_image,
             microns_per_pixel=microns_per_pixel,
+            output_conversion_factor=output_conversion_factor,
             max_translation_per_frame=max_translation_per_frame,
             max_rotation_per_frame=max_rotation_per_frame,
             contraction_vector=contraction_vector
@@ -386,6 +412,7 @@ def signalDataFromVideo(
     analysis_method: str = 'None',
     video_roi_info: Dict = None,
     microns_per_pixel: float = None,
+    output_conversion_factor: float = None,
     max_translation_per_frame: Tuple[float] = None,
     max_rotation_per_frame: float = None,
     contraction_vector: Tuple[int] = None
@@ -401,6 +428,7 @@ def signalDataFromVideo(
             template_info=video_roi_info['template_info'],
             reference_roi_captures_tissue=video_roi_info['reference_roi_captures_tissue'],
             microns_per_pixel=microns_per_pixel,
+            output_conversion_factor=output_conversion_factor,
             max_translation_per_frame=max_translation_per_frame,
             max_rotation_per_frame=max_rotation_per_frame,
             contraction_vector=contraction_vector
@@ -487,6 +515,8 @@ def signalDataFromVideo(
                 ]
         else:  # we're using fixed tissue roi which was already set by the user
             # NOTE: cutting out a new frame_gray from the tissue roi has to go AFTER background roi extraction
+            #       because we're storing the smaller version of frame_gray back to itself.
+            # TODO: We should NOT be re-defining frame_gray. store it with a new var name.
             frame_gray = frame_gray[
                 video_roi_info['tissue']['y_start']:video_roi_info['tissue']['y_end'],
                 video_roi_info['tissue']['x_start']:video_roi_info['tissue']['x_end']
@@ -591,18 +621,21 @@ def videoROIs(
         background_roi = userDrawnROI(frame_for_roi_extraction, "Select the Background ROI")
 
     rois = {
+        'reference_roi_captures_tissue': reference_roi_captures_tissue,
         'background': background_roi,
-        'reference_roi_captures_tissue': reference_roi_captures_tissue
+        'template_images': {
+            'background_roi_template': frame_for_roi_extraction[
+                background_roi['y_start']:background_roi['y_end'],
+                background_roi['x_start']:background_roi['x_end'],
+            ]
+        }
     }
     if 'fixed' in roi_method.lower():
-        if reference_roi_template_path is None:
-            rois['tissue'] = userDrawnROI(frame_for_roi_extraction, "Select the Tissue/Signal ROI")
-        else:
-            reference_roi_image = cv.imread(reference_roi_template_path)
-            rois['tissue'] = roiInfoFromTemplate(
-                frame_for_roi_extraction_gray,
-                cv.cvtColor(reference_roi_image, cv.COLOR_BGR2GRAY)
-            )
+        rois['tissue'] = userDrawnROI(frame_for_roi_extraction, "Select the Tissue/Signal ROI")
+        rois['template_images']['tissue_roi_template'] = frame_for_roi_extraction[
+           rois['tissue']['y_start']:rois['tissue']['y_end'],
+           rois['tissue']['x_start']:rois['tissue']['x_end'],
+        ]
     else:
         rois['tissue'] = {}
         if dynamic_roi_template_path is None:
@@ -646,6 +679,11 @@ def videoROIs(
                 'roi': reference_roi
             }
         }
+        reference_post_roi_template_label = 'fixed_post_roi_template'
+        if reference_roi_captures_tissue:
+            reference_post_roi_template_label = 'tissue_roi_template'
+        rois['template_images']['flexible_post_roi_template'] = dynamic_roi_image
+        rois['template_images'][reference_post_roi_template_label] = reference_roi_image
 
     return rois
 

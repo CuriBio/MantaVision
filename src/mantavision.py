@@ -35,7 +35,8 @@ def runCa2Analysis(args: Dict):
         microns_per_pixel=args.ca2_analysis_microns_per_pixel,
         max_translation_per_frame=ca2_analysis_max_translation_per_frame,
         max_rotation_per_frame=args.ca2_analysis_max_rotation_per_frame,
-        contraction_vector=contraction_vector
+        contraction_vector=contraction_vector,
+        output_conversion_factor=args.ca2_analysis_output_conversion_factor
     )
 
 
@@ -144,7 +145,7 @@ def saveCurrentFieldValues(
         field_values['morphology_microns_per_pixel'] = args.morphology_microns_per_pixel
         field_values['morphology_sub_pixel_search_increment'] = args.morphology_sub_pixel_search_increment
         field_values['morphology_sub_pixel_refinement_radius'] = args.morphology_sub_pixel_refinement_radius
-    elif args.actions == 'Ca2+_Analysis':  # TODO: change == to like 'Ca2+'
+    elif 'Ca2+' in args.actions:
         field_values['ca2_analysis_path_to_data'] = args.ca2_analysis_path_to_data
         field_values['ca2_analysis_expected_frequency_hz'] = args.ca2_analysis_expected_frequency_hz
         field_values['ca2_analysis_save_result_plots'] = args.ca2_analysis_save_result_plots
@@ -158,6 +159,12 @@ def saveCurrentFieldValues(
         field_values['ca2_analysis_max_rotation_per_frame'] = args.ca2_analysis_max_rotation_per_frame
         field_values['ca2_analysis_horizontal_contraction_direction'] = args.ca2_analysis_horizontal_contraction_direction
         field_values['ca2_analysis_vertical_contraction_direction'] = args.ca2_analysis_vertical_contraction_direction
+    # elif 'Ca2+_Auto_Morphological_ROI' in args.actions:
+    #     pass
+    # elif 'Ca2+_Auto_Adjusted_Tissue_ROI' in args.actions:
+    #     pass
+    # elif 'Ca2+_Fixed_Tissue_ROI' in args.actions:
+
     with open(current_field_values_file_path, 'w') as outfile:
         writeJSON(field_values, outfile, indent=4)
 
@@ -194,6 +201,7 @@ def defaultFieldValues() -> Dict:
         'ca2_analysis_reference_roi_template_path': None,
         'ca2_analysis_select_background_once': False,
         'ca2_analysis_microns_per_pixel': None,
+        'ca2_analysis_output_conversion_factor': None,
         'ca2_analysis_max_translation_per_frame': 50,
         'ca2_analysis_max_rotation_per_frame': None,
         'ca2_analysis_horizontal_contraction_direction': 'right',
@@ -310,6 +318,14 @@ def main():
         gooey_options={'initial_value': initial_values['ca2_analysis_max_translation_per_frame']}
     )
     ca2_morphological_roi_parser.add_argument(
+        '--ca2_analysis_output_conversion_factor',
+        metavar='Distance to Force Conversion Factor',
+        help='sdk results are multiplied by this to compute force values\n(e.g. 1.0 is no change) [leave blank for no change]',
+        type=float,
+        default=None,
+        gooey_options={'initial_value': initial_values['ca2_analysis_output_conversion_factor']}
+    )
+    ca2_morphological_roi_parser.add_argument(
         '--ca2_analysis_horizontal_contraction_direction',
         metavar='Horizontal Contraction Direction',
         help='Horizontal direction component of contraction',
@@ -325,7 +341,8 @@ def main():
     )
     ca2_morphological_roi_parser.add_argument(
         '--ca2_analysis_expected_frequency_hz',
-        gooey_options={'visible': False, 'initial_value': None}
+        type=float,
+        gooey_options={'visible': False, 'initial_value': initial_values['ca2_analysis_expected_frequency_hz']}
     )
     ca2_morphological_roi_parser.add_argument(
         '--ca2_analysis_method',
@@ -361,8 +378,8 @@ def main():
         gooey_options={'initial_value': initial_values['ca2_analysis_select_background_once']}
     )
     ca2_auto_adjust_roi_parser.add_argument(
-        '--ca2_analysis_expected_frequency_hz',
-        gooey_options={'visible': False, 'initial_value': None}
+        '--ca2_analysis_invisible_placement_object_1',
+        gooey_options={'visible': False}
     )
     ca2_auto_adjust_roi_parser.add_argument(
         '--ca2_analysis_reference_roi_template_path',
@@ -407,6 +424,14 @@ def main():
         gooey_options={'initial_value': initial_values['ca2_analysis_max_translation_per_frame']}
     )
     ca2_auto_adjust_roi_parser.add_argument(
+        '--ca2_analysis_output_conversion_factor',
+        metavar='Distance to Force Conversion Factor',
+        help='sdk results are multiplied by this to compute force values\n(e.g. 1.0 is no change) [leave blank for no change]',
+        type=float,
+        default=None,
+        gooey_options={'initial_value': initial_values['ca2_analysis_output_conversion_factor']}
+    )
+    ca2_auto_adjust_roi_parser.add_argument(
         '--ca2_analysis_horizontal_contraction_direction',
         metavar='Horizontal Contraction Direction',
         help='Horizontal direction component of contraction',
@@ -421,8 +446,14 @@ def main():
         default=initial_values['ca2_analysis_vertical_contraction_direction']
     )
     ca2_auto_adjust_roi_parser.add_argument(
+        '--ca2_analysis_expected_frequency_hz',
+        type=float,
+        gooey_options={'visible': False, 'initial_value': initial_values['ca2_analysis_expected_frequency_hz']}
+    )
+    ca2_auto_adjust_roi_parser.add_argument(
         '--ca2_analysis_low_signal_to_noise',
-        gooey_options={'visible': False, 'initial_value': False}
+        action='store_true',
+        gooey_options={'visible': False, 'initial_value': initial_values['ca2_analysis_low_signal_to_noise']}
     )
     ca2_auto_adjust_roi_parser.add_argument(
         '--ca2_analysis_method',
@@ -465,24 +496,6 @@ def main():
         gooey_options={'initial_value': initial_values['ca2_analysis_select_background_once']}
     )
     ca2_fixed_roi_parser.add_argument(
-        '--ca2_analysis_reference_roi_template_path',
-        metavar='Tissue ROI Template Path',
-        help='Path to a template image of the Tissue ROI [Leave blank to draw the ROI]',
-        widget='FileChooser',
-        type=str,
-        default=None,
-        gooey_options={'visible': False, 'initial_value': None}
-    )
-    ca2_fixed_roi_parser.add_argument(
-        '--ca2_analysis_dynamic_roi_template_path',
-        metavar='Flexible Post ROI Template Path',
-        help='Path to a template image of the Flexible Post ROI [Leave blank to draw the ROI]',
-        widget='FileChooser',
-        type=str,
-        default=None,
-        gooey_options={'visible': False, 'initial_value': None}
-    )
-    ca2_fixed_roi_parser.add_argument(
         '--ca2_analysis_microns_per_pixel',
         metavar='Microns per Pixel',
         help='Microns per pixel conversion factor\n [leave blank for displacement in pixels]',
@@ -491,39 +504,37 @@ def main():
         gooey_options={'initial_value': initial_values['ca2_analysis_microns_per_pixel']}
     )
     ca2_fixed_roi_parser.add_argument(
+        '--ca2_analysis_reference_roi_template_path',
+        gooey_options={'visible': False, 'initial_value': initial_values['ca2_analysis_reference_roi_template_path']}
+    )
+    ca2_fixed_roi_parser.add_argument(
+        '--ca2_analysis_dynamic_roi_template_path',
+        gooey_options={'visible': False, 'initial_value': initial_values['ca2_analysis_dynamic_roi_template_path']}
+    )
+    ca2_fixed_roi_parser.add_argument(
         '--ca2_analysis_max_rotation_per_frame',
-        metavar='Max Rotation',
-        help='search +/- this (e.g. 2.0) from the last result\n [leave blank to ignore rotation]',
-        type=float,
-        default=None,
-        gooey_options={'visible': False, 'initial_value': None}
+        gooey_options={'visible': False, 'initial_value': initial_values['ca2_analysis_max_rotation_per_frame']}
     )
     ca2_fixed_roi_parser.add_argument(
         '--ca2_analysis_max_translation_per_frame',
-        metavar='Max Translation',
-        help='search this (e.g. 50) from the last result\n [leave blank to search the entire frame]',
-        type=float,
-        default=None,
-        gooey_options={'visible': False, 'initial_value': None}
+        gooey_options={'visible': False, 'initial_value': initial_values['ca2_analysis_max_translation_per_frame']}
     )
     ca2_fixed_roi_parser.add_argument(
         '--ca2_analysis_horizontal_contraction_direction',
-        metavar='Horizontal Contraction Direction',
-        help='Horizontal direction component of contraction',
-        choices=['left', 'right', 'none'],
-        default=None,
-        gooey_options={'visible': False, 'initial_value': 'none'}
+        gooey_options={'visible': False, 'initial_value': initial_values['ca2_analysis_horizontal_contraction_direction']}
     )
     ca2_fixed_roi_parser.add_argument(
         '--ca2_analysis_vertical_contraction_direction',
-        metavar='Vertical Contraction Direction',
-        help='Vertical direction component of contraction',
-        default=None,
-        gooey_options={'visible': False, 'initial_value': 'none'}
+        gooey_options={'visible': False, 'initial_value': initial_values['ca2_analysis_vertical_contraction_direction']}
+    )
+    ca2_fixed_roi_parser.add_argument(
+        '--ca2_analysis_output_conversion_factor',
+        gooey_options={'visible': False, 'initial_value': initial_values['ca2_analysis_output_conversion_factor']}
     )
     ca2_fixed_roi_parser.add_argument(
         '--ca2_analysis_low_signal_to_noise',
-        gooey_options={'visible': False, 'initial_value': False}
+        action='store_true',
+        gooey_options={'visible': False, 'initial_value': initial_values['ca2_analysis_low_signal_to_noise']}
     )
     ca2_fixed_roi_parser.add_argument(
         '--ca2_analysis_method',
