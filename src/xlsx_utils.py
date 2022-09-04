@@ -194,7 +194,15 @@ def trackingResultsToXSLX(tracking_results: List[Dict], meta_data: Dict, path_to
     time_column = 'A'
     sheet[time_column + str(heading_row)] = 'Time (s)'
     displacement_column = 'B'
-    sheet[displacement_column + str(heading_row)] = 'Displacement From Min'
+    displacement_heading = 'Displacement From Min'
+    if meta_data['Output Conversion Factor'] != 'None':
+        displacement_heading += ' (ADC counts)'
+    else:
+        if meta_data['Microns Per Pixel'] != 'None':
+            displacement_heading += ' (microns)'
+        else:
+            displacement_heading += ' (pixels)'
+    sheet[displacement_column + str(heading_row)] = displacement_heading
     x_pos_column = 'C'
     sheet[x_pos_column + str(heading_row)] = 'Template Match Center X (pixel pos)'
     y_pos_column = 'D'
