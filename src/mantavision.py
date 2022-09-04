@@ -159,11 +159,7 @@ def saveCurrentFieldValues(
         field_values['ca2_analysis_max_rotation_per_frame'] = args.ca2_analysis_max_rotation_per_frame
         field_values['ca2_analysis_horizontal_contraction_direction'] = args.ca2_analysis_horizontal_contraction_direction
         field_values['ca2_analysis_vertical_contraction_direction'] = args.ca2_analysis_vertical_contraction_direction
-    # elif 'Ca2+_Auto_Morphological_ROI' in args.actions:
-    #     pass
-    # elif 'Ca2+_Auto_Adjusted_Tissue_ROI' in args.actions:
-    #     pass
-    # elif 'Ca2+_Fixed_Tissue_ROI' in args.actions:
+        field_values['ca2_analysis_output_conversion_factor'] = args.ca2_analysis_output_conversion_factor
 
     with open(current_field_values_file_path, 'w') as outfile:
         writeJSON(field_values, outfile, indent=4)
@@ -217,7 +213,7 @@ def ensureDefaultFieldValuesExist(prev_run_values_file_path: str):
 
 
 GUI_WIDTH = 1200
-GUI_HEIGHT = 1000
+GUI_HEIGHT = 980
 
 
 @Gooey(
@@ -319,8 +315,8 @@ def main():
     )
     ca2_morphological_roi_parser.add_argument(
         '--ca2_analysis_output_conversion_factor',
-        metavar='Distance to Force Conversion Factor',
-        help='sdk results are multiplied by this to compute force values\n(e.g. 1.0 is no change) [leave blank for no change]',
+        metavar='SDK Force Conversion Factor',
+        help='contractions are multiplied by this for force computations\n(e.g. 1.0 is no change) [leave blank for no change]',
         type=float,
         default=None,
         gooey_options={'initial_value': initial_values['ca2_analysis_output_conversion_factor']}
@@ -425,8 +421,8 @@ def main():
     )
     ca2_auto_adjust_roi_parser.add_argument(
         '--ca2_analysis_output_conversion_factor',
-        metavar='Distance to Force Conversion Factor',
-        help='sdk results are multiplied by this to compute force values\n(e.g. 1.0 is no change) [leave blank for no change]',
+        metavar='SDK Force Conversion Factor',
+        help='contractions are multiplied by this for force computations\n(e.g. 1.0 is no change) [leave blank for no change]',
         type=float,
         default=None,
         gooey_options={'initial_value': initial_values['ca2_analysis_output_conversion_factor']}
