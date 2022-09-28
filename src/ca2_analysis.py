@@ -51,6 +51,18 @@ pd.set_option("display.expand_frame_repr", False)
 #       because if there is ever a double peak, the alternating sequence wont be monotonically increasing
 #       the alternative is to just throw a tuple ('peak or trough', index) into a list
 #       and sort on the index then step through the list and ensure we alternate
+#       we can use the expected/estimated frequency to determine which of the peaks/troughs
+#       in a double should be removed since it would be the furthest from the expected position
+#       from the previous/next peak/trough.
+#       or perhaps just the furthest peak/trough from the middle point between the prev and next peak/trough?
+#       since we determine expected frequency from the peaks and troughs separately, we could also
+#       use some basic stats like variance from expected/average frequency as a way to decide if either
+#       the peaks or troughs are "unreliable" as consistent markers when determining which double peak/trough
+#       to remove. i.e. if could be that the troughs are quite variable and contain many doubles. this would
+#       make the expected frequency obtained from troughs unreliable and should not be used for the average
+#       frequency estimate in tracking or as marker points to determine which of the doubles to remove.
+#       perhaps the simplest way to decide which peak to remove is based on the amplitude. i.e. for peaks,
+#       the lower of a double, and for troughs, the higher of a double should be removed???
 
 # TODO: IF the current method of estimate the various metrics where we
 #       use a polynomial fit and then find the roots of the poly FAILS,
