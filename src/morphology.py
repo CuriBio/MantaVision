@@ -77,6 +77,7 @@ def computeMorphologyMetrics(
             sub_pixel_search_increment=sub_pixel_search_increment,
             sub_pixel_refinement_radius=sub_pixel_refinement_radius
         )
+
         results_image, metrics = morphologyMetricsForImage(
             search_image=search_image,
             rois_info=rois_info,
@@ -206,9 +207,32 @@ def morphologyMetricsForImage(
   """ """
   if microns_per_pixel is None:
     microns_per_pixel = 1.0
-
   search_image_gray = cv.cvtColor(search_image, cv.COLOR_BGR2GRAY).astype(float)
+  search_image_gray_height = search_image_gray.shape[0]
+  # TODO: when running this from tracking, we might want to use some specific frame
+  #  i.e. the max contraction or max relaxation, and compute morphology metrics for that frame
+  #  whichever we think will have the best edges i.e. max contraction in Ca2+ experiments
+  #  and then, we'd use the egdes found in that frame to determine a fairly small region
+  #  either side of each of the upper and lower edges to look for the edges in all the other
+  #  frames in the video stream
+
+  # reduce the vertical size of the image to within the narrowest limits of the ROI's
+  left_roi = rois_info['dynamic']
+  right_roi = rois_info['reference']
+  if left_roi['y_start'] > right_roi['y_start']:
+      vertical_search_start = left_roi['y_start']
+  else:
+      vertical_search_start = right_roi['y_start']
+  gradient_kernel_size = 5
+  vertical_search_start = max(0, vertical_search_start + gradient_kernel_size + 1)
+  if left_roi['y_end'] < right_roi['y_end']:
+      vertical_search_end = left_roi['y_end']
+  else:
+      vertical_search_end = right_roi['y_end']
+  vertical_search_end = min(search_image_gray_height, vertical_search_end + gradient_kernel_size + 1 + 1)
+  search_image_gray = search_image_gray[vertical_search_start:vertical_search_end, :]
   search_image_gray = normalized(search_image_gray, new_range=65536.0)
+
   if low_signal_to_noise:
       smoothed_image = smoothedHorizontally(
           search_image_gray,
@@ -233,11 +257,10 @@ def morphologyMetricsForImage(
   #  the moving average operation
 
   # compute the distance between the inner sides of each ROI
-  left_roi = rois_info['dynamic']
-  left_vertical_midpoint = (left_roi['y_start'] + left_roi['y_end'])/2
-  right_roi = rois_info['reference']
-  right_vertical_midpoint = (right_roi['y_start'] + right_roi['y_end'])/2
+  left_vertical_midpoint = ((left_roi['y_start'] + left_roi['y_end'])/2) - vertical_search_start
+  right_vertical_midpoint = ((right_roi['y_start'] + right_roi['y_end'])/2) - vertical_search_start
   vertical_midpoint = (left_vertical_midpoint + right_vertical_midpoint)/2
+
   left_distance_marker_x = left_roi['x_end']
   right_distance_marker_x = right_roi['x_start']
   if left_distance_marker_x >= right_distance_marker_x - template_refinement_radius:
@@ -271,8 +294,6 @@ def morphologyMetricsForImage(
   key_lower_edge_points = np.empty(len(points_to_find_edges_at))
 
   # find the edges at the horizontal centre and end points
-  # TODO: we might need to limit maxEdges to searching within the y range defined by the left and right roi's
-  #  or even the min rectangle defined by the rois, or ideally even more restrictive than that
   for index, point_to_find_edges_at in enumerate(points_to_find_edges_at):
     edge_point = maxEdges(
       edge_image[:, point_to_find_edges_at],
@@ -332,7 +353,7 @@ def morphologyMetricsForImage(
   image_vertical_midpoint = int(edge_image.shape[0]/2)
   for points_to_find_edges, start, direction in all_points:
     if direction < 1:
-      pass  # moving average should be with points ot the right up to the midpoint
+      pass  # moving average should be with points to the right up to the midpoint
     else:
       pass  # moving average should be with points to the left up to the midpoint
     for edge_midpoint, edge_values in edge_point_details:
@@ -365,6 +386,16 @@ def morphologyMetricsForImage(
   # draw the tissue roi and other landmarks on a results image
   results_image = search_image.copy().astype(np.uint8)
 
+  # first have to add in vertical_search_start to all vertical values so that they are relative
+  # to the actual image postions, not the vertically cropped version
+  top_edge_values += vertical_search_start
+  bottom_edge_values += vertical_search_start
+  top_edge_median += vertical_search_start
+  bottom_edge_median += vertical_search_start
+  left_vertical_midpoint += vertical_search_start
+  right_vertical_midpoint += vertical_search_start
+  vertical_midpoint += vertical_search_start
+
   # draw the upper edges
   tissue_edge_colour = (0, 0, 128)
   lower_edge_points_to_draw = zip(all_points_to_find_edges.astype(np.int32), bottom_edge_values.astype(np.int32))
@@ -388,7 +419,7 @@ def morphologyMetricsForImage(
       thickness=3,
       lineType=cv.LINE_AA
     )
-  # draw the left ROI inner edge object vertical thickness line
+  # draw the left ROI inner edge object vertical line
   if draw_tissue_roi_only:
       vertical_line_colour = tissue_edge_colour
   else:
@@ -403,7 +434,7 @@ def morphologyMetricsForImage(
     thickness=3,
     lineType=cv.LINE_AA
   )
-  # draw the right ROI inner edge object vertical thickness line
+  # draw the right ROI inner edge object vertical line
   right_end_point_upper_edge_pos = round(top_edge_values[-1])
   right_end_point_lower_edge_pos = round(bottom_edge_values[-1])
   cv.line(
@@ -459,7 +490,7 @@ def morphologyMetricsForImage(
   warning_flags = []
 
   # sanity check on area computed
-  image_area = search_image_gray.shape[0] * search_image_gray.shape[1]
+  image_area = search_image.shape[0] * search_image.shape[1]
   if area_between_rois > image_area:
     warning_flags.append(
       "Area indicates measurements may be inaccurate"
@@ -473,7 +504,7 @@ def morphologyMetricsForImage(
     warning_flags.append(
       "Closeness of upper edge to the image border indicates measurements may be inaccuratee"
     )
-  max_vertical_edge_pos = search_image_gray.shape[0] - vertical_edge_pos_limit
+  max_vertical_edge_pos = search_image.shape[0] - vertical_edge_pos_limit
   lower_edge_too_close = bottom_edge_values > max_vertical_edge_pos
   if np.any(lower_edge_too_close):
     warning_flags.append(
@@ -481,7 +512,7 @@ def morphologyMetricsForImage(
     )
 
   # left or right end points are on the wrong side of midline
-  image_mid_point = search_image_gray.shape[1]/2
+  image_mid_point = search_image.shape[1]/2
   min_distance_from_midpoint = 20
   if left_distance_marker_x > image_mid_point - min_distance_from_midpoint:
     warning_flags.append(
@@ -494,7 +525,7 @@ def morphologyMetricsForImage(
 
   # left and right end points are too close
   distance_between_end_points = right_distance_marker_x - left_distance_marker_x
-  min_distance_between_end_points = 0.25*search_image_gray.shape[1]
+  min_distance_between_end_points = 0.25*search_image.shape[1]
   if distance_between_end_points < min_distance_between_end_points:
     warning_flags.append(
       "Distance between left and right end points indicates measurements may be inaccurate"
@@ -687,8 +718,7 @@ def maxEdge(
     search_radius: int,
     moving_average_operator: np.ndarray
 ) -> int:
-  '''
-  '''
+  """ """
   # TODO: restrict the input_array to +/- some region that is larger than the
   #       radii of the gradmag and moving average functions so we don't have to 
   #       compute them for the entire set that we never look at
