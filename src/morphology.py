@@ -31,6 +31,10 @@ def computeMorphologyMetrics(
         raise RuntimeError("edge_finding_smoothing_radius cannot be < 1")
 
     base_dir, file_names = contentsOfDir(dir_path=search_image_path, search_terms=['.tif', '.tiff', '.jpg', '.png'])
+    if file_names is None or len(file_names) < 1:
+        print("\nThe path provided does not contain any valid files to analyze. Exiting.")
+        return
+
     results_dir_name = "results_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     results_dir = os.path.join(base_dir, results_dir_name)
     os.mkdir(results_dir)
@@ -84,7 +88,8 @@ def computeMorphologyMetrics(
             microns_per_pixel=microns_per_pixel,
             template_refinement_radius=template_refinement_radius,
             edge_finding_smoothing_radius=edge_finding_smoothing_radius,
-            low_signal_to_noise=True
+            low_signal_to_noise=False,
+            limit_vertical_search=False,
         )
         all_metrics.append(
             {
@@ -201,6 +206,7 @@ def morphologyMetricsForImage(
   edge_finding_smoothing_radius: int = 1,
   draw_tissue_roi_only: bool = False,
   low_signal_to_noise: bool = False,
+  limit_vertical_search: bool = False,
   sub_pixel_search_increment: float = None,
   sub_pixel_refinement_radius: float = None
 ) -> Tuple[np.ndarray, Dict]:
@@ -216,22 +222,29 @@ def morphologyMetricsForImage(
   #  either side of each of the upper and lower edges to look for the edges in all the other
   #  frames in the video stream
 
-  # reduce the vertical size of the image to within the narrowest limits of the ROI's
   left_roi = rois_info['dynamic']
   right_roi = rois_info['reference']
-  if left_roi['y_start'] > right_roi['y_start']:
-      vertical_search_start = left_roi['y_start']
+  # reduce vertical size of image to within the narrowest limits of ROI's, if limit_vertical_search is True
+  if limit_vertical_search:
+      if left_roi['y_start'] > right_roi['y_start']:
+          vertical_search_start = left_roi['y_start']
+      else:
+          vertical_search_start = right_roi['y_start']
+      if left_roi['y_end'] < right_roi['y_end']:
+          vertical_search_end = left_roi['y_end']
+      else:
+          vertical_search_end = right_roi['y_end']
   else:
-      vertical_search_start = right_roi['y_start']
-  gradient_kernel_size = 5
-  vertical_search_start = max(0, vertical_search_start + gradient_kernel_size + 1)
-  if left_roi['y_end'] < right_roi['y_end']:
-      vertical_search_end = left_roi['y_end']
-  else:
-      vertical_search_end = right_roi['y_end']
-  vertical_search_end = min(search_image_gray_height, vertical_search_end + gradient_kernel_size + 1 + 1)
+      vertical_search_start = 0
+      vertical_search_end = search_image_gray_height
+
+  # gradient_kernel_size = 5
+  # vertical_search_start = max(0, vertical_search_start + gradient_kernel_size + 1)
+  # vertical_search_end = min(search_image_gray_height, vertical_search_end + gradient_kernel_size + 1 + 1)
+  vertical_search_start = max(0, vertical_search_start)
+  vertical_search_end = min(search_image_gray_height, vertical_search_end)
   search_image_gray = search_image_gray[vertical_search_start:vertical_search_end, :]
-  search_image_gray = normalized(search_image_gray, new_range=65536.0)
+  search_image_gray = normalized(search_image_gray, new_range=1024.0)
 
   if low_signal_to_noise:
       smoothed_image = smoothedHorizontally(
