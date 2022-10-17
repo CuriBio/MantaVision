@@ -486,7 +486,8 @@ def signalDataFromVideo(
                     edge_finding_smoothing_radius=10,
                     draw_tissue_roi_only=True,
                     low_signal_to_noise=low_signal_to_noise,
-                    microns_per_pixel=microns_per_pixel
+                    microns_per_pixel=microns_per_pixel,
+                    limit_vertical_search=True
                 )
                 # compute the mean of the tissue only region
                 # rotate the input image so the roi description of vertical sections becomes horizontal sections
