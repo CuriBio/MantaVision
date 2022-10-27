@@ -12,13 +12,17 @@ jobs:
         os: ['windows-latest']
 
     steps:
-    - uses: actions/checkout@v2
-    - uses: actions/setup-python@v2
+    - name: checkout repo
+      uses: actions/checkout@v3
+    - name: setup python
+      uses: actions/setup-python@v4
       with:
         python-version: 3.9.13
 
     - run: pip install -r src/requirements.txt pyinstaller
     - run: pyinstaller -i app/icon/logo.ico -F --windowed src/mantavision.py
-    - uses: actions/upload-artifact@v2
+    - name: upload build artifact
+      uses: actions/upload-artifact@v3
       with:
+        name: mantavision
         path: dist/*
