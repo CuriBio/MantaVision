@@ -1,11 +1,10 @@
 import numpy as np
-import sys
-import os
 from typing import Dict
 from fractions import Fraction
 from av import open as OpenVideo
 from av import VideoFrame
 from nd2 import ND2File
+from image_utils import rgbConverter, rgbToGray, grayToRGB
 
 
 supported_file_extensions = ['.mp4', '.avi', '.mov', '.nd2']
@@ -361,10 +360,14 @@ class ND2VideoReader():
 
         self.width = int(self.nd2_file.sizes['X'])
         self.height = int(self.nd2_file.sizes['Y'])
-        self.num_frames = int(self.nd2_file.sizes['T'])
+        if 'T' in self.nd2_file.sizes:
+            self.num_frames = int(self.nd2_file.sizes['T'])
+        else:
+            error_message = "ERROR. Unsupported Non Video Format. Input file has only 1 frame."
+            raise RuntimeError(error_message)
         self.nd2_frames = self.nd2_file.to_xarray(delayed=False)
         # if delayed is set to true, the xarray will be backed by a memmapped dask array
-        # which might be necessary BUT,
+        # which might be necessary, BUT,
         # it then prints something that seems like the frame or z slice i.e. (1,) (2,)
         # and I have no idea why or how to stop it from doing that
 
@@ -380,10 +383,12 @@ class ND2VideoReader():
             self.frame_num += 1
             return True
         else:
+            # there is no next so point to the end of the frames
             self.frame_num = self.num_frames
             return False
 
     def initialiseStream(self):
+        # TODO: I think this should be set to -1
         self.frame_num = 0
 
     def frame(self) -> np.ndarray:
@@ -522,32 +527,3 @@ def orientedFrame(current_frame, direction_sense: Dict) -> np.ndarray:
         # openCV can't use the "view" returned by np.flip()
         current_frame = np.flip(current_frame, flip_directions).copy()
     return current_frame
-
-
-def rgbConverter(type: str = 'eye') -> np.ndarray:
-    if type == 'eye':
-        return np.asarray([0.2989, 0.5870, 0.1140])
-    if type == 'sensor':
-        return np.asarray([0.25, 0.5, 0.25])
-    else:
-        return np.asarray([1.0, 1.0, 1.0])/3.0
-
-
-def rescaledToUint8(intensity, intensity_min, intensity_range) -> np.uint8: 
-    return np.uint8(255.0*(intensity - intensity_min)/intensity_range)
-
-
-def asUINT8(array_to_convert: np.ndarray) -> np.ndarray:
-    frame_min = np.min(array_to_convert)
-    frame_max = np.max(array_to_convert)
-    frame_range = frame_max - frame_min
-    return rescaledToUint8(array_to_convert, frame_min, frame_range)    
-
-
-def rgbToGray(array_to_convert: np.ndarray, rgb_conversion: np.ndarray) -> np.ndarray:
-    return np.dot(array_to_convert[..., :3], rgb_conversion)
-
-
-def grayToRGB(array_to_convert: np.ndarray) -> np.ndarray:
-    frame_as_uint8 = asUINT8(array_to_convert)
-    return np.stack((frame_as_uint8, frame_as_uint8, frame_as_uint8), axis=-1)    
