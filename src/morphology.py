@@ -9,6 +9,7 @@ from scipy import ndimage as ndifilters
 from scipy.signal import medfilt2d
 from skimage import filters as skimagefilters
 from io_utils import contentsOfDir
+from image_utils import openImage
 from track_template import matchResults, intensityAdjusted, userDrawnROI
 
 
@@ -30,7 +31,9 @@ def computeMorphologyMetrics(
     if edge_finding_smoothing_radius < 1:
         raise RuntimeError("edge_finding_smoothing_radius cannot be < 1")
 
-    base_dir, file_names = contentsOfDir(dir_path=search_image_path, search_terms=['.tif', '.tiff', '.jpg', '.png'])
+    base_dir, file_names = contentsOfDir(
+        dir_path=search_image_path, search_terms=['.tif', '.tiff', '.jpg', '.png', '.nd2']
+    )
     if file_names is None or len(file_names) < 1:
         print("\nThe path provided does not contain any valid files to analyze. Exiting.")
         return
@@ -54,7 +57,7 @@ def computeMorphologyMetrics(
             if not os.path.exists(drawn_roi_templates_dir):
                 os.mkdir(drawn_roi_templates_dir)
             file_name, file_extension = file_names[0]
-            search_image_for_template = cv.imread(os.path.join(base_dir, file_name + file_extension))
+            search_image_for_template = openImage(os.path.join(base_dir, file_name + file_extension))
             draw_roi_title = f'Draw ROI For {template_position} template'
             roi_info = userDrawnROI(search_image_for_template, draw_roi_title)
             template_image = search_image_for_template[
@@ -71,7 +74,7 @@ def computeMorphologyMetrics(
     image_analyzed_id = 0
     for file_name, file_extension in file_names:
         file_to_analyze = os.path.join(base_dir, file_name + file_extension)
-        search_image = cv.imread(file_to_analyze)
+        search_image = openImage(file_to_analyze)
         if search_image is None:
             print(f'ERROR. Could not open the search image with the provided path: {file_to_analyze}. Exiting.')
             return None

@@ -1,4 +1,5 @@
 #! /usr/bin/env python
+import sys
 
 import numpy as np
 from scipy.ndimage import shift
@@ -78,7 +79,14 @@ def trackTemplate(
         return error_msg, [{}], 0.0, frames_per_second, None, -1
 
     # open a video reader stream
-    input_video_stream = VideoReader(input_video_path)
+    try:
+        input_video_stream = VideoReader(input_video_path)
+    except RuntimeError as runtime_error:
+        print()
+        print(runtime_error)
+        print()
+        sys.exit(1)
+
     if not input_video_stream.isOpened():
         error_msg = "Error. Can't open videos stream for capture. Nothing has been tracked."
         return error_msg, [{}], 0.0, frames_per_second, None, -1
