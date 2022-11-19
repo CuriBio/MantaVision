@@ -9,6 +9,14 @@ from video_api import VideoReader, VideoWriter
 from typing import Tuple, List, Dict
 
 
+# TODO: set the version of pyinstaller back one
+# TODO: - doesn't output individual frames (FIXED)
+# TODO: fix bug where tracking didn't work for a template passed in
+#       if the option to use it as a guide was not used.
+
+# TODO: add option to do low signal to noise in morphology
+# TODO: find a different method of adjusting the template match to be more accurate for morphology
+
 # TODO: change trackTemplate to return a dict
 
 # TODO: parallelize the computation of matching for each frame. i.e. if we have 10 processors,
@@ -46,7 +54,8 @@ def trackTemplate(
     user_roi_selection: bool = True,
     max_translation_per_frame: Tuple[float] = None,
     max_rotation_per_frame: float = None,
-    contraction_vector: Tuple[int] = None
+    contraction_vector: Tuple[int] = None,
+    blank_frame_stddev_cutoff: float = 100.0
 ) -> Tuple[Tuple[str, str], List[Dict], 'str', float, float, np.ndarray, int]:
     """
     Tracks a template image through each frame of a video.
@@ -94,26 +103,46 @@ def trackTemplate(
     frame_height = int(input_video_stream.frameHeight())
     frames_per_second = input_video_stream.avgFPS()
 
-    # open the template image
+    # get the template to track
     if template_rgb is not None:
         template_gray = cv.cvtColor(template_rgb, cv.COLOR_BGR2GRAY)
     else:
-        if user_roi_selection:
+        template_gray = None
+        if user_roi_selection or template_guide_image_path is None:
+            # user needs to draw the ROI
             template_as_guide = None
-        else:
-            template_as_guide = intensityAdjusted(cv.cvtColor(cv.imread(template_guide_image_path), cv.COLOR_BGR2GRAY))
-            if template_as_guide is None:
-                error_msg = "ERROR. Path provided for template does not point to an image file. Nothing has been tracked."
-                return error_msg, [{}], 0.0, frames_per_second, None, -1
-        if guide_match_search_seconds is None:
             max_frames_to_check = None
         else:
-            max_frames_to_check = int(math.ceil(frames_per_second * float(guide_match_search_seconds)))
-        template_rgb, template_gray = templateFromInputROI(
-            input_video_stream,
-            template_as_guide,
-            max_frames_to_check
-        )
+            if guide_match_search_seconds is None:
+                # user wants to use a template as is
+                template_rgb = cv.imread(template_guide_image_path)
+                if template_rgb is None:
+                    error_msg = "\nERROR."
+                    error_msg += " Template Path provided does not point to an image file."
+                    error_msg += " Nothing has been tracked.\n"
+                    return error_msg, [{}], 0.0, frames_per_second, None, -1
+                template_gray = cv.cvtColor(template_rgb, cv.COLOR_BGR2GRAY)
+            else:
+                # user wants to use a template to find a match in the video to use as a template
+                max_frames_to_check = int(math.ceil(frames_per_second * float(guide_match_search_seconds)))
+                template_as_guide = intensityAdjusted(
+                    cv.cvtColor(cv.imread(template_guide_image_path), cv.COLOR_BGR2GRAY)
+                )
+                if template_as_guide is None:
+                    error_msg = "\nERROR."
+                    error_msg += " Template Path provided does not point to an image file."
+                    error_msg += " Nothing has been tracked.\n"
+                    return error_msg, [{}], 0.0, frames_per_second, None, -1
+
+        if template_gray is None:
+            # create the new templates
+            template_rgb, template_gray = templateFromInputROI(
+                input_video_stream,
+                template_as_guide,
+                max_frames_to_check,
+                blank_frame_stddev_cutoff
+            )
+
     template = intensityAdjusted(template_gray)
     template_height = template.shape[0]
     template_half_height = template_height / 2.0
@@ -151,6 +180,14 @@ def trackTemplate(
     while input_video_stream.next():
 
         current_frame = input_video_stream.frameGray()
+        frame_std_dev = np.std(current_frame)
+        if frame_std_dev < blank_frame_stddev_cutoff:
+            if video_writer is not None:
+                frame = input_video_stream.frameVideoRGB()
+                video_writer.writeFrame(frame, input_video_stream.frameVideoPTS())
+            print(f"WARNING. Frame {frame_number} appears to be blank. Ignoring.")
+            continue  # don't bother processing blank frames
+
         if max_rotation_per_frame is None:
             search_set = [{'angle': 0.0, 'frame': current_frame}]
         else:
@@ -306,8 +343,8 @@ def trackTemplate(
 
 def frequencyEstimate(tracking_info: List[Dict]) -> float:
     """
-       :param tracking_info:
-       :return: estimated frequency of the tracked object movement
+       :param tracking_info: tracking results generated by trackTemplate()
+       :return: estimated frequency of the tracked objects movement
     """
     # convert time stamp and displacement data from all frames into 2 numpy arrays
     time_stamps = []
@@ -545,13 +582,13 @@ def inputImageSubRegion(
 def templateFromInputROI(
     video_to_search,
     template_to_find: np.ndarray,
-    max_frames_to_check: int
+    max_frames_to_check: int = None,
+    blank_frame_stddev_cutoff: float = 100.0
 ) -> Tuple[np.ndarray, np.ndarray]:
     """ Return a ROI from the input video that will be tracked """
 
     initial_frame_pos = video_to_search.framePosition()
-    if initial_frame_pos != 0:
-        video_to_search.setFramePosition(0)
+    video_to_search.initialiseStream()
 
     best_match_measure = 0.0
     best_match_coordinates = None
@@ -562,12 +599,22 @@ def templateFromInputROI(
         number_of_frames_to_check = number_of_frames
     else:
         number_of_frames_to_check = min(number_of_frames, max_frames_to_check)
-    for _ in range(number_of_frames_to_check):
-        frame = video_to_search.frameRGB()
-        if frame is None:
+
+    num_frames_compared = 0
+    while video_to_search.next():
+        frame_gray = video_to_search.frameGray()
+        if frame_gray is None:
             error_msg = "Error. No Frame returned during video capture in templateFromInputROI function. Exiting."
             raise RuntimeError(error_msg)
 
+        frame_std_dev = np.std(frame_gray)
+        if frame_std_dev < blank_frame_stddev_cutoff:
+            frame_number = video_to_search.framePosition()
+            print(f"WARNING. Frame {frame_number} appears to be blank. Ignoring in template from ROI.")
+            video_to_search.next()
+            continue  # ignore blank frames since user can't see anything to draw an ROI
+
+        frame = video_to_search.frameRGB()
         if template_to_find is None:  # return the user drawn roi from the first video frame
             print("Waiting on user to manually select ROI ...")
             roi = userDrawnROI(frame)
@@ -575,7 +622,6 @@ def templateFromInputROI(
                 print("...ROI selection complete")
                 # return the selected roi as a new template
                 new_template = frame[roi['y_start']:roi['y_end'], roi['x_start']:roi['x_end']]
-                frame_gray = video_to_search.frameGray()
                 new_template_grey = frame_gray[roi['y_start']:roi['y_end'], roi['x_start']:roi['x_end']]
                 # reset the video to where it was initially before we return
                 video_to_search.setFramePosition(initial_frame_pos)
@@ -592,7 +638,10 @@ def templateFromInputROI(
                 best_match_frame = frame
                 best_match_frame_gray = video_to_search.frameGray()
 
-        video_to_search.next()
+        if num_frames_compared > number_of_frames_to_check:
+            break
+        else:
+            num_frames_compared += 1
 
     # reset the video to where it was initially
     video_to_search.setFramePosition(initial_frame_pos)
