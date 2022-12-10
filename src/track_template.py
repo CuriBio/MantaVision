@@ -8,17 +8,6 @@ from video_api import VideoReader, VideoWriter
 from typing import Tuple, List, Dict
 
 
-# TODO: make all processes run from a json config.
-
-# TODO: need to change the way the entire process works so that any and all ROIs that are drawn
-#       are done up front, the data saved in some format, and then that data is passed to whatever
-#       process that we're running (tracking, Ca2+ etc) so that it already has ALL the data and parameters it needs.
-
-# TODO: get tracking to allow drawing all ROIs up front.
-
-# TODO: there appears to be a bug where the blank frames doesn't either print correctly or
-#       progress to the next frame!!!
-# TODO: check how long it takes to draw
 # TODO: change naming of dynamic post to flexible
 #       change naming of fixed post to rigid or fixed post
 

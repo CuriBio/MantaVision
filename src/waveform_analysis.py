@@ -20,6 +20,10 @@ def waveFormAnalysis(
         expected_min_peak_height=expected_min_peak_height
     )
     peak_indices, trough_indices = extreme_point_indices
+    num_peaks = len(peak_indices)
+    num_troughs = len(trough_indices)
+    if num_peaks < 1 or num_troughs < 1:
+        return None
     first_peak_time = time_stamps[peak_indices[0]]
     first_trough_time = time_stamps[trough_indices[0]]
 
@@ -30,7 +34,7 @@ def waveFormAnalysis(
         trough_sequence_start = 0
     else:
         trough_sequence_start = 1
-    num_peaks = len(peak_indices)
+
     num_useable_troughs = len(trough_indices) - trough_sequence_start
     num_peaks_to_use = min(num_peaks, num_useable_troughs)
     try:
