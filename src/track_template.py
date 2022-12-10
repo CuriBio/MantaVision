@@ -189,82 +189,98 @@ def trackTemplate(
     best_match_origin_y = None
     best_match_rotation = 0.0
 
+    prev_frame_blank = True
     while input_video_stream.next():
 
         current_frame = input_video_stream.frameGray()
         frame_std_dev = np.std(current_frame)
         frame_number = input_video_stream.framePosition()
         if frame_std_dev < blank_frame_stddev_cutoff:
+            # don't process blank frames
+            prev_frame_blank = True  # only applies to the next frame
+            print(f"WARNING. Frame {frame_number} appears to be blank. Ignoring.")
+            match_measure = 0.0
+            match_success = False
+            match_coordinates = None
+            best_match_origin_x = 0
+            best_match_origin_y = 0
+            best_match_rotation = 0.0
+            flipped_image_best_match_rotation = 0.0
             if video_writer is not None:
                 frame = input_video_stream.frameVideoRGB()
                 video_writer.writeFrame(frame, input_video_stream.frameVideoPTS())
-            print(f"WARNING. Frame {frame_number} appears to be blank. Ignoring.")
-            continue  # don't bother processing blank frames
-
-        if max_rotation_per_frame is None:
-            search_set = [{'angle': 0.0, 'frame': current_frame}]
         else:
-            search_set = []
-            rotation_angle = best_match_rotation - max_rotation_per_frame
-            max_rotation_angle = best_match_rotation + max_rotation_per_frame + rotation_increment
-            while rotation_angle < max_rotation_angle:
+            if max_rotation_per_frame is None:
+                search_set = [{'angle': 0.0, 'frame': current_frame}]
+            else:
+                search_set = []
+                rotation_angle = best_match_rotation - max_rotation_per_frame
+                max_rotation_angle = best_match_rotation + max_rotation_per_frame + rotation_increment
+                while rotation_angle < max_rotation_angle:
 
-                pivot_point_x = best_match_origin_x
-                if pivot_point_x is not None:
-                    pivot_point_x += template_half_width
-                pivot_point_y = best_match_origin_y
-                if pivot_point_y is not None:
-                    pivot_point_y += template_half_height
+                    pivot_point_x = best_match_origin_x
+                    if pivot_point_x is not None:
+                        pivot_point_x += template_half_width
+                    pivot_point_y = best_match_origin_y
+                    if pivot_point_y is not None:
+                        pivot_point_y += template_half_height
 
-                search_set.append(
-                    {
-                        'angle': rotation_angle,
-                        'frame': rotatedImage(current_frame, rotation_angle, pivot_point_x, pivot_point_y)
-                    }
+                    search_set.append(
+                        {
+                            'angle': rotation_angle,
+                            'frame': rotatedImage(current_frame, rotation_angle, pivot_point_x, pivot_point_y)
+                        }
+                    )
+                    rotation_angle += rotation_increment
+
+            # crop out a smaller subregion to search if required
+            if max_translation_per_frame is None:
+                sub_region_padding = None
+            else:
+                sub_region_padding = (
+                    math.ceil(max_translation_per_frame[0] / microns_per_pixel),
+                    math.ceil(max_translation_per_frame[1] / microns_per_pixel)
                 )
-                rotation_angle += rotation_increment
+            input_image_sub_region_origin = None
+            for frame_details in search_set:
+                if prev_frame_blank:
+                    # need to search the entire image again from the origin
+                    frame_details['frame'] = intensityAdjusted(frame_details['frame'])
+                    input_image_sub_region_origin = (0, 0)
+                else:
+                    input_image_sub_region_to_search, input_image_sub_region_origin = inputImageSubRegion(
+                        input_image=frame_details['frame'],
+                        sub_region_base_shape=(template_width, template_height),
+                        sub_region_origin=(best_match_origin_x, best_match_origin_y),
+                        sub_region_padding=sub_region_padding
+                    )
+                    input_image_sub_region_to_search = intensityAdjusted(input_image_sub_region_to_search)
+                    frame_details['frame'] = input_image_sub_region_to_search
+            prev_frame_blank = False  # only applies to the next frame
 
-        # crop out a smaller subregion to search if required
-        if max_translation_per_frame is None:
-            sub_region_padding = None
-        else:
-            sub_region_padding = (
-                math.ceil(max_translation_per_frame[0] / microns_per_pixel),
-                math.ceil(max_translation_per_frame[1] / microns_per_pixel)
+            # TODO: make matchResults return a dict instead of a tuple?
+            match_measure, match_coordinates, match_rotation = matchResults(
+                search_set=search_set,
+                template_to_match=template,
+                sub_pixel_search_increment=sub_pixel_search_increment,
+                sub_pixel_refinement_radius=sub_pixel_refinement_radius
             )
-        input_image_sub_region_origin = None
-        for frame_details in search_set:
-            input_image_sub_region_to_search, input_image_sub_region_origin = inputImageSubRegion(
-                input_image=frame_details['frame'],
-                sub_region_base_shape=(template_width, template_height),
-                sub_region_origin=(best_match_origin_x, best_match_origin_y),
-                sub_region_padding=sub_region_padding
-            )
-            input_image_sub_region_to_search = intensityAdjusted(input_image_sub_region_to_search)
-            frame_details['frame'] = input_image_sub_region_to_search
+            if match_coordinates is None:
+                match_success = False
+                best_match_origin_x = 0
+                best_match_origin_y = 0
+                best_match_rotation = 0.0
+                flipped_image_best_match_rotation = 0.0
+            else:
+                match_success = True
+                best_match_origin_x = match_coordinates[0] + input_image_sub_region_origin[0]
+                best_match_origin_y = match_coordinates[1] + input_image_sub_region_origin[1]
+                best_match_rotation = match_rotation
+                # because images are stored flipped ("upside down"),
+                # in order for match rotations to appear as humans see them
+                # they need to be relative to the flipped image
+                flipped_image_best_match_rotation = -best_match_rotation
 
-        # TODO: make matchResults return a dict instead of a tuple?
-        match_measure, match_coordinates, match_rotation = matchResults(
-            search_set=search_set,
-            template_to_match=template,
-            sub_pixel_search_increment=sub_pixel_search_increment,
-            sub_pixel_refinement_radius=sub_pixel_refinement_radius
-        )
-        if match_coordinates is None:
-            match_success = False
-            best_match_origin_x = None
-            best_match_origin_y = None
-            best_match_rotation = None
-            flipped_image_best_match_rotation = None
-        else:
-            match_success = True
-            best_match_origin_x = match_coordinates[0] + input_image_sub_region_origin[0]
-            best_match_origin_y = match_coordinates[1] + input_image_sub_region_origin[1]
-            best_match_rotation = match_rotation
-            # because images are stored flipped ("upside down"),
-            # in order for match rotations to appear as humans see them
-            # they need to be relative to the flipped image
-            flipped_image_best_match_rotation = -best_match_rotation
         original_time_stamp = input_video_stream.timeStamp()
         time_stamp_in_seconds = original_time_stamp
         tracking_results.append({
@@ -283,6 +299,7 @@ def trackTemplate(
             'y_start': best_match_origin_y,
             'y_end': best_match_origin_y + template_height,
         })
+
         if match_coordinates is not None:
             # update the min and max positions of the template origin for ALL frames
             # using the position in the y dimension only as the reference measure
@@ -539,19 +556,25 @@ def displacementAdjustedResults(
 
     adjusted_tracking_results = []
     for frame_info in results_to_adjust:
-        if not frame_info['MATCH_SUCCESS']:
-            continue
-        # compute the x, y and xy displacements relative to the min of the main axis of movement
-        x_displacement = (frame_info['TEMPLATE_MATCH_ORIGIN_X'] - min_template_origin_x) * float(microns_per_pixel)
-        x_displacement *= float(output_conversion_factor)
-        frame_info['X_DISPLACEMENT'] = x_displacement
-        y_displacement = (frame_info['TEMPLATE_MATCH_ORIGIN_Y'] - min_template_origin_y) * float(microns_per_pixel)
-        y_displacement *= float(output_conversion_factor)
-        frame_info['Y_DISPLACEMENT'] = y_displacement
-        frame_info['XY_DISPLACEMENT'] = math.sqrt(x_displacement * x_displacement + y_displacement * y_displacement)
-        # adjust x and y match positions so they're relative to the center of the template
-        frame_info['TEMPLATE_MATCH_ORIGIN_X'] += template_half_width
-        frame_info['TEMPLATE_MATCH_ORIGIN_Y'] += template_half_height
+        if frame_info['MATCH_SUCCESS']:
+            # compute the x, y and xy displacements relative to the min of the main axis of movement
+            x_displacement = (frame_info['TEMPLATE_MATCH_ORIGIN_X'] - min_template_origin_x) * float(microns_per_pixel)
+            x_displacement *= float(output_conversion_factor)
+            frame_info['X_DISPLACEMENT'] = x_displacement
+            y_displacement = (frame_info['TEMPLATE_MATCH_ORIGIN_Y'] - min_template_origin_y) * float(microns_per_pixel)
+            y_displacement *= float(output_conversion_factor)
+            frame_info['Y_DISPLACEMENT'] = y_displacement
+            frame_info['XY_DISPLACEMENT'] = math.sqrt(x_displacement * x_displacement + y_displacement * y_displacement)
+            # adjust x and y match positions so they're relative to the center of the template
+            frame_info['TEMPLATE_MATCH_ORIGIN_X'] += template_half_width
+            frame_info['TEMPLATE_MATCH_ORIGIN_Y'] += template_half_height
+        else:
+            frame_info['X_DISPLACEMENT'] = 0.0
+            frame_info['Y_DISPLACEMENT'] = 0.0
+            frame_info['XY_DISPLACEMENT'] = 0.0
+            # adjust x and y match positions so they're relative to the center of the template
+            frame_info['TEMPLATE_MATCH_ORIGIN_X'] = min_template_origin_x + template_half_width
+            frame_info['TEMPLATE_MATCH_ORIGIN_Y'] = min_template_origin_y + template_half_height
         adjusted_tracking_results.append(frame_info)
     return adjusted_tracking_results, min_frame_number, major_movement_direction
 
