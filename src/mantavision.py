@@ -42,10 +42,6 @@ def runCa2Analysis(args: Dict):
 
 def runTracking(args: Dict):
     """ Runs TrackTemplate function with the arguments provided by the Gooey UI. """
-    # if args.tracking_output_frames == 'Yes':
-    #     output_frames = True
-    # else:
-    #     output_frames = False
     contraction_vector = trackingContractionVector(
         args.tracking_horizontal_contraction_direction,
         args.tracking_vertical_contraction_direction
