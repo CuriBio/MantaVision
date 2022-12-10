@@ -194,23 +194,22 @@ def analyzeCa2Data(
             print("\n")
             print("Error. Could not extract sensible peaks/troughs from data")
             print("Was expected frequency set to within +/- 0.5Hz of actual frequency?")
-            print("No analysis results were written")
+            print("No Ca2+ analysis results or plots to save")
             print("\n")
-            continue
-        else:
-            tissue_means = signal_data['tissue_means']
-            background_means = signal_data['background_means']
-            path_to_ca2_analysis_results_file = os.path.join(
-                dir_paths['xlsx_dir'], file_name + '-ca2_analysis_results.xlsx'
-            )
-            ca2AnalysisToXLSX(
-                time_stamps,
-                input_signal,
-                tissue_means,
-                background_means,
-                ca2_analysis,
-                path_to_ca2_analysis_results_file
-            )
+
+        tissue_means = signal_data['tissue_means']
+        background_means = signal_data['background_means']
+        path_to_ca2_analysis_results_file = os.path.join(
+            dir_paths['xlsx_dir'], file_name + '-ca2_analysis_results.xlsx'
+        )
+        ca2AnalysisToXLSX(
+            time_stamps,
+            input_signal,
+            tissue_means,
+            background_means,
+            ca2_analysis,
+            path_to_ca2_analysis_results_file
+        )
 
         if display_results:
             print()
@@ -222,7 +221,7 @@ def analyzeCa2Data(
                 if display_results:
                     print(f'{p2p_order} average metrics (failure %): {average_metrics} ({metric_failure_proportions})')
 
-        if display_results or save_result_plots is not None:
+        if ca2_analysis is not None and (display_results or save_result_plots is not None):
             if save_result_plots:
                 plot_file_path = os.path.join(dir_paths['plot_dir'], file_name + '-plot.png')
             else:

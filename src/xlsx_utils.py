@@ -88,51 +88,52 @@ def ca2AnalysisToXLSX(
         sheet.cell(row_num, fg_mean_value_column).value = tissue_means[data_point_index]
         sheet.cell(row_num, bg_mean_value_column).value = background_means[data_point_index]
 
-    # create a second worksheet and write out the analysis results
-    sheet = workbook.create_sheet('Ca2+ Analysis')
+    if ca2_analysis is not None:
+        # create a second worksheet and write out the analysis results
+        sheet = workbook.create_sheet('Ca2+ Analysis')
 
-    # set the column headings
-    heading_row = 1
-    metric_type_column = 1
-    sheet.cell(heading_row, metric_type_column).value = 'metric type'
-    metric_value_column = metric_type_column + 1
-    sheet.cell(heading_row, metric_value_column).value = 'metric average'
-    normalized_metric_value_column = metric_value_column + 1
-    sheet.cell(heading_row, normalized_metric_value_column).value = 'normalized metric average'
-    num_points_column = normalized_metric_value_column + 1
-    sheet.cell(heading_row, num_points_column).value = 'num points'
-    num_failed_points_column = num_points_column + 1
-    sheet.cell(heading_row, num_failed_points_column).value = 'num failed points'
-    percent_failed_points_column = num_failed_points_column + 1
-    sheet.cell(heading_row, percent_failed_points_column).value = '% failed points'
+        # set the column headings
+        heading_row = 1
+        metric_type_column = 1
+        sheet.cell(heading_row, metric_type_column).value = 'metric type'
+        metric_value_column = metric_type_column + 1
+        sheet.cell(heading_row, metric_value_column).value = 'metric average'
+        normalized_metric_value_column = metric_value_column + 1
+        sheet.cell(heading_row, normalized_metric_value_column).value = 'normalized metric average'
+        num_points_column = normalized_metric_value_column + 1
+        sheet.cell(heading_row, num_points_column).value = 'num points'
+        num_failed_points_column = num_points_column + 1
+        sheet.cell(heading_row, num_failed_points_column).value = 'num failed points'
+        percent_failed_points_column = num_failed_points_column + 1
+        sheet.cell(heading_row, percent_failed_points_column).value = '% failed points'
 
-    # set the column values for each metric
-    row_num = heading_row + 1
-    num_p2p_types = len(ca2_analysis['metrics'])
-    for p2p_type_num in range(num_p2p_types):
-        metrics = ca2_analysis['metrics'][p2p_type_num]
-        metric_labels = metrics['metrics_labels']
-        metric_values = metrics['mean_metric_data']
-        normalized_metric_values = metrics['normalized_metric_data']
-        num_points = metrics['num_metric_points']
-        num_failed_points = metrics['num_metric_failures']
-        failure_percentages = metrics['metric_failure_proportions']
+        # set the column values for each metric
+        row_num = heading_row + 1
+        num_p2p_types = len(ca2_analysis['metrics'])
+        for p2p_type_num in range(num_p2p_types):
+            metrics = ca2_analysis['metrics'][p2p_type_num]
+            metric_labels = metrics['metrics_labels']
+            metric_values = metrics['mean_metric_data']
+            normalized_metric_values = metrics['normalized_metric_data']
+            num_points = metrics['num_metric_points']
+            num_failed_points = metrics['num_metric_failures']
+            failure_percentages = metrics['metric_failure_proportions']
 
-        num_metrics = len(metric_values)
-        for metric_num in range(num_metrics):
-            sheet.cell(row_num, metric_type_column).value = metric_labels[metric_num]
-            sheet.cell(row_num, metric_value_column).value = metric_values[metric_num]
-            sheet.cell(row_num, normalized_metric_value_column).value = normalized_metric_values[metric_num]
-            sheet.cell(row_num, num_points_column).value = num_points
-            sheet.cell(row_num, num_failed_points_column).value = num_failed_points[metric_num]
-            sheet.cell(row_num, percent_failed_points_column).value = failure_percentages[metric_num]
-            row_num += 1
+            num_metrics = len(metric_values)
+            for metric_num in range(num_metrics):
+                sheet.cell(row_num, metric_type_column).value = metric_labels[metric_num]
+                sheet.cell(row_num, metric_value_column).value = metric_values[metric_num]
+                sheet.cell(row_num, normalized_metric_value_column).value = normalized_metric_values[metric_num]
+                sheet.cell(row_num, num_points_column).value = num_points
+                sheet.cell(row_num, num_failed_points_column).value = num_failed_points[metric_num]
+                sheet.cell(row_num, percent_failed_points_column).value = failure_percentages[metric_num]
+                row_num += 1
 
-    # add a measure of average frequency
-    row_num += 1
-    avg_frequency = ca2_analysis['avg_frequency']
-    sheet.cell(row_num, metric_type_column).value = 'frequency'
-    sheet.cell(row_num, metric_value_column).value = avg_frequency
+        # add a measure of average frequency
+        row_num += 1
+        avg_frequency = ca2_analysis['avg_frequency']
+        sheet.cell(row_num, metric_type_column).value = 'frequency'
+        sheet.cell(row_num, metric_value_column).value = avg_frequency
 
     workbook.save(filename=output_file_path)
 
