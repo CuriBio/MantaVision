@@ -1,21 +1,31 @@
 #! /usr/bin/env python
 import sys
-
+import math
 import numpy as np
 from scipy.ndimage import shift
-import math
 import cv2 as cv
 from video_api import VideoReader, VideoWriter
 from typing import Tuple, List, Dict
 
 
-# TODO: set the version of pyinstaller back one
-# TODO: - doesn't output individual frames (FIXED)
-# TODO: fix bug where tracking didn't work for a template passed in
-#       if the option to use it as a guide was not used.
+# TODO: make all processes run from a json config.
 
-# TODO: add option to do low signal to noise in morphology
-# TODO: find a different method of adjusting the template match to be more accurate for morphology
+# TODO: need to change the way the entire process works so that any and all ROIs that are drawn
+#       are done up front, the data saved in some format, and then that data is passed to whatever
+#       process that we're running (tracking, Ca2+ etc) so that it already has ALL the data and parameters it needs.
+
+# TODO: get tracking to allow drawing all ROIs up front.
+
+# TODO: there appears to be a bug where the blank frames doesn't either print correctly or
+#       progress to the next frame!!!
+# TODO: check how long it takes to draw
+# TODO: change naming of dynamic post to flexible
+#       change naming of fixed post to rigid or fixed post
+
+# TODO: guard against having no contractions or relaxations or neither in the frequency estimation.
+# TODO: turn the code that captures all ROI's up front into a separate function that can be called
+#       and returns a struct with all the ROI info required. Start out doing exactly what Ca2+
+#       analysis does so it can just be swapped straight in. and then change tracking to use it.
 
 # TODO: change trackTemplate to return a dict
 
@@ -45,6 +55,7 @@ def trackTemplate(
     input_video_path: str,
     template_guide_image_path: str,
     template_rgb: np.ndarray = None,
+    template_gray: np.ndarray = None,
     output_video_path: str = None,
     guide_match_search_seconds: float = None,
     microns_per_pixel: float = None,
@@ -105,7 +116,8 @@ def trackTemplate(
 
     # get the template to track
     if template_rgb is not None:
-        template_gray = cv.cvtColor(template_rgb, cv.COLOR_BGR2GRAY)
+        if template_gray is None:
+            template_gray = cv.cvtColor(template_rgb, cv.COLOR_BGR2GRAY)
     else:
         template_gray = None
         if user_roi_selection or template_guide_image_path is None:
@@ -181,6 +193,7 @@ def trackTemplate(
 
         current_frame = input_video_stream.frameGray()
         frame_std_dev = np.std(current_frame)
+        frame_number = input_video_stream.framePosition()
         if frame_std_dev < blank_frame_stddev_cutoff:
             if video_writer is not None:
                 frame = input_video_stream.frameVideoRGB()
@@ -254,7 +267,6 @@ def trackTemplate(
             flipped_image_best_match_rotation = -best_match_rotation
         original_time_stamp = input_video_stream.timeStamp()
         time_stamp_in_seconds = original_time_stamp
-        frame_number = input_video_stream.framePosition()
         tracking_results.append({
             'MATCH_SUCCESS': match_success,
             'FRAME_NUMBER': frame_number,
@@ -393,6 +405,7 @@ def frequencyEstimate(tracking_info: List[Dict]) -> float:
     num_pos_to_neg_periods = len(pos_to_neg_crossing_times) - 1
     pos_to_neg_time_diff = pos_to_neg_crossing_times[-1] - pos_to_neg_crossing_times[0]
     pos_to_neg_frequency = num_pos_to_neg_periods/pos_to_neg_time_diff
+    # TODO: need to guard against having no contractions or relaxations or neither.
 
     # compute the average of the +ve to +ve and +ve to -ve frequency estimates
     estimated_frequency = (pos_to_neg_frequency + neg_to_pos_frequency)/2.0

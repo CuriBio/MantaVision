@@ -6,145 +6,31 @@ import argparse
 import cv2 as cv
 from datetime import datetime
 from typing import Tuple, List, Dict
+
+import numpy as np
+
 from video2images import video2images
-from track_template import trackTemplate
-from video_api import supported_file_extensions
+from track_template import trackTemplate, templateFromInputROI
+from video_api import VideoReader, supported_file_extensions
 from xlsx_utils import metadataRequiredForXLSX, trackingResultsToXSLX, trackingResultsToXLSXforSDK
 from io_utils import contentsOfDir, getFilePathViaGUI, getDirPathViaGUI, zipDir, fileNameParametersForSDK
 
 
-def runTrackTemplate(config: Dict):
-    track_templates_start_time = time.time()
-    dirs, args = verifiedInputs(config)
+def config_from_json(json_config_path) -> Tuple[str, List[Dict]]:
+    json_file = open(json_config_path)
+    config = json.load(json_file)
+    return config
 
-    if 'errors' in args:
-        if 'input dir empty' in args['errors']:
-            print('WARNING. The selected directory is empty. Nothing to do. Exiting')
-            return
 
-    # make all the dirs that are needed for writing the results and barf if any dirs already exist
-    dirs_exist_error_message = ''
-    if os.path.isdir(dirs['results_dir_path']):
-        dirs_exist_error_message += "results dir already exists. Cannot overwrite.\n"
-    if os.path.isdir(dirs['results_json_dir_path']):
-        dirs_exist_error_message += "json results dir already exists. Cannot overwrite.\n"
-    if os.path.isdir(dirs['results_xlsx_dir_path']):
-        dirs_exist_error_message += "xlsx results dir already exists. Cannot overwrite.\n"
-    if os.path.isdir(dirs['results_video_dir_path']):
-        dirs_exist_error_message += "video results dir already exists. Cannot overwrite.\n"
-    if os.path.isdir(dirs['results_template_dir_path']):
-        dirs_exist_error_message += "template results dir already exists. Cannot overwrite.\n"
-    if len(dirs_exist_error_message) > 0:
-        dirs_exist_error_message = "ERROR.\n" + dirs_exist_error_message + "Nothing Tracked."
-        print(dirs_exist_error_message)
-        sys.exit(1)
-    os.mkdir(dirs['results_dir_path'])
-    os.mkdir(dirs['results_json_dir_path'])
-    os.mkdir(dirs['results_xlsx_dir_path'])
-    os.mkdir(dirs['results_video_dir_path'])
-    os.mkdir(dirs['results_template_dir_path'])
-    os.mkdir(dirs['results_video_min_frames_dir_path'])
-    if next(iter(args))['output_frames']:
-        os.mkdir(dirs['results_video_frames_dir_path'])
-
-    # run the tracking routine on each input video
-    # and write out the results
-    print("\nTemplate Tracker running...")
-    template_image = None
-    total_tracking_time = 0
-    for input_args in args:
-        print(f'processing: {input_args["input_video_path"]}')
-        video_tracking_start_time = time.time()
-        messages, tracking_results, _, estimated_frequency, frames_per_second, template, min_frame_number = trackTemplate(
-            input_args['input_video_path'],
-            input_args['template_guide_image_path'],
-            template_image,
-            input_args['output_video_path'],
-            input_args['guide_match_search_seconds'],
-            input_args['microns_per_pixel'],
-            input_args['output_conversion_factor'],
-            input_args['sub_pixel_search_increment'],
-            input_args['sub_pixel_refinement_radius'],
-            input_args['user_roi_selection'],
-            input_args['max_translation_per_frame'],
-            input_args['max_rotation_per_frame'],
-            input_args['contraction_vector']
-        )
-        total_tracking_time += (time.time() - video_tracking_start_time)
-
-        # check for any errors
-        warning_msg, error_msg = messages
-        if warning_msg is not None:
-            print(warning_msg)
-        if error_msg is not None:
-            print(error_msg)
-            sys.exit(1)
-
-        # write the template used for tracking to the results dir
-        cv.imwrite(input_args['results_template_filename'], template)
-
-        # write out the frame with the min movement position
-        video2images(
-            input_video_path=input_args['input_video_path'],
-            output_dir_path=dirs['results_video_min_frames_dir_path'],
-            enhance_contrast=False,
-            frame_number_to_write=min_frame_number,
-            image_extension='tiff'
-        )
-
-        # write out the results video as frames if requested
-        if input_args['output_frames']:
-            os.mkdir(input_args['output_video_frames_dir_path'])
-            video2images(
-                input_video_path=input_args['output_video_path'],
-                output_dir_path=input_args['output_video_frames_dir_path'],
-                enhance_contrast=False,
-                image_extension='jpg'  # don't need high quality images for this
-            )
-
-        # write results to xlsx files
-        meta_data = metadataRequiredForXLSX(
-            input_args['well_name'],
-            input_args['date_stamp'],
-            frames_per_second,
-            input_args['user_roi_selection'],
-            input_args['max_translation_per_frame'],
-            input_args['max_rotation_per_frame'],
-            input_args['contraction_vector'],
-            input_args['microns_per_pixel'],
-            input_args['output_conversion_factor'],
-            input_args['sub_pixel_search_increment'],
-            input_args['sub_pixel_refinement_radius'],
-            estimated_frequency,
-        )
-        trackingResultsToXSLX(tracking_results, meta_data, input_args['path_to_user_excel_results'])
-        trackingResultsToXLSXforSDK(tracking_results, meta_data, input_args['path_to_sdk_excel_results'])
-
-        # write the run config and results as json
-        if input_args['output_json_path'] is not None:
-            tracking_results_complete = {
-                "INPUT_ARGS": input_args,
-                "ERROR_MSGS": error_msg,
-                "WARNING_MSGS": warning_msg,
-                "ESTIMATED_FREQUENCY": estimated_frequency,
-                "RESULTS": tracking_results,
-            }
-            with open(input_args['output_json_path'], 'w') as outfile:
-                json.dump(tracking_results_complete, outfile, indent=4)
-
-    # create a zip archive and write all the xlsx files to it
-    xlsx_archive_file_path = os.path.join(dirs['results_dir_path'], 'xlsx-results.zip')
-    zipDir(input_dir_path=dirs['results_xlsx_dir_path'], zip_file_path=xlsx_archive_file_path, sdk_files_only=True)
-
-    # print out some runtime stats and finish
-    num_videos_processed = len(args)
-    track_templates_runtime = time.time() - track_templates_start_time
-    per_video_tracking_time: float = float(total_tracking_time) / float(num_videos_processed)
-    print(f'...Template Tracker completed in {round(track_templates_runtime, 2)}s')
-    total_tracking_time = round(total_tracking_time, 2)
-    per_video_tracking_time = round(per_video_tracking_time, 2)
-    print(f'\nActual tracking time for {num_videos_processed} videos: {total_tracking_time}s')
-    print(f'{per_video_tracking_time}s per video')
+def config_from_cmdline(cmdline_args) -> dict:
+    return {
+        'input_video_path': cmdline_args.input_video_path,
+        'template_guide_image_path': cmdline_args.template_guide_image_path,
+        'output_path': cmdline_args.output_path,
+        'guide_match_search_seconds': cmdline_args.guide_match_search_seconds,
+        'microns_per_pixel': cmdline_args.microns_per_pixel,
+        'path_to_excel_template': cmdline_args.path_to_excel_template
+    }
 
 
 def verifiedInputs(config: Dict) -> Tuple[Dict, List[Dict]]:
@@ -299,6 +185,17 @@ def verifiedInputs(config: Dict) -> Tuple[Dict, List[Dict]]:
     # set all the values needed to run template matching on each input video
     configs = []
     for file_name, input_file_extension in video_files:
+
+        if template_guide_image_path is None or template_guide_image_path == '':
+            input_video_file_path = os.path.join(base_dir, file_name + input_file_extension)
+            template_rbg, template_gray = templateROIsFromVideo(
+                input_video_file_path,
+                blank_frame_stddev_cutoff=100.0
+            )
+        else:
+            template_rbg = None
+            template_gray = None
+
         well_name, date_stamp = fileNameParametersForSDK(file_name)
 
         # set all the required path values
@@ -314,6 +211,8 @@ def verifiedInputs(config: Dict) -> Tuple[Dict, List[Dict]]:
         configs.append({
             'input_video_path': input_video_path,
             'template_guide_image_path': template_guide_image_path,
+            'template_rbg': template_rbg,
+            'template_gray': template_gray,
             'results_template_filename': results_template_filename,
             'user_roi_selection': user_roi_selection,
             'output_video_path': output_video_path,
@@ -338,21 +237,170 @@ def verifiedInputs(config: Dict) -> Tuple[Dict, List[Dict]]:
     return dirs, configs
 
 
-def config_from_json(json_config_path) -> Tuple[str, List[Dict]]:
-    json_file = open(json_config_path)
-    config = json.load(json_file)
-    return config
+def templateROIsFromVideo(input_video_file_path: str, blank_frame_stddev_cutoff: float = 100.0) -> Tuple[np.ndarray]:
+    """ extract template ROIs from the input video
+    :param input_video_file_path:
+    :param blank_frame_stddev_cutoff:
+    :return: template ROI images
+    """
+    # open a video reader stream to extract the templates from
+    try:
+        input_video_stream = VideoReader(input_video_file_path)
+    except RuntimeError as runtime_error:
+        print(runtime_error)
+        sys.exit(1)
+
+    # extract the templates from the video to use for tracking
+    template_rgb, template_gray = templateFromInputROI(
+        video_to_search=input_video_stream,
+        template_to_find=None,
+        max_frames_to_check=None,
+        blank_frame_stddev_cutoff=blank_frame_stddev_cutoff
+    )
+    input_video_stream.close()
+
+    return template_rgb, template_gray
 
 
-def config_from_cmdline(cmdline_args) -> dict:
-    return {
-        'input_video_path': cmdline_args.input_video_path,
-        'template_guide_image_path': cmdline_args.template_guide_image_path,
-        'output_path': cmdline_args.output_path,
-        'guide_match_search_seconds': cmdline_args.guide_match_search_seconds,
-        'microns_per_pixel': cmdline_args.microns_per_pixel,
-        'path_to_excel_template': cmdline_args.path_to_excel_template
-    }
+def runTrackTemplate(config: Dict):
+    track_templates_start_time = time.time()
+    dirs, args = verifiedInputs(config)
+
+    if 'errors' in args:
+        if 'input dir empty' in args['errors']:
+            print('WARNING. The selected directory is empty. Nothing to do. Exiting')
+            return
+
+    # make all the dirs that are needed for writing the results and barf if any dirs already exist
+    dirs_exist_error_message = ''
+    if os.path.isdir(dirs['results_dir_path']):
+        dirs_exist_error_message += "results dir already exists. Cannot overwrite.\n"
+    if os.path.isdir(dirs['results_json_dir_path']):
+        dirs_exist_error_message += "json results dir already exists. Cannot overwrite.\n"
+    if os.path.isdir(dirs['results_xlsx_dir_path']):
+        dirs_exist_error_message += "xlsx results dir already exists. Cannot overwrite.\n"
+    if os.path.isdir(dirs['results_video_dir_path']):
+        dirs_exist_error_message += "video results dir already exists. Cannot overwrite.\n"
+    if os.path.isdir(dirs['results_template_dir_path']):
+        dirs_exist_error_message += "template results dir already exists. Cannot overwrite.\n"
+    if len(dirs_exist_error_message) > 0:
+        dirs_exist_error_message = "ERROR.\n" + dirs_exist_error_message + "Nothing Tracked."
+        print(dirs_exist_error_message)
+        sys.exit(1)
+    os.mkdir(dirs['results_dir_path'])
+    os.mkdir(dirs['results_json_dir_path'])
+    os.mkdir(dirs['results_xlsx_dir_path'])
+    os.mkdir(dirs['results_video_dir_path'])
+    os.mkdir(dirs['results_template_dir_path'])
+    os.mkdir(dirs['results_video_min_frames_dir_path'])
+    if next(iter(args))['output_frames']:
+        os.mkdir(dirs['results_video_frames_dir_path'])
+
+    # run the tracking routine on each input video
+    # and write out the results
+    print("\nTemplate Tracker running...")
+    blank_frame_stddev_cutoff: float = 100.0
+    total_tracking_time = 0
+    for input_args in args:
+        print(f'processing: {input_args["input_video_path"]}')
+        video_tracking_start_time = time.time()
+        messages, tracking_results, _, estimated_frequency, frames_per_second, template, min_frame_number = trackTemplate(
+            input_args['input_video_path'],
+            input_args['template_guide_image_path'],
+            input_args['template_rbg'],
+            input_args['template_gray'],
+            input_args['output_video_path'],
+            input_args['guide_match_search_seconds'],
+            input_args['microns_per_pixel'],
+            input_args['output_conversion_factor'],
+            input_args['sub_pixel_search_increment'],
+            input_args['sub_pixel_refinement_radius'],
+            input_args['user_roi_selection'],
+            input_args['max_translation_per_frame'],
+            input_args['max_rotation_per_frame'],
+            input_args['contraction_vector']
+        )
+        total_tracking_time += (time.time() - video_tracking_start_time)
+
+        # check for any errors
+        warning_msg, error_msg = messages
+        if warning_msg is not None:
+            print(warning_msg)
+        if error_msg is not None:
+            print(error_msg)
+            sys.exit(1)
+
+        # write the template used for tracking to the results dir
+        cv.imwrite(input_args['results_template_filename'], template)
+
+        # write out the frame with the min movement position
+        video2images(
+            input_video_path=input_args['input_video_path'],
+            output_dir_path=dirs['results_video_min_frames_dir_path'],
+            enhance_contrast=False,
+            frame_number_to_write=min_frame_number,
+            image_extension='tiff'
+        )
+
+        # write out the results video as frames if requested
+        if input_args['output_frames']:
+            os.mkdir(input_args['output_video_frames_dir_path'])
+            video2images(
+                input_video_path=input_args['output_video_path'],
+                output_dir_path=input_args['output_video_frames_dir_path'],
+                enhance_contrast=False,
+                image_extension='jpg'  # don't need high quality images for this
+            )
+
+        # write results to xlsx files
+        meta_data = metadataRequiredForXLSX(
+            input_args['well_name'],
+            input_args['date_stamp'],
+            frames_per_second,
+            input_args['user_roi_selection'],
+            input_args['max_translation_per_frame'],
+            input_args['max_rotation_per_frame'],
+            input_args['contraction_vector'],
+            input_args['microns_per_pixel'],
+            input_args['output_conversion_factor'],
+            input_args['sub_pixel_search_increment'],
+            input_args['sub_pixel_refinement_radius'],
+            estimated_frequency,
+        )
+        trackingResultsToXSLX(tracking_results, meta_data, input_args['path_to_user_excel_results'])
+        trackingResultsToXLSXforSDK(tracking_results, meta_data, input_args['path_to_sdk_excel_results'])
+
+        # remove the template images from the config before it gets serialized to file
+        del input_args['template_rbg']
+        del input_args['template_gray'],
+
+        # write the run config and results as json
+        if input_args['output_json_path'] is not None:
+            tracking_results_complete = {
+                "INPUT_ARGS": input_args,
+                "ERROR_MSGS": error_msg,
+                "WARNING_MSGS": warning_msg,
+                "ESTIMATED_FREQUENCY": estimated_frequency,
+                "RESULTS": tracking_results,
+            }
+            with open(input_args['output_json_path'], 'w') as outfile:
+                json.dump(tracking_results_complete, outfile, indent=4)
+
+    # create a zip archive and write all the xlsx files to it
+    xlsx_archive_file_path = os.path.join(dirs['results_dir_path'], 'xlsx-results.zip')
+    zipDir(input_dir_path=dirs['results_xlsx_dir_path'], zip_file_path=xlsx_archive_file_path, sdk_files_only=True)
+
+    # print out some runtime stats and finish
+    num_videos_processed = len(args)
+    track_templates_runtime = time.time() - track_templates_start_time
+    per_video_tracking_time: float = float(total_tracking_time) / float(num_videos_processed)
+    print(f'...Template Tracker completed in {round(track_templates_runtime, 2)}s')
+    total_tracking_time = round(total_tracking_time, 2)
+    per_video_tracking_time = round(per_video_tracking_time, 2)
+    print(f'\nActual tracking time for {num_videos_processed} videos: {total_tracking_time}s')
+    print(f'{per_video_tracking_time}s per video')
+
+
 
 
 def main():
