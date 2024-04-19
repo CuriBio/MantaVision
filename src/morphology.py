@@ -1,16 +1,17 @@
 import os
 from datetime import datetime
-import openpyxl
-import numpy as np
+from typing import Dict, List, Tuple
+
 import cv2 as cv
-from typing import Tuple, List, Dict
+import numpy as np
+import openpyxl
+from image_utils import openImage
+from io_utils import contentsOfDir
 from matplotlib import pyplot as plt
 from scipy import ndimage as ndifilters
 from scipy.signal import medfilt2d
 from skimage import filters as skimagefilters
-from io_utils import contentsOfDir
-from image_utils import openImage
-from track_template import matchResults, intensityAdjusted, userDrawnROI
+from track_template import intensityAdjusted, matchResults, userDrawnROI
 
 
 def computeMorphologyMetrics(
@@ -22,7 +23,7 @@ def computeMorphologyMetrics(
     template_refinement_radius: int = 40,
     edge_finding_smoothing_radius: int = 1,
     microns_per_pixel: float = None,
-    write_result_images: bool = False,
+    write_result_images: bool = True,
     display_result_images: bool = True
 ):
     """ """
